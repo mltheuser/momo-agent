@@ -1,5 +1,6 @@
 plugins {
     kotlin("jvm") version "2.2.0"
+    kotlin("plugin.serialization") version "2.2.0"
     id("io.gitlab.arturbosch.detekt") version "1.23.8"
     `jvm-test-suite`
 }
@@ -14,6 +15,9 @@ repositories {
 dependencies {
     // Substituted with the local checkout via the composite build (settings.gradle.kts).
     implementation("ai.router:ai-router-sdk:0.1.0")
+
+    // YAML parsing for harness.yaml manifests.
+    implementation("com.charleskorn.kaml:kaml:0.83.0")
 
     // Lint formatting rules (folds ktlint into detekt — no separate ktlint plugin)
     detektPlugins("io.gitlab.arturbosch.detekt:detekt-formatting:1.23.8")
@@ -68,6 +72,9 @@ testing {
     suites {
         val test by getting(JvmTestSuite::class) {
             useJUnitJupiter()
+            dependencies {
+                implementation("org.jetbrains.kotlin:kotlin-test")
+            }
             targets.all {
                 testTask.configure {
                     testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL

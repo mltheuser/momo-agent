@@ -1,10 +1,8 @@
 # momo-agent
 
-Kotlin library for defining and running file-system-based agents. Currently at
-the **bootstrap stage**: build, lint, and live-test wiring only — no agent,
-loop, or tool code yet. Requirements and binding design decisions live in
-[../planning/issues/README.md](../planning/issues/README.md) (in the enclosing
-momo-codes workspace, outside this repo).
+Kotlin library for defining and running file-system-based agents. So far it
+holds **harness loading** and the library-wide `Budgets` constants — no
+agent loop or tool code yet.
 
 ## Build & verify
 
@@ -27,3 +25,8 @@ momo-codes workspace, outside this repo).
 
 - [README.md](README.md) — read when setting up the ai-router checkout,
   running or configuring the live tests, or checking platform assumptions.
+- [../planning/issues/README.md](../planning/issues/README.md) — read when
+  picking up an issue: issue index + binding design decisions (lives in the
+  enclosing momo-codes workspace, outside this repo).
+- [examples/coder/](examples/coder/) — the reference harness folder; read
+  when authoring a harness or working on harness loading.

@@ -1,0 +1,6 @@
+model: qwen3.5:9b:local@ollama
+tools:
+  - bash
+  - read_file
+  - write_file
+  - edit_file
