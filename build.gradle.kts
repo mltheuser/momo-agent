@@ -19,6 +19,9 @@ dependencies {
     // YAML parsing for harness.yaml manifests.
     implementation("com.charleskorn.kaml:kaml:0.83.0")
 
+    // Coroutine primitives for the suspend-based execution seam.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+
     // Lint formatting rules (folds ktlint into detekt — no separate ktlint plugin)
     detektPlugins("io.gitlab.arturbosch.detekt:detekt-formatting:1.23.8")
 }
