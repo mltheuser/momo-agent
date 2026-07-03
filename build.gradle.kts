@@ -2,6 +2,7 @@ plugins {
     kotlin("jvm") version "2.2.0"
     kotlin("plugin.serialization") version "2.2.0"
     id("io.gitlab.arturbosch.detekt") version "1.23.8"
+    `java-library`
     `jvm-test-suite`
 }
 
@@ -13,8 +14,10 @@ repositories {
 }
 
 dependencies {
-    // Substituted with the local checkout via the composite build (settings.gradle.kts).
-    implementation("ai.router:ai-router-sdk:0.1.0")
+    // Substituted with the local checkout via the composite build
+    // (settings.gradle.kts). `api`: SDK types — and its exported
+    // kotlinx-serialization types — sit in public tool signatures.
+    api("ai.router:ai-router-sdk:0.1.0")
 
     // YAML parsing for harness.yaml manifests.
     implementation("com.charleskorn.kaml:kaml:0.83.0")
@@ -77,6 +80,8 @@ testing {
             useJUnitJupiter()
             dependencies {
                 implementation("org.jetbrains.kotlin:kotlin-test")
+                // Virtual-time coroutine testing — the tool timeout budget is minutes long.
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
             }
             targets.all {
                 testTask.configure {

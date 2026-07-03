@@ -1,9 +1,9 @@
 # momo-agent
 
-Kotlin library for defining and running file-system-based agents. So far it
-holds **harness loading**, the library-wide `Budgets` constants, and the
-**`ExecutionEnvironment`** abstraction with its local implementation — no
-agent loop or tool code yet.
+Kotlin library for defining and running file-system-based agents, covering
+harness loading, the tool layer, execution environments, and the agent
+loop. What has landed vs. what is pending lives in the planning issue
+index (see Docs).
 
 ## Build & verify
 

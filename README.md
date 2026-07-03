@@ -12,6 +12,11 @@ local checkout of the ai-router repository is **required** — even for a plain
 `~/Development/open source/ai-router/SDKs/kotlin`; if your checkout lives
 elsewhere, edit the path there.
 
+The checkout must be current: momo-agent relies on SDK changes made
+alongside it (kotlinx-serialization-json exported at `api` scope; a public
+`SchemaGenerator.generate(descriptor)` overload). A checkout without them
+fails compilation.
+
 If the directory does not exist (or contains no build file), the build fails
 immediately during settings evaluation with:
 
