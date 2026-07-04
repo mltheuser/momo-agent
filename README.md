@@ -76,9 +76,11 @@ Live-test results are never cached; each invocation hits the server again.
 ## Supported platforms & system assumptions
 
 - **Linux x86_64** — officially supported; the platform for eval runs.
-- **macOS** (including arm64) — best-effort, for development only.
+- **macOS** (including arm64) — best-effort, for development only. Known
+  divergence: BSD `sed` appends a newline when printing a final line that
+  lacks one, so `read_file` output is byte-exact only on GNU `sed`.
 - **Windows** — unsupported.
 
-The project assumes a POSIX userland (`bash`, coreutils, `grep`, `find`),
-UTF-8 everywhere, LF line endings, and a `docker` CLI usable without `sudo`
-(needed later for container-based agent execution).
+The project assumes a POSIX userland (`bash`, coreutils, `grep`, `find`,
+`sed`), UTF-8 everywhere, LF line endings, and a `docker` CLI usable
+without `sudo` (needed later for container-based agent execution).

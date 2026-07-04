@@ -327,7 +327,7 @@ class LocalExecutionEnvironmentTest {
          * The baseline the environment must require — deliberately duplicated
          * from production so a change to the declared invariant fails a test.
          */
-        val BASELINE_BINARIES = listOf("bash", "cat", "cp", "find", "grep", "ls", "mkdir", "mv", "rm")
+        val BASELINE_BINARIES = listOf("bash", "cat", "cp", "find", "grep", "ls", "mkdir", "mv", "rm", "sed")
 
         /** How long the polling helpers wait for a killed process / pid file before failing. */
         val KILL_GRACE_PERIOD = 5.seconds

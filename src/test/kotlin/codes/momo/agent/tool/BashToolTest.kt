@@ -2,7 +2,6 @@ package codes.momo.agent.tool
 
 import codes.momo.agent.Budgets
 import codes.momo.agent.environment.ExecResult
-import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.environment.LocalExecutionEnvironment
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
@@ -20,7 +19,6 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlin.time.Duration
 
 class BashToolTest {
 
@@ -37,14 +35,6 @@ class BashToolTest {
     private fun runStubbed(execResult: ExecResult): ToolResult = runBlocking {
         BashTool().execute(BashArgs("true"), FixedResultEnvironment(execResult))
     }
-
-    private fun completed(
-        exitCode: Int = 0,
-        stdout: String = "",
-        stderr: String = "",
-        stdoutTruncated: Boolean = false,
-        stderrTruncated: Boolean = false,
-    ): ExecResult.Completed = ExecResult.Completed(exitCode, stdout, stderr, stdoutTruncated, stderrTruncated)
 
     // ─── Definition ───────────────────────────────────────────────────
 
@@ -192,24 +182,4 @@ class BashToolTest {
 
         assertNull(assertIs<ToolResult.TimedOut>(result).partialOutput)
     }
-}
-
-// ─── Test environment ─────────────────────────────────────────────────
-
-/** Returns [result] for every exec, recording how it was called. */
-private class FixedResultEnvironment(private val result: ExecResult) : ExecutionEnvironment {
-
-    var lastCommand: List<String>? = null
-        private set
-
-    var lastTimeout: Duration? = null
-        private set
-
-    override suspend fun exec(command: List<String>, stdin: ByteArray?, timeout: Duration): ExecResult {
-        lastCommand = command
-        lastTimeout = timeout
-        return result
-    }
-
-    override fun close(): Unit = Unit
 }

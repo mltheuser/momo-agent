@@ -176,9 +176,9 @@ public class LocalExecutionEnvironment internal constructor(
 
     private companion object {
 
-        /** Userland baseline: bash, grep, find, and a representative coreutils subset. */
+        /** Userland baseline: bash, grep, find, sed, and a representative coreutils subset. */
         val REQUIRED_BINARIES: List<String> =
-            listOf("bash", "cat", "cp", "find", "grep", "ls", "mkdir", "mv", "rm")
+            listOf("bash", "cat", "cp", "find", "grep", "ls", "mkdir", "mv", "rm", "sed")
 
         private fun isOnSearchPath(binary: String, searchPath: String?): Boolean =
             searchPath.orEmpty()
