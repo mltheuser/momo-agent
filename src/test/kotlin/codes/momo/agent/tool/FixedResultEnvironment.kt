@@ -15,11 +15,15 @@ internal class FixedResultEnvironment(private val result: ExecResult) : Executio
     var lastCommand: List<String>? = null
         private set
 
+    var lastStdin: ByteArray? = null
+        private set
+
     var lastTimeout: Duration? = null
         private set
 
     override suspend fun exec(command: List<String>, stdin: ByteArray?, timeout: Duration): ExecResult {
         lastCommand = command
+        lastStdin = stdin
         lastTimeout = timeout
         return result
     }

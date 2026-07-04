@@ -26,6 +26,8 @@ class ReadFileToolTest {
     @TempDir
     lateinit var tempDir: Path
 
+    private val tracker = FileReadTracker()
+
     // ─── Helpers ──────────────────────────────────────────────────────
 
     /** Reads [path], resolved to an absolute path under the temp workspace, against a real local environment. */
@@ -34,7 +36,7 @@ class ReadFileToolTest {
         offset: Int = 1,
         limit: Int = ReadFileTool.MAX_WINDOW_LINES,
     ): ToolResult = runBlocking {
-        ReadFileTool().execute(
+        ReadFileTool(tracker).execute(
             ReadFileArgs(tempDir.resolve(path).toString(), offset, limit),
             LocalExecutionEnvironment(tempDir),
         )
@@ -44,7 +46,7 @@ class ReadFileToolTest {
         execResult: ExecResult,
         args: ReadFileArgs = ReadFileArgs("/file.txt", offset = 1, limit = ReadFileTool.MAX_WINDOW_LINES),
     ): ToolResult =
-        runBlocking { ReadFileTool().execute(args, FixedResultEnvironment(execResult)) }
+        runBlocking { ReadFileTool(tracker).execute(args, FixedResultEnvironment(execResult)) }
 
     private fun writeFile(name: String, content: String): Path =
         tempDir.resolve(name).apply { writeText(content) }
@@ -58,7 +60,7 @@ class ReadFileToolTest {
     @Test
     @DisplayName("The definition documents text scope, absolute paths, and verbatim output")
     fun definitionDocumentsTheContract() {
-        val definition = ReadFileTool().definition
+        val definition = ReadFileTool(tracker).definition
 
         assertEquals("read_file", definition.name)
         val description = assertNotNull(definition.description)
@@ -71,7 +73,7 @@ class ReadFileToolTest {
     @Test
     @DisplayName("The parameters schema requires path, offset, and limit")
     fun parametersSchemaShape() {
-        val schema = assertNotNull(ReadFileTool().definition.parameters)
+        val schema = assertNotNull(ReadFileTool(tracker).definition.parameters)
 
         val properties = schema.getValue("properties").jsonObject
         assertEquals("string", properties.getValue("path").jsonObject.getValue("type").jsonPrimitive.content)
@@ -143,9 +145,9 @@ class ReadFileToolTest {
     fun invalidArgumentsAreRejectedBeforeExec() = runBlocking {
         val environment = FixedResultEnvironment(completed())
 
-        val pathError = ReadFileTool().execute(ReadFileArgs("src/Foo.kt", offset = 1, limit = 10), environment)
-        val offsetError = ReadFileTool().execute(ReadFileArgs("/notes.txt", offset = 0, limit = 10), environment)
-        val limitError = ReadFileTool().execute(ReadFileArgs("/notes.txt", offset = 1, limit = 0), environment)
+        val pathError = ReadFileTool(tracker).execute(ReadFileArgs("src/Foo.kt", offset = 1, limit = 10), environment)
+        val offsetError = ReadFileTool(tracker).execute(ReadFileArgs("/notes.txt", offset = 0, limit = 10), environment)
+        val limitError = ReadFileTool(tracker).execute(ReadFileArgs("/notes.txt", offset = 1, limit = 0), environment)
 
         assertContains(assertIs<ToolResult.Error>(pathError).message, "absolute")
         assertContains(assertIs<ToolResult.Error>(offsetError).message, "offset")
@@ -181,6 +183,41 @@ class ReadFileToolTest {
         val error = assertIs<ToolResult.Error>(result)
         assertContains(error.message, "offset 4")
         assertContains(error.message, "short.txt")
+    }
+
+    // ─── Read tracking ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Successful reads — full, partial window, empty file — mark the path read")
+    fun successfulReadsMarkThePathRead() {
+        writeFile("full.txt", "alpha\n")
+        writeNumberedLines("long.txt", lines = 9)
+        writeFile("empty.txt", "")
+
+        read("full.txt")
+        read("long.txt", offset = 3, limit = 2)
+        read("empty.txt")
+
+        assertTrue(tracker.wasRead(tempDir.resolve("full.txt").toString()))
+        assertTrue(tracker.wasRead(tempDir.resolve("long.txt").toString()))
+        assertTrue(tracker.wasRead(tempDir.resolve("empty.txt").toString()))
+    }
+
+    @Test
+    @DisplayName("Failed reads — missing file, offset past the end, relative path — do not mark the path read")
+    fun failedReadsDoNotMarkThePathRead() = runBlocking {
+        writeNumberedLines("short.txt", lines = 3)
+
+        read("does-not-exist.txt")
+        read("short.txt", offset = 7)
+        ReadFileTool(tracker).execute(
+            ReadFileArgs("relative.txt", offset = 1, limit = 10),
+            FixedResultEnvironment(completed()),
+        )
+
+        assertFalse(tracker.wasRead(tempDir.resolve("does-not-exist.txt").toString()))
+        assertFalse(tracker.wasRead(tempDir.resolve("short.txt").toString()))
+        assertFalse(tracker.wasRead("relative.txt"))
     }
 
     // ─── Range semantics ──────────────────────────────────────────────
@@ -287,7 +324,7 @@ class ReadFileToolTest {
     fun sedInvocationShape() = runBlocking {
         val environment = FixedResultEnvironment(completed(stdout = "3\n"))
 
-        ReadFileTool().execute(ReadFileArgs("/workspace/file.txt", offset = 3, limit = 5), environment)
+        ReadFileTool(tracker).execute(ReadFileArgs("/workspace/file.txt", offset = 3, limit = 5), environment)
 
         // Lines 3..8: the window plus one sentinel line to detect a continuing
         // file, quitting at the sentinel so sed never scans to EOF.
