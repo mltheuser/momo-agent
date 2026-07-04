@@ -65,7 +65,7 @@ public class ReadFileTool(private val tracker: FileReadTracker) : Tool<ReadFileA
      */
     private fun interpret(args: ReadFileArgs, result: ExecResult.Completed): ToolResult = when {
         result.exitCode != 0 ->
-            ToolResult.Error("cannot read '${args.path}': ${result.diagnostic()}")
+            ToolResult.Error("cannot read '${args.path}': ${result.diagnostic("read")}")
 
         result.stdout.isEmpty() && args.offset == 1 ->
             ToolResult.Success(EMPTY_FILE_NOTE)
@@ -76,9 +76,6 @@ public class ReadFileTool(private val tracker: FileReadTracker) : Tool<ReadFileA
         else ->
             ToolResult.Success(render(args, result))
     }
-
-    private fun ExecResult.Completed.diagnostic(): String =
-        stderr.trim().ifEmpty { "read command exited with code $exitCode" }
 
     private fun render(args: ReadFileArgs, result: ExecResult.Completed): String {
         val window = windowOf(result.stdout, args.windowLines)

@@ -61,7 +61,7 @@ public class WriteFileTool(private val tracker: FileReadTracker) : Tool<WriteFil
         )
 
         result.exitCode != 0 ->
-            ToolResult.Error("cannot write '${args.path}': ${result.diagnostic()}")
+            ToolResult.Error("cannot write '${args.path}': ${result.diagnostic("write")}")
 
         else -> {
             tracker.markRead(args.path)
@@ -69,9 +69,6 @@ public class WriteFileTool(private val tracker: FileReadTracker) : Tool<WriteFil
             ToolResult.Success("$verb '${args.path}'")
         }
     }
-
-    private fun ExecResult.Completed.diagnostic(): String =
-        stderr.trim().ifEmpty { "write command exited with code $exitCode" }
 }
 
 /** `$2` values telling [WRITE_SCRIPT] whether the tracker permits replacing an existing target. */
@@ -112,8 +109,9 @@ private val WRITE_SCRIPT: String = """
 
 /** LLM-facing contract of [WriteFileTool] — the model only knows what this says. */
 private val WRITE_FILE_DESCRIPTION: String = """
-    Writes a file, creating it or fully replacing its content if it already exists. `path` is
-    the ABSOLUTE path of the file to write. Overwriting an existing file that has not been read
-    this session fails — read it with `read_file` first. Missing parent directories are created
-    automatically.
+    Writes a file, creating it or fully replacing its content if it already exists. Use it for
+    new files and full rewrites; for partial changes to an existing file use `edit_file`.
+    `path` is the ABSOLUTE path of the file to write. Overwriting an existing file that has not
+    been read this session fails — read it with `read_file` first. Missing parent directories
+    are created automatically.
 """.trimIndent()

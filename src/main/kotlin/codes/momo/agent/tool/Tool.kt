@@ -54,9 +54,10 @@ public abstract class Tool<A : Any> protected constructor(
      * - Calls to [ExecutionEnvironment.exec] pass
      *   [codes.momo.agent.Budgets.TOOL_TIMEOUT] and map
      *   [codes.momo.agent.environment.ExecResult.TimedOut] to
-     *   [ToolResult.TimedOut] with its partial output. The budget bounds
-     *   the whole execution: work overrunning it across several calls is
-     *   cut off by the dispatch backstop, which keeps no partial output.
+     *   [ToolResult.TimedOut], surfacing partial output only when it cannot
+     *   be misread as success. The budget bounds the whole execution: work
+     *   overrunning it across several calls is cut off by the dispatch
+     *   backstop, which keeps no partial output.
      * - Expected failures return [ToolResult.Error]; truncation, the
      *   timeout backstop, and unexpected-exception mapping happen once,
      *   in [ToolRegistry.execute].

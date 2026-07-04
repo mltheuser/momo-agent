@@ -46,29 +46,17 @@ class WriteFileToolTest {
         WriteFileTool(tracker).execute(WriteFileArgs("/file.txt", "content"), FixedResultEnvironment(execResult))
     }
 
-    /** Reads [path] back byte-exact via a plain exec `cat` — read_file would truncate large content. */
-    private fun catBack(path: String): String = runBlocking {
-        val result = LocalExecutionEnvironment(tempDir).exec(
-            listOf("cat", tempDir.resolve(path).toString()),
-            timeout = Budgets.TOOL_TIMEOUT,
-        )
-        val completed = assertIs<ExecResult.Completed>(result)
-        assertEquals(0, completed.exitCode, "read-back cat failed: ${completed.stderr}")
-        assertFalse(completed.stdoutTruncated, "read-back hit the exec capture cap; use smaller test content")
-        completed.stdout
-    }
-
     private fun assertRoundTrips(content: String, path: String = "file.txt") {
         val result = write(path, content)
 
         assertIs<ToolResult.Success>(result, "write failed: ${result.text}")
-        assertEquals(content, catBack(path))
+        assertEquals(content, catBack(tempDir, path))
     }
 
     // ─── Definition ───────────────────────────────────────────────────
 
     @Test
-    @DisplayName("The definition documents overwrite semantics, the read-first precondition, and parent creation")
+    @DisplayName("The definition documents overwrite semantics, read-first, parent creation, and edit_file steering")
     fun definitionDocumentsTheContract() {
         val definition = WriteFileTool(tracker).definition
 
@@ -78,6 +66,7 @@ class WriteFileToolTest {
         assertContains(description, "ABSOLUTE path")
         assertContains(description, "read_file")
         assertContains(description, "parent directories")
+        assertContains(description, "edit_file")
     }
 
     @Test
@@ -102,7 +91,7 @@ class WriteFileToolTest {
         val result = write("notes.txt", "alpha\nbeta\n")
 
         assertEquals("created '${tempDir.resolve("notes.txt")}'", assertIs<ToolResult.Success>(result).text)
-        assertEquals("alpha\nbeta\n", catBack("notes.txt"))
+        assertEquals("alpha\nbeta\n", catBack(tempDir, "notes.txt"))
         assertTrue(tracker.wasRead(tempDir.resolve("notes.txt").toString()))
     }
 
@@ -116,7 +105,7 @@ class WriteFileToolTest {
         val result = write("notes.txt", "new\n")
 
         assertEquals("replaced '$path'", assertIs<ToolResult.Success>(result).text)
-        assertEquals("new\n", catBack("notes.txt"))
+        assertEquals("new\n", catBack(tempDir, "notes.txt"))
     }
 
     @Test
@@ -130,7 +119,7 @@ class WriteFileToolTest {
         val error = assertIs<ToolResult.Error>(result)
         assertContains(error.message, path.toString())
         assertContains(error.message, "read_file")
-        assertEquals("precious\n", catBack("notes.txt"))
+        assertEquals("precious\n", catBack(tempDir, "notes.txt"))
         assertFalse(tracker.wasRead(path.toString()), "a guarded write must not mark the path read")
     }
 
@@ -142,7 +131,7 @@ class WriteFileToolTest {
         val result = write("notes.txt", "second\n")
 
         assertEquals("replaced '${tempDir.resolve("notes.txt")}'", assertIs<ToolResult.Success>(result).text)
-        assertEquals("second\n", catBack("notes.txt"))
+        assertEquals("second\n", catBack(tempDir, "notes.txt"))
     }
 
     @Test
@@ -154,7 +143,7 @@ class WriteFileToolTest {
         val result = write("gone.txt", "fresh\n")
 
         assertEquals("created '$path'", assertIs<ToolResult.Success>(result).text)
-        assertEquals("fresh\n", catBack("gone.txt"))
+        assertEquals("fresh\n", catBack(tempDir, "gone.txt"))
     }
 
     // ─── Content robustness ───────────────────────────────────────────
@@ -181,7 +170,7 @@ class WriteFileToolTest {
         val result = write("empty.txt", "")
 
         assertIs<ToolResult.Success>(result)
-        assertEquals("", catBack("empty.txt"))
+        assertEquals("", catBack(tempDir, "empty.txt"))
     }
 
     @Test
@@ -203,7 +192,7 @@ class WriteFileToolTest {
         val result = write(name, "survived\n")
 
         assertIs<ToolResult.Success>(result, "write failed: ${result.text}")
-        assertEquals("survived\n", catBack(name))
+        assertEquals("survived\n", catBack(tempDir, name))
     }
 
     @Test
@@ -212,7 +201,7 @@ class WriteFileToolTest {
         val result = write("a/b/c/d/notes.txt", "nested\n")
 
         assertIs<ToolResult.Success>(result, "write failed: ${result.text}")
-        assertEquals("nested\n", catBack("a/b/c/d/notes.txt"))
+        assertEquals("nested\n", catBack(tempDir, "a/b/c/d/notes.txt"))
     }
 
     // ─── Errors ───────────────────────────────────────────────────────
