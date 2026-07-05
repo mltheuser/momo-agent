@@ -24,6 +24,9 @@ index (see Docs).
 - Comments and KDoc are minimal and purposeful: say only what naming and
   structure cannot, state each contract fact in exactly one place, and keep
   KDoc self-contained (no planning-doc or issue references).
+- Test source sets are `associateWith`-bound to `main` (see
+  build.gradle.kts), so `internal` declarations are visible to both the
+  unit and live tests.
 
 ## Docs
 

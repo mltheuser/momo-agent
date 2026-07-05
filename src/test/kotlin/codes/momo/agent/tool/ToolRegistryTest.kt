@@ -9,6 +9,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -239,6 +240,22 @@ class ToolRegistryTest {
     }
 
     @Test
+    @DisplayName("An enclosing scope's timeout cancels dispatch instead of becoming a TimedOut result")
+    fun enclosingTimeoutPropagatesAsCancellation() = runTest {
+        val registry = registryOf(
+            ScriptedTool {
+                delay(Budgets.TOOL_TIMEOUT)
+                ToolResult.Success("never delivered")
+            },
+        )
+        var result: ToolResult? = null
+
+        withTimeoutOrNull(1.seconds) { result = registry.dispatch("scripted") }
+
+        assertNull(result, "expected the enclosing timeout to cancel dispatch, not yield a result")
+    }
+
+    @Test
     @DisplayName("A tool finishing within the grace window keeps its own TimedOut result, with partial output bounded")
     fun graceWindowPreservesToolReportedPartialOutput() = runTest {
         // Just past the budget is still inside the dispatcher's grace
@@ -335,6 +352,9 @@ private class ScriptedTool(
 
 /** No dispatch under test touches the workspace. */
 private object UnusedEnvironment : ExecutionEnvironment {
+
+    override val workspacePath: String
+        get() = error("the registry tests never use the workspace")
 
     override suspend fun exec(command: List<String>, stdin: ByteArray?, timeout: Duration): ExecResult =
         error("the registry tests never exec")

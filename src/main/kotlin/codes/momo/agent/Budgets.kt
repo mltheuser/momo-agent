@@ -18,3 +18,9 @@ public object Budgets {
     /** Timeout for a single tool execution. */
     public val TOOL_TIMEOUT: Duration = 5.minutes
 }
+
+/** A specific loop's budget values. */
+internal data class RunBudgets(
+    val maxTurns: Int = Budgets.MAX_TURNS,
+    val maxWallClock: Duration = Budgets.MAX_WALL_CLOCK,
+)

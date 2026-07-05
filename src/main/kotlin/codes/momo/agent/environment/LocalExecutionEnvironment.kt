@@ -62,6 +62,8 @@ public class LocalExecutionEnvironment internal constructor(
         }
     }
 
+    public override val workspacePath: String = workspace.toAbsolutePath().normalize().toString()
+
     /**
      * Runs [command] on the host per the [ExecutionEnvironment.exec]
      * contract. A program that cannot be started at all (no such

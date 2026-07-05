@@ -37,6 +37,10 @@ kotlin {
     compilerOptions {
         allWarningsAsErrors = true
     }
+    // Give the live tests `internal` access to main.
+    target.compilations.matching { it.name == "liveTest" }.configureEach {
+        associateWith(target.compilations.getByName("main"))
+    }
 }
 
 detekt {

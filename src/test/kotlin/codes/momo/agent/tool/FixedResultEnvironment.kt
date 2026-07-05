@@ -14,6 +14,8 @@ import kotlin.time.Duration
  */
 internal class FixedResultEnvironment(private vararg val results: ExecResult) : ExecutionEnvironment {
 
+    override val workspacePath: String = "/workspace"
+
     var callCount: Int = 0
         private set
 

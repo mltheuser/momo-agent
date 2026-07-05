@@ -24,24 +24,11 @@ import kotlin.test.assertTrue
  * Verifies the bash tool round-trips through a live model: definition →
  * tool call → dispatched execution over a real workspace → tool message →
  * follow-up answer.
- *
- * Configuration arrives as system properties set by the `liveTest` Gradle
- * task (see build.gradle.kts): `aiRouter.baseUrl` and `aiRouter.chatModel`.
  */
 class BashToolLiveTest {
 
     @TempDir
     lateinit var workspace: Path
-
-    private val baseUrl: String = requiredSystemProperty("aiRouter.baseUrl")
-
-    private val chatModel: String = requiredSystemProperty("aiRouter.chatModel")
-
-    private fun requiredSystemProperty(name: String): String =
-        checkNotNull(System.getProperty(name)) {
-            "System property '$name' is not set — run via ./gradlew liveTest, " +
-                "or set -DaiRouter.baseUrl=... / -DaiRouter.chatModel=..."
-        }
 
     @Test
     @DisplayName("Tool round-trip: the model calls bash, the registry executes it, and the model answers")
@@ -50,10 +37,10 @@ class BashToolLiveTest {
         val registry = ToolRegistry(listOf(BashTool()))
         val environment = LocalExecutionEnvironment(workspace)
 
-        AiRouterClient(baseUrl).use { client ->
+        AiRouterClient(liveBaseUrl).use { client ->
             // The DSL's ToolsBuilder.addTool(ToolDefinition) is internal, so
             // pre-built definitions travel via the ChatRequest data class.
-            val request = chatRequest(chatModel) {
+            val request = chatRequest(liveChatModel) {
                 messages {
                     system { text("You are a coding agent working in a workspace.") }
                     user { text("What is the content of notes.txt in the workspace? Check with the bash tool.") }

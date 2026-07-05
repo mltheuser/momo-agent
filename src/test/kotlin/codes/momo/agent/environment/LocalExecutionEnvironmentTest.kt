@@ -262,6 +262,18 @@ class LocalExecutionEnvironmentTest {
         fail("pid file was not written in time: $pidFile")
     }
 
+    // ─── Workspace path ───────────────────────────────────────────────
+
+    @Test
+    @DisplayName("workspacePath reports the workspace as a normalized absolute host path")
+    fun workspacePathIsTheAbsoluteWorkspace() {
+        // A messy-but-valid spelling of the same directory must come back
+        // as the canonical absolute path.
+        val environment = LocalExecutionEnvironment(tempDir.resolve("."))
+
+        assertEquals(tempDir.toString(), environment.workspacePath)
+    }
+
     // ─── Startup validation ───────────────────────────────────────────
 
     @Test

@@ -5,6 +5,8 @@ import codes.momo.agent.Budgets
 import codes.momo.agent.environment.ExecutionEnvironment
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Duration
@@ -85,6 +87,10 @@ public class ToolRegistry(tools: List<Tool<*>>) {
         return try {
             withTimeout(Budgets.TOOL_TIMEOUT + TIMEOUT_GRACE) { invocation() }
         } catch (_: TimeoutCancellationException) {
+            // An enclosing scope's timeout throws this same type from inside
+            // the block; it must cancel dispatch, not become a result. Only
+            // the dispatch timer's own expiry leaves the current job active.
+            currentCoroutineContext().ensureActive()
             ToolResult.TimedOut()
         } catch (exception: CancellationException) {
             throw exception

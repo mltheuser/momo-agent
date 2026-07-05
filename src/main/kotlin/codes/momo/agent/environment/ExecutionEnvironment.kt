@@ -14,6 +14,13 @@ import kotlin.time.Duration
 public interface ExecutionEnvironment : AutoCloseable {
 
     /**
+     * Absolute path of the workspace root as seen by commands run through
+     * [exec] — for a container-backed environment the in-container path,
+     * not the host one. POSIX notation, the form tools pass paths in.
+     */
+    public val workspacePath: String
+
+    /**
      * Runs [command] with the workspace root as the working directory,
      * returning once the process exited or [timeout] elapsed.
      *
