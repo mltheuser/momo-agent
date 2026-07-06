@@ -62,9 +62,11 @@ class AgentLiveTest {
             val environment = LocalExecutionEnvironment(workspace)
             val agent = Agent(harness(), client, environment, "Live test session")
 
-            val result = agent.prompt(
-                "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
-                    "and reply with the token it contains.",
+            val result = agent.send(
+                AgentInput.UserMessage(
+                    "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
+                        "and reply with the token it contains.",
+                ),
             )
 
             assertEquals(PromptResult.Status.COMPLETED, result.status, "error: ${result.error}")
@@ -109,9 +111,11 @@ class AgentLiveTest {
                 session = SessionState.Fresh("Live test session"),
             )
 
-            val result = agent.prompt(
-                "You must inspect the workspace files with your tools before answering. " +
-                    "What is the content of data.txt?",
+            val result = agent.send(
+                AgentInput.UserMessage(
+                    "You must inspect the workspace files with your tools before answering. " +
+                        "What is the content of data.txt?",
+                ),
             )
 
             // A model answering without any tool call is legal behaviour that
@@ -138,14 +142,18 @@ class AgentLiveTest {
             val environment = LocalExecutionEnvironment(workspace)
             val agent = Agent(harness(), client, environment, "Live test session")
 
-            val first = agent.prompt(
-                "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
-                    "and reply with the token it contains.",
+            val first = agent.send(
+                AgentInput.UserMessage(
+                    "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
+                        "and reply with the token it contains.",
+                ),
             )
             assertEquals(PromptResult.Status.COMPLETED, first.status, "error: ${first.error}")
 
-            val second = agent.prompt(
-                "Repeat the exact token you found before. Answer from the conversation, without using any tool.",
+            val second = agent.send(
+                AgentInput.UserMessage(
+                    "Repeat the exact token you found before. Answer from the conversation, without using any tool.",
+                ),
             )
 
             assertEquals(PromptResult.Status.COMPLETED, second.status, "error: ${second.error}")

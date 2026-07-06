@@ -9,7 +9,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -91,6 +90,15 @@ class ToolRegistryTest {
         }
 
         assertContains(exception.message.orEmpty(), "teleport")
+    }
+
+    @Test
+    @DisplayName("A restricted registry treats everything outside its subset as unknown")
+    fun restrictedRegistryTreatsOtherToolsAsUnknown() = runTest {
+        val registry = registryOf(EchoTool(), ScriptedTool()).restrictedTo(listOf("echo"))
+
+        assertEquals(setOf("echo"), registry.names)
+        assertError(registry.dispatch("scripted"), "unknown tool 'scripted'", "available tools: echo.")
     }
 
     // ─── Harness tool-list validation ─────────────────────────────────
@@ -183,6 +191,20 @@ class ToolRegistryTest {
         assertEquals(ToolResult.Success("hi"), result)
     }
 
+    // ─── External tools ───────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Executing an external tool yields an error result: externals are never dispatched in-process")
+    fun externalToolExecutionYieldsError() = runTest {
+        val registry = registryOf(AskUserTool())
+
+        val wellFormed = registry.dispatch("ask_user", buildJsonObject { put("question", "Which?") })
+        val malformed = registry.dispatch("ask_user", buildJsonObject { })
+
+        assertError(wellFormed, "ask_user", "outside the process")
+        assertError(malformed, "invalid arguments", "ask_user")
+    }
+
     // ─── Exception mapping ────────────────────────────────────────────
 
     @Test
@@ -241,19 +263,30 @@ class ToolRegistryTest {
     }
 
     @Test
-    @DisplayName("An enclosing scope's timeout cancels dispatch instead of becoming a TimedOut result")
-    fun enclosingTimeoutPropagatesAsCancellation() = runTest {
+    @DisplayName("A caller bound below the tool budget fires sharp — no grace — and is named in the result")
+    fun callerBoundBelowToolBudgetFiresSharp() = runTest {
         val registry = registryOf(
             ScriptedTool {
-                delay(Budgets.TOOL_TIMEOUT)
+                delay(31.seconds)
                 ToolResult.Success("never delivered")
             },
         )
-        var result: ToolResult? = null
 
-        withTimeoutOrNull(1.seconds) { result = registry.dispatch("scripted") }
+        val result = registry.execute("scripted", buildJsonObject { }, UnusedEnvironment, timeout = 30.seconds)
 
-        assertNull(result, "expected the enclosing timeout to cancel dispatch, not yield a result")
+        val timedOut = assertIs<ToolResult.TimedOut>(result.result)
+        assertNull(timedOut.partialOutput)
+        assertContains(timedOut.text, "timed out after 30s")
+    }
+
+    @Test
+    @DisplayName("A zero bound yields an immediate TimedOut result naming the zero bound")
+    fun zeroBoundTimesOutImmediately() = runTest {
+        val registry = registryOf(ScriptedTool { ToolResult.Success("never runs") })
+
+        val result = registry.execute("scripted", buildJsonObject { }, UnusedEnvironment, timeout = Duration.ZERO)
+
+        assertContains(assertIs<ToolResult.TimedOut>(result.result).text, "timed out after 0s")
     }
 
     @Test
@@ -330,7 +363,7 @@ private data class EchoArgs(
 )
 
 /** Echoes `text` back `repeat` times; ignores the workspace. */
-private class EchoTool : Tool<EchoArgs>(
+private class EchoTool : DispatchedTool<EchoArgs>(
     name = "echo",
     description = "Echoes text back.",
     argsSerializer = EchoArgs.serializer(),
@@ -347,7 +380,7 @@ private class EmptyArgs
 private class ScriptedTool(
     name: String = "scripted",
     private val body: suspend () -> ToolResult = { ToolResult.Success("") },
-) : Tool<EmptyArgs>(
+) : DispatchedTool<EmptyArgs>(
     name = name,
     description = "Scripted test behaviour.",
     argsSerializer = EmptyArgs.serializer(),

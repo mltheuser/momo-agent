@@ -12,6 +12,7 @@ internal fun coreToolRegistry(): ToolRegistry {
             ReadFileTool(tracker),
             WriteFileTool(tracker),
             EditFileTool(tracker),
+            AskUserTool(),
         ),
     )
 }

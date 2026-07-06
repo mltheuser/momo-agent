@@ -62,7 +62,7 @@ class HarnessTest {
         val harness = Harness.load(Path.of("examples/coder"))
 
         assertEquals("qwen3.5:9b:local@ollama", harness.model)
-        assertEquals(listOf("bash", "read_file", "write_file", "edit_file"), harness.tools)
+        assertEquals(listOf("bash", "read_file", "write_file", "edit_file", "ask_user"), harness.tools)
         assertTrue(harness.instructions.contains("Understand the task"), "instructions.md content is exposed raw")
     }
 

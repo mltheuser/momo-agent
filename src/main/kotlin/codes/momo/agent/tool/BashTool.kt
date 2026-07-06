@@ -15,7 +15,7 @@ public data class BashArgs(
 /**
  * general-purpose shell tool: one bash command per call.
  */
-public class BashTool : Tool<BashArgs>(
+public class BashTool : DispatchedTool<BashArgs>(
     name = "bash",
     description = BASH_DESCRIPTION,
     argsSerializer = BashArgs.serializer(),

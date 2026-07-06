@@ -84,7 +84,13 @@ internal fun bashCall(id: String, command: String): ToolCall = ToolCall(
     function = ToolCallFunction(name = "bash", arguments = buildJsonObject { put("command", command) }),
 )
 
-private val RESPONSE_USAGE: ChatUsage = ChatUsage(
+internal fun askUserCall(id: String, question: String): ToolCall = ToolCall(
+    id = id,
+    function = ToolCallFunction(name = "ask_user", arguments = buildJsonObject { put("question", question) }),
+)
+
+/** The usage every scripted response reports. */
+internal val RESPONSE_USAGE: ChatUsage = ChatUsage(
     promptTokens = 1,
     completionTokens = 1,
     totalTokens = 2,

@@ -55,7 +55,7 @@ private data class GreetArgs(
     val excitement: Int = 0,
 )
 
-private class GreetTool(name: String = "greet") : Tool<GreetArgs>(
+private class GreetTool(name: String = "greet") : DispatchedTool<GreetArgs>(
     name = name,
     description = "Greets a person by name.",
     argsSerializer = GreetArgs.serializer(),

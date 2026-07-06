@@ -19,7 +19,7 @@ public data class WriteFileArgs(
  * [FileReadTracker] guards replacement of files the model has not seen; a
  * successful write marks the path read.
  */
-public class WriteFileTool(private val tracker: FileReadTracker) : Tool<WriteFileArgs>(
+public class WriteFileTool(private val tracker: FileReadTracker) : DispatchedTool<WriteFileArgs>(
     name = "write_file",
     description = WRITE_FILE_DESCRIPTION,
     argsSerializer = WriteFileArgs.serializer(),

@@ -7,6 +7,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 class ToolResultTest {
 
@@ -33,6 +34,22 @@ class ToolResultTest {
         assertTrue(text.startsWith("Error:"), "expected a textual error signal, was: $text")
         assertContains(text, "timed out")
         assertContains(text, Budgets.TOOL_TIMEOUT.toString())
+    }
+
+    @Test
+    @DisplayName("TimedOut text names the actual bound applied when it differs from the tool budget")
+    fun timeoutTextNamesActualBound() {
+        assertContains(ToolResult.TimedOut(timeout = 42.seconds).text, "timed out after 42s")
+    }
+
+    @Test
+    @DisplayName("TimedOut text attributes a bound below the tool budget to the run's wall clock")
+    fun timeoutTextAttributesWallClockBound() {
+        assertContains(ToolResult.TimedOut(timeout = 42.seconds).text, "wall-clock budget")
+        assertFalse(
+            ToolResult.TimedOut().text.contains("wall-clock"),
+            "the full tool budget must not be attributed to the wall clock",
+        )
     }
 
     @Test

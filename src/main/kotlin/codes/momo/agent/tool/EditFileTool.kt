@@ -26,7 +26,7 @@ public data class EditFileArgs(
  * files the model has seen; the target is therefore already marked read,
  * and tracker state is left as is.
  */
-public class EditFileTool(private val tracker: FileReadTracker) : Tool<EditFileArgs>(
+public class EditFileTool(private val tracker: FileReadTracker) : DispatchedTool<EditFileArgs>(
     name = "edit_file",
     description = EDIT_FILE_DESCRIPTION,
     argsSerializer = EditFileArgs.serializer(),

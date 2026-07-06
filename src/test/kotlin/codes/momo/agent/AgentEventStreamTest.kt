@@ -23,10 +23,14 @@ class AgentEventStreamTest {
     // ─── Fixture helpers ──────────────────────────────────────────────
 
     /** Runs one "go" prompt against a scripted LLM, reporting to [listener]. */
-    private fun runScripted(listener: AgentEventListener, vararg replies: ScriptedReply): PromptResult =
+    private fun runScripted(
+        listener: AgentEventListener,
+        vararg replies: ScriptedReply,
+        budgets: RunBudgets = RunBudgets(),
+    ): PromptResult =
         scriptedServer(*replies).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
-                runBlocking { agent(client, listener).prompt("go") }
+                runBlocking { agent(client, listener, budgets).send(AgentInput.UserMessage("go")) }
             }
         }
 
@@ -148,20 +152,84 @@ class AgentEventStreamTest {
     // ─── Timeout ──────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("A timed-out run still emits its RunFinished, outside the cancelled loop")
+    @DisplayName("A timed-out run emits its RunFinished at the boundary that ended it")
     fun timedOutRunEmitsRunFinished() {
         val listener = CollectingEventListener()
-        hangingServer().use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                runBlocking {
-                    agent(client, listener, RunBudgets(maxWallClock = 100.milliseconds)).prompt("hello")
-                }
-            }
-        }
 
+        val result = runScripted(
+            listener,
+            toolCallResponse(bashCall(id = "call-1", command = "sleep 30")).asReply(),
+            budgets = RunBudgets(maxWallClock = 500.milliseconds),
+        )
+
+        assertEquals(PromptResult.Status.TIMEOUT, result.status)
         val finished = assertIs<AgentEvent.RunFinished>(listener.events.last())
         assertEquals(PromptResult.Status.TIMEOUT, finished.status)
         assertNull(finished.finalMessage)
+    }
+
+    // ─── Pause and resume ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("A pause logs only QuestionAsked; the resume logs QuestionAnswered and one terminal RunFinished")
+    fun pauseAndResumeEventFlow() {
+        val listener = CollectingEventListener()
+        scriptedServer(
+            toolCallResponse(askUserCall(id = "call-1", question = "Which one?")),
+            assistantResponse(finishReason = "stop", text = "done"),
+        ).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                val agent = agent(client, listener)
+                runBlocking {
+                    val parked = agent.send(AgentInput.UserMessage("go"))
+
+                    assertEquals(PromptResult.Status.AWAITING_USER, parked.status, "error: ${parked.error}")
+                    val pauseEvents = listener.events.toList()
+                    assertEquals(
+                        listOf(
+                            AgentEvent.SessionStarted::class,
+                            AgentEvent.RunStarted::class,
+                            AgentEvent.LlmCallStarted::class,
+                            AgentEvent.LlmCallFinished::class,
+                            AgentEvent.BudgetUpdated::class,
+                            AgentEvent.QuestionAsked::class,
+                        ),
+                        pauseEvents.map { it::class },
+                    )
+                    val asked = assertIs<AgentEvent.QuestionAsked>(pauseEvents.last())
+                    assertEquals("call-1", asked.callId)
+                    assertEquals("Which one?", asked.question)
+
+                    val finished = agent.send(AgentInput.Answer("that one"))
+
+                    assertEquals(PromptResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
+                    val resumeEvents = listener.events.drop(pauseEvents.size)
+                    assertEquals(
+                        listOf(
+                            AgentEvent.QuestionAnswered::class,
+                            AgentEvent.LlmCallStarted::class,
+                            AgentEvent.LlmCallFinished::class,
+                            AgentEvent.BudgetUpdated::class,
+                            AgentEvent.RunFinished::class,
+                        ),
+                        resumeEvents.map { it::class },
+                    )
+                    val answered = assertIs<AgentEvent.QuestionAnswered>(resumeEvents.first())
+                    assertEquals("call-1", answered.callId)
+                    assertEquals("that one", answered.answer)
+                    // The one RunFinished carries the totals accumulated across both segments.
+                    val runFinished = assertIs<AgentEvent.RunFinished>(listener.events.last())
+                    assertEquals(2, runFinished.turnsUsed)
+                    assertEquals(finished.usage, runFinished.usage)
+                    assertEquals(finished.elapsed, runFinished.elapsed)
+                    // One gapless log across the pause.
+                    assertEquals(
+                        List(listener.events.size) { it.toLong() },
+                        listener.events.map { it.sequenceId },
+                    )
+                }
+            }
+        }
     }
 
     // ─── Listener isolation ───────────────────────────────────────────

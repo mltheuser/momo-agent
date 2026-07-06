@@ -42,7 +42,7 @@ public sealed interface AgentEvent {
         val title: String,
     ) : AgentEvent
 
-    /** An [Agent.prompt] run began; [userMessage] is the verbatim user text. */
+    /** An [Agent.send] prompt began; [userMessage] is the verbatim user text. */
     @Serializable
     @SerialName("run_started")
     public data class RunStarted(
@@ -52,11 +52,14 @@ public sealed interface AgentEvent {
     ) : AgentEvent
 
     /**
-     * An [Agent.prompt] run ended, however it ended — except by external
-     * cancellation, which a log therefore records as a run without this
-     * event; [Agent.load]'s transcript repair covers that missing tail.
-     * The fields carry the run's [PromptResult] counterparts, the final
-     * message verbatim.
+     * A prompt — a "run" in the log's vocabulary — reached a terminal
+     * status, however it ended. External cancellation is the one
+     * exception: a log records a cancelled run without this event, and
+     * [Agent.load]'s transcript repair covers that missing tail. A pause
+     * is not terminal: it logs only [QuestionAsked], and the answering
+     * segment continues the same run. The fields carry the final
+     * [PromptResult] counterparts: the prompt's totals, the final message
+     * verbatim.
      */
     @Serializable
     @SerialName("run_finished")
@@ -141,6 +144,34 @@ public sealed interface AgentEvent {
         }
     }
 
+    /**
+     * The prompt parked on an [codes.momo.agent.tool.ExternalTool] call:
+     * [question] is the verbatim question awaiting the user's answer. A
+     * parked call is never dispatched, so no [ToolCallStarted] or
+     * [ToolCallFinished] accompany it.
+     */
+    @Serializable
+    @SerialName("question_asked")
+    public data class QuestionAsked(
+        override val sequenceId: Long,
+        override val timestampMillis: Long,
+        val callId: String,
+        val question: String,
+    ) : AgentEvent
+
+    /**
+     * The pending question was answered; [answer] is the exact tool-result
+     * text appended to the conversation for [callId].
+     */
+    @Serializable
+    @SerialName("question_answered")
+    public data class QuestionAnswered(
+        override val sequenceId: Long,
+        override val timestampMillis: Long,
+        val callId: String,
+        val answer: String,
+    ) : AgentEvent
+
     /** Budget accounting at a turn boundary. */
     @Serializable
     @SerialName("budget_updated")
@@ -149,7 +180,7 @@ public sealed interface AgentEvent {
         override val timestampMillis: Long,
         val turnsUsed: Int,
         val turnsRemaining: Int,
-        /** Wall-clock time elapsed since the run started. */
+        /** Active wall-clock time the prompt has consumed. */
         val elapsed: Duration,
     ) : AgentEvent
 }

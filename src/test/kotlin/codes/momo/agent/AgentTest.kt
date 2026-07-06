@@ -1,11 +1,9 @@
 package codes.momo.agent
 
 import ai.router.sdk.AiRouterClient
-import ai.router.sdk.models.ChatResponse
 import codes.momo.agent.environment.LocalExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
@@ -43,19 +41,6 @@ class AgentTest {
         session = SessionState.Fresh("Test session"),
     )
 
-    /** Runs [block] against an agent whose LLM serves [responses] in order. */
-    private fun withScriptedAgent(
-        vararg responses: ChatResponse,
-        budgets: RunBudgets = RunBudgets(),
-        block: suspend CoroutineScope.(Agent) -> Unit,
-    ) {
-        scriptedServer(*responses).use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                runBlocking { block(agent(client, budgets)) }
-            }
-        }
-    }
-
     /** A URL with nothing listening: the port is reserved once, then released. */
     private fun refusingBaseUrl(): String {
         val port = ServerSocket(0).use { it.localPort }
@@ -90,21 +75,29 @@ class AgentTest {
     // ─── Concurrency guard ────────────────────────────────────────────
 
     @Test
-    @DisplayName("A prompt while another is running is rejected with IllegalStateException")
-    fun concurrentPromptIsRejected() {
+    @DisplayName("A send while another is running is rejected with IllegalStateException, whatever its input kind")
+    fun concurrentSendIsRejected() {
         hangingServer().use { server ->
             AiRouterClient(server.baseUrl).use { client ->
                 val agent = agent(client)
                 runBlocking {
-                    // UNDISPATCHED runs the first prompt up to its first
+                    // UNDISPATCHED runs the first send up to its first
                     // suspension — the in-flight LLM call — before launch
                     // returns; nothing here suspends before the assertion,
-                    // so the first prompt cannot have resumed.
-                    val first = launch(start = CoroutineStart.UNDISPATCHED) { agent.prompt("first") }
+                    // so the first send cannot have resumed.
+                    val first = launch(start = CoroutineStart.UNDISPATCHED) {
+                        agent.send(AgentInput.UserMessage("first"))
+                    }
 
-                    val failure = assertFailsWith<IllegalStateException> { agent.prompt("second") }
+                    val userMessage = assertFailsWith<IllegalStateException> {
+                        agent.send(AgentInput.UserMessage("second"))
+                    }
+                    val answer = assertFailsWith<IllegalStateException> {
+                        agent.send(AgentInput.Answer("answer"))
+                    }
 
-                    assertContains(failure.message.orEmpty(), "already running")
+                    assertContains(userMessage.message.orEmpty(), "already running")
+                    assertContains(answer.message.orEmpty(), "already running")
                     first.cancelAndJoin()
                 }
             }
@@ -119,16 +112,17 @@ class AgentTest {
         AiRouterClient(refusingBaseUrl()).use { client ->
             val agent = agent(client)
             runBlocking {
-                val first = agent.prompt("hello")
+                val first = agent.send(AgentInput.UserMessage("hello"))
 
                 assertEquals(PromptResult.Status.ERROR, first.status)
                 assertNull(first.finalMessage)
+                assertNull(first.pendingQuestion)
                 assertNotNull(first.error)
                 assertEquals(0, first.turnsUsed)
                 assertEquals(ZERO_USAGE, first.usage)
                 assertEquals(listOf("system", "user"), first.transcript.map { it.role })
 
-                val second = agent.prompt("again")
+                val second = agent.send(AgentInput.UserMessage("again"))
 
                 assertEquals(PromptResult.Status.ERROR, second.status)
                 assertEquals(listOf("system", "user", "user"), second.transcript.map { it.role })
@@ -139,8 +133,8 @@ class AgentTest {
     @Test
     @DisplayName("A response reporting finish_reason 'error' ends the run as ERROR, not COMPLETED")
     fun reportedFinishErrorBecomesErrorResult() =
-        withScriptedAgent(assistantResponse(finishReason = "error")) { agent ->
-            val result = agent.prompt("hello")
+        workspace.withScriptedAgent(assistantResponse(finishReason = "error")) { agent ->
+            val result = agent.send(AgentInput.UserMessage("hello"))
 
             assertEquals(PromptResult.Status.ERROR, result.status)
             assertNull(result.finalMessage)
@@ -153,11 +147,11 @@ class AgentTest {
 
     @Test
     @DisplayName("Turn exhaustion leaves the pending tool calls unexecuted and repairs the transcript")
-    fun turnExhaustionLeavesPendingCallsUnexecuted() = withScriptedAgent(
+    fun turnExhaustionLeavesPendingCallsUnexecuted() = workspace.withScriptedAgent(
         toolCallResponse(bashCall(id = "call-1", command = "echo never-run")),
         budgets = RunBudgets(maxTurns = 1),
     ) { agent ->
-        val result = agent.prompt("go")
+        val result = agent.send(AgentInput.UserMessage("go"))
 
         assertEquals(PromptResult.Status.TURNS_EXHAUSTED, result.status)
         assertNull(result.finalMessage)
@@ -167,12 +161,12 @@ class AgentTest {
         assertEquals("call-1", aborted.toolCallId)
         // The aborted text also proves the call never ran: an executed echo
         // would have produced its output here.
-        assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.content.single().text)
+        assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.text)
     }
 
     @Test
-    @DisplayName("Wall-clock expiry mid-tool-batch aborts the batch and repairs the transcript")
-    fun wallClockExpiryMidToolBatchRepairsTranscript() = withScriptedAgent(
+    @DisplayName("Wall-clock expiry mid-batch times out the remaining dispatches and ends the run at the LLM boundary")
+    fun wallClockExpiryDrainsBatchWithTimedOutResults() = workspace.withScriptedAgent(
         toolCallResponse(
             bashCall(id = "call-1", command = "sleep 30"),
             bashCall(id = "call-2", command = "echo never-reached"),
@@ -181,7 +175,7 @@ class AgentTest {
         // budget before the tool batch starts; the sleep still dwarfs it.
         budgets = RunBudgets(maxWallClock = 1.seconds),
     ) { agent ->
-        val result = agent.prompt("go")
+        val result = agent.send(AgentInput.UserMessage("go"))
 
         assertEquals(PromptResult.Status.TIMEOUT, result.status)
         assertEquals(1, result.turnsUsed)
@@ -189,22 +183,25 @@ class AgentTest {
             listOf("system", "user", "assistant", "tool", "tool"),
             result.transcript.map { it.role },
         )
+        // The batch drained fully: both calls carry real timed-out results
+        // naming their actual bound, not synthesized aborted ones — the
+        // second call's bound was the already-exhausted (zero) remainder.
         val toolMessages = result.transcript.filter { it.role == "tool" }
         assertEquals(listOf("call-1", "call-2"), toolMessages.map { it.toolCallId })
-        toolMessages.forEach { message ->
-            assertEquals(ABORTED_TOOL_RESULT_TEXT, message.content.single().text)
-        }
+        toolMessages.forEach { assertContains(it.text, "timed out") }
+        assertContains(toolMessages.last().text, "0s")
+        assertTrue(result.elapsed >= 1.seconds, "expected elapsed >= 1s, was ${result.elapsed}")
     }
 
     @Test
     @DisplayName("External cancellation mid-tool propagates, repairs the transcript, and leaves the agent usable")
     fun externalCancellationRepairsTranscriptAndAgentStaysUsable() {
         val marker = workspace.resolve("tool-started")
-        withScriptedAgent(
+        workspace.withScriptedAgent(
             toolCallResponse(bashCall(id = "call-1", command = "touch '$marker' && sleep 30")),
             assistantResponse(finishReason = "stop", text = "done"),
         ) { agent ->
-            val first = launch { agent.prompt("first") }
+            val first = launch { agent.send(AgentInput.UserMessage("first")) }
             withTimeout(5.seconds) {
                 while (marker.notExists()) {
                     delay(10.milliseconds)
@@ -214,7 +211,7 @@ class AgentTest {
             first.cancelAndJoin()
 
             assertTrue(first.isCancelled)
-            val second = agent.prompt("second")
+            val second = agent.send(AgentInput.UserMessage("second"))
             assertEquals(PromptResult.Status.COMPLETED, second.status)
             assertEquals("done", second.finalMessage)
             assertEquals(
@@ -223,28 +220,7 @@ class AgentTest {
             )
             val aborted = second.transcript.single { it.role == "tool" }
             assertEquals("call-1", aborted.toolCallId)
-            assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.content.single().text)
-        }
-    }
-
-    @Test
-    @DisplayName("Wall-clock exhaustion ends the run as a TIMEOUT result")
-    fun wallClockExhaustionBecomesTimeoutResult() {
-        val budget = 100.milliseconds
-        hangingServer().use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                val agent = agent(client, budgets = RunBudgets(maxWallClock = budget))
-                runBlocking {
-                    val result = agent.prompt("hello")
-
-                    assertEquals(PromptResult.Status.TIMEOUT, result.status)
-                    assertNull(result.finalMessage)
-                    assertNull(result.error)
-                    assertEquals(0, result.turnsUsed)
-                    assertEquals(listOf("system", "user"), result.transcript.map { it.role })
-                    assertTrue(result.elapsed >= budget, "expected elapsed >= $budget, was ${result.elapsed}")
-                }
-            }
+            assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.text)
         }
     }
 }
