@@ -10,16 +10,22 @@ import kotlin.time.Duration.Companion.seconds
  * transiently, sleeping exponentially longer before each retry (from
  * [INITIAL_RETRY_BACKOFF], doubling). Any non-transient failure, and the
  * last transient one once the retries are used up, propagates unchanged.
+ *
+ * [onRetry] runs before each backoff sleep; its attempt number is 1-based.
  */
-internal suspend fun <T> retryTransientFailures(block: suspend () -> T): T {
+internal suspend fun <T> retryTransientFailures(
+    onRetry: (cause: AiRouterException, attempt: Int, backoff: Duration) -> Unit = { _, _, _ -> },
+    block: suspend () -> T,
+): T {
     var backoff = INITIAL_RETRY_BACKOFF
-    repeat(MAX_LLM_RETRIES) {
+    repeat(MAX_LLM_RETRIES) { retriesSoFar ->
         try {
             return block()
         } catch (failure: AiRouterException) {
             if (!failure.isTransient) {
                 throw failure
             }
+            onRetry(failure, retriesSoFar + 1, backoff)
         }
         delay(backoff)
         backoff *= 2

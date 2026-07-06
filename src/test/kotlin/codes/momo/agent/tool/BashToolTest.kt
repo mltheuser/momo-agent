@@ -145,7 +145,7 @@ class BashToolTest {
             put("command", "head -c ${ToolRegistry.MAX_RESULT_CHARS + 1} /dev/zero | tr '\\0' x")
         }
 
-        val result = registry.execute("bash", arguments, LocalExecutionEnvironment(tempDir))
+        val result = registry.execute("bash", arguments, LocalExecutionEnvironment(tempDir)).result
 
         val success = assertIs<ToolResult.Success>(result)
         assertTrue(

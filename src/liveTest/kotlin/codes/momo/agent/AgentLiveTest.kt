@@ -60,7 +60,7 @@ class AgentLiveTest {
         workspace.resolve("token.txt").writeText("The token is: $TOKEN\n")
         AiRouterClient(liveBaseUrl).use { client ->
             val environment = LocalExecutionEnvironment(workspace)
-            val agent = Agent(harness(), client, environment, NoInteraction)
+            val agent = Agent(harness(), client, environment, "Live test session")
 
             val result = agent.prompt(
                 "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
@@ -104,9 +104,9 @@ class AgentLiveTest {
                 harness = harness(),
                 client = client,
                 environment = LocalExecutionEnvironment(workspace),
-                userChannel = NoInteraction,
                 eventListener = NoOpAgentEventListener,
                 budgets = RunBudgets(maxTurns = 1),
+                session = SessionState.Fresh("Live test session"),
             )
 
             val result = agent.prompt(
@@ -136,7 +136,7 @@ class AgentLiveTest {
         workspace.resolve("token.txt").writeText("$TOKEN\n")
         AiRouterClient(liveBaseUrl).use { client ->
             val environment = LocalExecutionEnvironment(workspace)
-            val agent = Agent(harness(), client, environment, NoInteraction)
+            val agent = Agent(harness(), client, environment, "Live test session")
 
             val first = agent.prompt(
                 "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
@@ -172,6 +172,3 @@ class AgentLiveTest {
 
 /** The planted needle no prompt can answer without actually reading the file. */
 private const val TOKEN: String = "plugh-7194"
-
-/** The loop under test never asks the user anything. */
-private object NoInteraction : UserChannel

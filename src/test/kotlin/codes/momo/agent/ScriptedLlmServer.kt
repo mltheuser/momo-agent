@@ -1,10 +1,12 @@
 package codes.momo.agent
 
+import ai.router.sdk.models.ApiError
 import ai.router.sdk.models.ChatMessage
 import ai.router.sdk.models.ChatResponse
 import ai.router.sdk.models.ChatUsage
 import ai.router.sdk.models.ContentPart
 import ai.router.sdk.models.ContentPartType
+import ai.router.sdk.models.ErrorResponse
 import ai.router.sdk.models.ToolCall
 import ai.router.sdk.models.ToolCallFunction
 import kotlinx.serialization.json.Json
@@ -17,26 +19,45 @@ import java.net.Socket
 import kotlin.concurrent.thread
 
 /**
- * Serves [responses] as HTTP 200 chat completions, one per request, in
- * order; then answers nothing.
+ * Serves [replies] as HTTP responses, one per request, in order; then
+ * answers nothing.
  *
  * Exists to script the failure turns a live model cannot produce on cue
- * (a failed finish reason, a budget expiring mid-tool-batch): the agent
- * runs through the real client and HTTP stack.
+ * (a failed finish reason, a transient HTTP error, a budget expiring
+ * mid-tool-batch): the agent runs through the real client and HTTP stack.
  */
-internal fun scriptedServer(vararg responses: ChatResponse): ServerSocket {
-    val server = ServerSocket(0, responses.size, InetAddress.getLoopbackAddress())
+internal fun scriptedServer(vararg replies: ScriptedReply): ServerSocket {
+    val server = ServerSocket(0, replies.size, InetAddress.getLoopbackAddress())
     thread(isDaemon = true) {
-        for (response in responses) {
+        for (reply in replies) {
             val socket = try {
                 server.accept()
             } catch (_: IOException) {
                 return@thread
             }
-            socket.use { it.respondWith(Json.encodeToString(ChatResponse.serializer(), response)) }
+            socket.use { it.respond(reply) }
         }
     }
     return server
+}
+
+internal fun scriptedServer(vararg responses: ChatResponse): ServerSocket =
+    scriptedServer(*responses.map { it.asReply() }.toTypedArray())
+
+private fun Socket.respond(reply: ScriptedReply) {
+    when (reply) {
+        is ScriptedReply.Success ->
+            respondWith(200, Json.encodeToString(ChatResponse.serializer(), reply.response))
+
+        is ScriptedReply.Failure ->
+            respondWith(
+                reply.statusCode,
+                Json.encodeToString(
+                    ErrorResponse.serializer(),
+                    ErrorResponse(ApiError(type = "scripted", message = reply.message)),
+                ),
+            )
+    }
 }
 
 /** A chat response with no tool calls, as a scripted server serves it. */
@@ -71,13 +92,13 @@ private val RESPONSE_USAGE: ChatUsage = ChatUsage(
     cacheReadTokens = 0,
 )
 
-private fun Socket.respondWith(body: String) {
+private fun Socket.respondWith(statusCode: Int, body: String) {
     consumeRequest()
     val payload = body.toByteArray()
     getOutputStream().run {
         write(
             (
-                "HTTP/1.1 200 OK\r\n" +
+                "HTTP/1.1 $statusCode Scripted\r\n" +
                     "Content-Type: application/json\r\n" +
                     "Content-Length: ${payload.size}\r\n" +
                     "Connection: close\r\n\r\n"

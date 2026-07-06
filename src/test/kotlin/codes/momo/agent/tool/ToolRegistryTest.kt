@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -35,7 +36,7 @@ class ToolRegistryTest {
     private suspend fun ToolRegistry.dispatch(
         name: String,
         arguments: JsonObject = buildJsonObject { },
-    ): ToolResult = execute(name, arguments, UnusedEnvironment)
+    ): ToolResult = execute(name, arguments, UnusedEnvironment).result
 
     private fun assertError(result: ToolResult, vararg expectedMessageParts: String): ToolResult.Error {
         val error = assertIs<ToolResult.Error>(result)
@@ -277,17 +278,19 @@ class ToolRegistryTest {
     // ─── Result truncation ────────────────────────────────────────────
 
     @Test
-    @DisplayName("Result text over the bound is truncated with the marker appended")
+    @DisplayName("Result text over the bound is truncated with the marker appended and the execution flagged")
     fun oversizedResultIsTruncatedWithMarker() = runTest {
         val oversized = "x".repeat(ToolRegistry.MAX_RESULT_CHARS + 1)
         val registry = registryOf(ScriptedTool { ToolResult.Success(oversized) })
 
-        val result = assertIs<ToolResult.Success>(registry.dispatch("scripted"))
+        val execution = registry.execute("scripted", buildJsonObject { }, UnusedEnvironment)
 
+        val result = assertIs<ToolResult.Success>(execution.result)
         assertEquals(
             "x".repeat(ToolRegistry.MAX_RESULT_CHARS) + ToolRegistry.TRUNCATION_MARKER,
             result.text,
         )
+        assertTrue(execution.truncated)
     }
 
     @Test
@@ -306,12 +309,15 @@ class ToolRegistryTest {
     }
 
     @Test
-    @DisplayName("Result text at the bound passes through untouched")
+    @DisplayName("Result text at the bound passes through untouched and unflagged")
     fun resultAtTheBoundIsUntouched() = runTest {
         val atBound = "x".repeat(ToolRegistry.MAX_RESULT_CHARS)
         val registry = registryOf(ScriptedTool { ToolResult.Success(atBound) })
 
-        assertEquals(ToolResult.Success(atBound), registry.dispatch("scripted"))
+        val execution = registry.execute("scripted", buildJsonObject { }, UnusedEnvironment)
+
+        assertEquals(ToolResult.Success(atBound), execution.result)
+        assertFalse(execution.truncated)
     }
 }
 

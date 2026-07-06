@@ -15,7 +15,6 @@ import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
-import java.net.InetAddress
 import java.net.ServerSocket
 import java.nio.file.Path
 import kotlin.io.path.notExists
@@ -35,19 +34,13 @@ class AgentTest {
 
     // ─── Fixture helpers ──────────────────────────────────────────────
 
-    private val harness = Harness(
-        model = "test-model",
-        tools = listOf("bash", "read_file", "write_file", "edit_file"),
-        instructions = "Unit-test instructions.",
-    )
-
     private fun agent(client: AiRouterClient, budgets: RunBudgets = RunBudgets()): Agent = Agent(
-        harness = harness,
+        harness = TEST_HARNESS,
         client = client,
         environment = LocalExecutionEnvironment(workspace),
-        userChannel = NoInteraction,
         eventListener = NoOpAgentEventListener,
         budgets = budgets,
+        session = SessionState.Fresh("Test session"),
     )
 
     /** Runs [block] against an agent whose LLM serves [responses] in order. */
@@ -69,12 +62,6 @@ class AgentTest {
         return "http://127.0.0.1:$port"
     }
 
-    /** A server that accepts connections but never answers, keeping LLM calls suspended. */
-    private fun hangingServer(): ServerSocket = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
-
-    private val ServerSocket.baseUrl: String
-        get() = "http://127.0.0.1:$localPort"
-
     // ─── Construction ─────────────────────────────────────────────────
 
     @Test
@@ -84,7 +71,7 @@ class AgentTest {
 
         AiRouterClient(refusingBaseUrl()).use { client ->
             val failure = assertFailsWith<HarnessValidationException> {
-                Agent(invalid, client, LocalExecutionEnvironment(workspace), NoInteraction)
+                Agent(invalid, client, LocalExecutionEnvironment(workspace), "Test session")
             }
             assertContains(failure.message.orEmpty(), "teleport")
         }
@@ -93,7 +80,7 @@ class AgentTest {
     @Test
     @DisplayName("The system prompt keeps the instructions and states the absolute workspace path")
     fun systemPromptStatesWorkspaceAndPathContract() {
-        val prompt = systemPromptFor(harness, "/some/workspace")
+        val prompt = systemPromptFor(TEST_HARNESS, "/some/workspace")
 
         assertTrue(prompt.startsWith("Unit-test instructions."))
         assertContains(prompt, "/some/workspace")
@@ -261,6 +248,3 @@ class AgentTest {
         }
     }
 }
-
-/** The loop under test never asks the user anything. */
-private object NoInteraction : UserChannel

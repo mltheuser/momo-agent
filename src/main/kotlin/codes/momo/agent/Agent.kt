@@ -13,15 +13,19 @@ import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
 import codes.momo.agent.tool.ToolRegistry
+import codes.momo.agent.tool.ToolResult
 import codes.momo.agent.tool.coreToolRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.TimeSource
 
 /**
  * One agent session over a loaded [Harness]: [prompt] runs the LLM/tool
  * loop against the session's accumulated conversation, under [RunBudgets].
+ * Everything the session does is reported to its [AgentEventListener] as
+ * the session's [AgentEvent] log.
  *
  * Collaborator lifecycles stay with the embedder: the agent never closes
  * [client] or [environment].
@@ -33,18 +37,19 @@ public class Agent internal constructor(
     private val harness: Harness,
     private val client: AiRouterClient,
     private val environment: ExecutionEnvironment,
-    internal val userChannel: UserChannel,
-    internal val eventListener: AgentEventListener,
+    eventListener: AgentEventListener,
     private val budgets: RunBudgets,
+    session: SessionState,
 ) {
 
+    /** Creates a fresh session titled [title], with a generated [sessionId]. */
     public constructor(
         harness: Harness,
         client: AiRouterClient,
         environment: ExecutionEnvironment,
-        userChannel: UserChannel,
+        title: String,
         eventListener: AgentEventListener = NoOpAgentEventListener,
-    ) : this(harness, client, environment, userChannel, eventListener, RunBudgets())
+    ) : this(harness, client, environment, eventListener, RunBudgets(), SessionState.Fresh(title))
 
     private val registry: ToolRegistry = coreToolRegistry()
 
@@ -57,8 +62,31 @@ public class Agent internal constructor(
 
     private val running = AtomicBoolean(false)
 
-    private val history: MutableList<ChatMessage> =
-        mutableListOf(textMessage(ROLE_SYSTEM, systemPromptFor(harness, environment.workspacePath)))
+    private val emitter = AgentEventEmitter(eventListener, session.nextSequenceId)
+
+    /** Stable identity of this session, recoverable from its event log. */
+    public val sessionId: String = when (session) {
+        is SessionState.Fresh -> UUID.randomUUID().toString()
+        is SessionState.Restored -> session.id
+    }
+
+    /** User-facing session title; every assignment emits [AgentEvent.SessionRenamed]. */
+    public var title: String = session.title
+        set(value) {
+            field = value
+            emitter.emit { id, at -> AgentEvent.SessionRenamed(id, at, value) }
+        }
+
+    private val history: MutableList<ChatMessage> = mutableListOf<ChatMessage>().apply {
+        add(textMessage(ROLE_SYSTEM, systemPromptFor(harness, environment.workspacePath)))
+        addAll(session.conversation)
+    }
+
+    init {
+        if (session is SessionState.Fresh) {
+            emitter.emit { id, at -> AgentEvent.SessionStarted(id, at, sessionId, title) }
+        }
+    }
 
     /**
      * Sends [text] as the next user message and runs the loop until the
@@ -84,9 +112,9 @@ public class Agent internal constructor(
     }
 
     private suspend fun runPrompt(text: String): PromptResult {
-        val start = TimeSource.Monotonic.markNow()
         val run = RunState()
-        history += textMessage(ROLE_USER, text)
+        history += userMessage(text)
+        emitter.emit { id, at -> AgentEvent.RunStarted(id, at, text) }
         val status = try {
             withTimeoutOrNull(budgets.maxWallClock) { runLoop(run) } ?: PromptResult.Status.TIMEOUT
         } catch (cancellation: CancellationException) {
@@ -99,7 +127,7 @@ public class Agent internal constructor(
             // (timeout cancellation, external cancellation).
             history += abortedToolResults(history)
         }
-        return PromptResult(
+        val result = PromptResult(
             status = status,
             // The wall-clock timer can fire between the loop recording its
             // final message and delivering COMPLETED; the timeout must not
@@ -108,9 +136,23 @@ public class Agent internal constructor(
             transcript = history.toList(),
             usage = run.usage,
             turnsUsed = run.turnsUsed,
-            elapsed = start.elapsedNow(),
+            elapsed = run.start.elapsedNow(),
             error = run.failure,
         )
+        // Emitted outside the timeout-cancelable region, so even a timed-out
+        // run logs its RunFinished.
+        emitter.emit { id, at ->
+            AgentEvent.RunFinished(
+                sequenceId = id,
+                timestampMillis = at,
+                status = result.status,
+                finalMessage = result.finalMessage,
+                usage = result.usage,
+                turnsUsed = result.turnsUsed,
+                elapsed = result.elapsed,
+            )
+        }
+        return result
     }
 
     private suspend fun runLoop(run: RunState): PromptResult.Status {
@@ -151,26 +193,84 @@ public class Agent internal constructor(
     /** One turn: one successful LLM call — retries cost wall-clock, not turns. */
     private suspend fun takeTurn(run: RunState): ChatResponse {
         val request = ChatRequest(model = harness.model, messages = history.toList(), tools = toolDefinitions)
-        val response = retryTransientFailures { client.chat(request) }
+        emitter.emit { id, at -> AgentEvent.LlmCallStarted(id, at, turn = run.turnsUsed + 1) }
+        val response = retryTransientFailures(
+            onRetry = { cause, attempt, backoff ->
+                emitter.emit { id, at ->
+                    AgentEvent.LlmCallRetried(id, at, cause.message ?: cause.toString(), attempt, backoff)
+                }
+            },
+        ) { client.chat(request) }
         run.turnsUsed++
         run.usage += response.usage
         history += response.message
+        emitter.emit { id, at ->
+            AgentEvent.LlmCallFinished(id, at, response.message, response.usage, response.finishReason)
+        }
+        emitter.emit { id, at ->
+            AgentEvent.BudgetUpdated(
+                sequenceId = id,
+                timestampMillis = at,
+                turnsUsed = run.turnsUsed,
+                turnsRemaining = budgets.maxTurns - run.turnsUsed,
+                elapsed = run.start.elapsedNow(),
+            )
+        }
         return response
     }
 
     private suspend fun executeToolCalls(toolCalls: List<ToolCall>) {
         for (call in toolCalls) {
-            val result = registry.execute(call.function.name, call.function.arguments, environment)
-            history += toolResultMessage(call.id, result.text)
+            emitter.emit { id, at ->
+                AgentEvent.ToolCallStarted(id, at, call.id, call.function.name, call.function.arguments)
+            }
+            val execution = registry.execute(call.function.name, call.function.arguments, environment)
+            history += toolResultMessage(call.id, execution.result.text)
+            emitter.emit { id, at ->
+                AgentEvent.ToolCallFinished(
+                    sequenceId = id,
+                    timestampMillis = at,
+                    callId = call.id,
+                    resultText = execution.result.text,
+                    outcome = execution.result.outcome,
+                    duration = execution.duration,
+                    truncated = execution.truncated,
+                )
+            }
         }
     }
 
     /** Mutable accounting for one [prompt] run. */
     private class RunState {
+        val start = TimeSource.Monotonic.markNow()
         var turnsUsed: Int = 0
         var usage: ChatUsage = ZERO_USAGE
         var finalMessage: String? = null
         var failure: Exception? = null
+    }
+
+    public companion object {
+
+        /**
+         * Reconstructs a session from its stored event log: the transcript
+         * is derived from the log's verbatim payloads under the system
+         * prompt [harness] produces now, tool calls the log left unanswered
+         * are answered with synthesized aborted results, and new events
+         * continue the log's sequence IDs. Loading emits nothing.
+         *
+         * @throws IllegalArgumentException when [events] is not a stored
+         *   session log (its first event must be
+         *   [AgentEvent.SessionStarted]).
+         * @throws HarnessValidationException when the log calls tools
+         *   [harness] does not include.
+         */
+        public fun load(
+            events: List<AgentEvent>,
+            harness: Harness,
+            client: AiRouterClient,
+            environment: ExecutionEnvironment,
+            eventListener: AgentEventListener = NoOpAgentEventListener,
+        ): Agent = Agent(harness, client, environment, eventListener, RunBudgets(), restoredSession(events, harness))
     }
 }
 
@@ -182,12 +282,21 @@ internal fun systemPromptFor(harness: Harness, workspacePath: String): String =
 private fun textMessage(role: String, text: String): ChatMessage =
     ChatMessage(role = role, content = listOf(ContentPart(type = ContentPartType.TEXT, text = text)))
 
+internal fun userMessage(text: String): ChatMessage = textMessage(ROLE_USER, text)
+
 internal fun toolResultMessage(callId: String, text: String): ChatMessage =
     ChatMessage(
         role = ROLE_TOOL,
         content = listOf(ContentPart(type = ContentPartType.TEXT, text = text)),
         toolCallId = callId,
     )
+
+private val ToolResult.outcome: AgentEvent.ToolCallFinished.Outcome
+    get() = when (this) {
+        is ToolResult.Success -> AgentEvent.ToolCallFinished.Outcome.SUCCESS
+        is ToolResult.Error -> AgentEvent.ToolCallFinished.Outcome.ERROR
+        is ToolResult.TimedOut -> AgentEvent.ToolCallFinished.Outcome.TIMED_OUT
+    }
 
 private const val ROLE_SYSTEM: String = "system"
 private const val ROLE_USER: String = "user"

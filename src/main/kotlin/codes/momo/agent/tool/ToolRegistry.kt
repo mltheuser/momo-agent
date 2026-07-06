@@ -11,6 +11,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /**
  * Immutable, name-addressed set of [Tool]s and the single seam through
@@ -49,8 +50,9 @@ public class ToolRegistry(tools: List<Tool<*>>) {
 
     /**
      * Executes tool [name] with the model-provided [arguments] against
-     * [environment]. Every outcome is a [ToolResult] the model can react
-     * to; only coroutine cancellation and JVM [Error]s escape:
+     * [environment]. Every outcome is a [ToolExecution] whose result the
+     * model can react to; only coroutine cancellation and JVM [Error]s
+     * escape:
      *
      * - unknown [name] or undecodable arguments → [ToolResult.Error]
      *   naming the problem (unknown argument keys are ignored — small
@@ -64,14 +66,20 @@ public class ToolRegistry(tools: List<Tool<*>>) {
         name: String,
         arguments: JsonObject,
         environment: ExecutionEnvironment,
-    ): ToolResult {
+    ): ToolExecution {
+        val start = TimeSource.Monotonic.markNow()
         val tool = toolsByName[name]
         val result = if (tool == null) {
             ToolResult.Error(unknownToolMessage(name))
         } else {
             dispatch(tool, arguments, environment)
         }
-        return result.bounded()
+        val bounded = result.bounded()
+        return ToolExecution(
+            result = bounded,
+            truncated = bounded.text != result.text,
+            duration = start.elapsedNow(),
+        )
     }
 
     private suspend fun dispatch(
@@ -140,3 +148,13 @@ public class ToolRegistry(tools: List<Tool<*>>) {
         private val TIMEOUT_GRACE: Duration = 10.seconds
     }
 }
+
+/** One [ToolRegistry.execute] dispatch: the model-facing result plus the facts only dispatch knows. */
+public data class ToolExecution(
+    /** The outcome, its payload bounded to [ToolRegistry.MAX_RESULT_CHARS] (failure framing adds slightly more). */
+    val result: ToolResult,
+    /** Whether bounding cut the payload short. */
+    val truncated: Boolean,
+    /** Wall-clock time the dispatch took. */
+    val duration: Duration,
+)

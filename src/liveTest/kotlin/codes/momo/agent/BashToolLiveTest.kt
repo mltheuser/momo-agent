@@ -62,7 +62,7 @@ class BashToolLiveTest {
             // Success (non-zero exits included) — a hallucinated tool name or
             // rejected arguments must fail red, not skip.
             assertEquals("bash", toolCall.function.name)
-            val toolResult = registry.execute(toolCall.function.name, toolCall.function.arguments, environment)
+            val toolResult = registry.execute(toolCall.function.name, toolCall.function.arguments, environment).result
             assertIs<ToolResult.Success>(toolResult, "dispatch did not succeed, result text: ${toolResult.text}")
 
             val followUp = client.chat(
