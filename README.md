@@ -73,6 +73,43 @@ Example with overrides:
 
 Live-test results are never cached; each invocation hits the server again.
 
+## Container-backed execution
+
+`ContainerExecutionEnvironment` runs agent tools inside a Docker container
+whose filesystem contains only the workspace: the host workspace is copied
+into the container's `/workspace` at construction and copied back out on
+`close()` — nothing from the host is mounted. Images are always resolved
+as `linux/amd64` — both when pulling and running — and are only fetched
+when not already present locally. Commands run as root inside the
+container, and the image chosen decides the runtime era (e.g. `node:12`).
+
+Images must provide the POSIX userland the project assumes (see the
+platform section below); any debian-based image qualifies. Startup fails
+with a clear error otherwise.
+
+`close()` removes the container; a JVM shutdown hook removes it on abnormal
+JVM termination as a best effort, so a hard kill can still leak one. Every
+container carries the `codes.momo.agent` label, making manual cleanup one
+command:
+
+```sh
+docker rm -f $(docker ps -aq --filter label=codes.momo.agent)
+```
+
+## Container integration tests
+
+The `containerTest` suite (`src/containerTest/kotlin`) exercises
+`ContainerExecutionEnvironment` against a local Docker daemon. It is not
+part of `build` or `check`; run it explicitly:
+
+```sh
+./gradlew containerTest
+```
+
+The first run pulls the pinned test images (`debian:12-slim`, `node:12`,
+`alpine:3.20`) and is slow; results are never cached. Docker requirements
+are in the platform section below.
+
 ## Supported platforms & system assumptions
 
 - **Linux x86_64** — officially supported; the platform for eval runs.
@@ -83,4 +120,5 @@ Live-test results are never cached; each invocation hits the server again.
 
 The project assumes a POSIX userland (`bash`, coreutils, `grep`, `find`,
 `sed`), UTF-8 everywhere, LF line endings, and a `docker` CLI usable
-without `sudo` (needed later for container-based agent execution).
+without `sudo` (needed for container-backed execution and the
+`containerTest` suite).

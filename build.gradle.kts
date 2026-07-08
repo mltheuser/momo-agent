@@ -37,8 +37,8 @@ kotlin {
     compilerOptions {
         allWarningsAsErrors = true
     }
-    // Give the live tests `internal` access to main.
-    target.compilations.matching { it.name == "liveTest" }.configureEach {
+    // Give the live and container tests `internal` access to main.
+    target.compilations.matching { it.name == "liveTest" || it.name == "containerTest" }.configureEach {
         associateWith(target.compilations.getByName("main"))
     }
 }
@@ -46,8 +46,8 @@ kotlin {
 detekt {
     buildUponDefaultConfig = true
     config.setFrom(files("detekt.yml"))
-    // Scan all source sets, including the live-integration-test sources.
-    source.setFrom(files("src/main/kotlin", "src/test/kotlin", "src/liveTest/kotlin"))
+    // Scan all source sets, including the integration-test sources.
+    source.setFrom(files("src/main/kotlin", "src/test/kotlin", "src/liveTest/kotlin", "src/containerTest/kotlin"))
 }
 
 tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
@@ -95,12 +95,13 @@ testing {
             }
         }
 
-        register<JvmTestSuite>("liveTest") {
+        // Shared shape of the opt-in integration suites — all deliberately NOT
+        // wired into `check`: `./gradlew build` must succeed without their backends.
+        val integrationSuite: JvmTestSuite.() -> Unit = {
             useJUnitJupiter()
             dependencies {
+                // Also carries the ai-router SDK (exported at `api` scope by main).
                 implementation(project())
-                // Substituted with the local checkout via the composite build.
-                implementation("ai.router:ai-router-sdk:0.1.0")
                 // The SDK declares its deps as `implementation`, so coroutines are
                 // not on our compile classpath transitively; needed for runBlocking.
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
@@ -108,14 +109,31 @@ testing {
             }
             targets.all {
                 testTask.configure {
-                    description = "Runs the live integration tests against a running local ai-router."
-                    systemProperty("aiRouter.baseUrl", liveTestBaseUrl)
-                    systemProperty("aiRouter.chatModel", liveTestChatModel)
                     testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-                    // Always re-run against the live server: never UP-TO-DATE and
+                    // Always re-run against the live backend: never UP-TO-DATE and
                     // never restored FROM-CACHE (Test tasks are @CacheableTask).
                     outputs.upToDateWhen { false }
                     outputs.cacheIf { false }
+                }
+            }
+        }
+
+        register<JvmTestSuite>("liveTest") {
+            integrationSuite()
+            targets.all {
+                testTask.configure {
+                    description = "Runs the live integration tests against a running local ai-router."
+                    systemProperty("aiRouter.baseUrl", liveTestBaseUrl)
+                    systemProperty("aiRouter.chatModel", liveTestChatModel)
+                }
+            }
+        }
+
+        register<JvmTestSuite>("containerTest") {
+            integrationSuite()
+            targets.all {
+                testTask.configure {
+                    description = "Runs the container integration tests against a local Docker daemon."
                 }
             }
         }

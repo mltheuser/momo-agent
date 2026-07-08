@@ -9,6 +9,8 @@ Kotlin library for defining and running file-system-based agents.
 - `./lint.sh` / `./fmt.sh` — detekt check / auto-fix formatting.
 - `./gradlew liveTest` — live tests against a running local ai-router server
   (not in `build`/`check`).
+- `./gradlew containerTest` — container integration tests against local
+  Docker (not in `build`/`check`).
 
 ## Conventions
 
@@ -31,7 +33,9 @@ Kotlin library for defining and running file-system-based agents.
 ## Docs
 
 - [README.md](README.md) — read when setting up the ai-router checkout,
-  running or configuring the live tests, or checking platform assumptions.
+  running or configuring the live or container test suites, working with
+  container-backed execution (incl. cleaning up leaked containers), or
+  checking platform assumptions.
 - [../planning/issues/agent-lib/README.md](../planning/issues/agent-lib/README.md) — read when
   picking up an issue, checking what has landed vs. what is pending, or
   looking up how a delivered feature was designed (each done issue's
