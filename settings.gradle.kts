@@ -1,5 +1,8 @@
 rootProject.name = "momo-agent"
 
+include("lib")
+include("server")
+
 // The only LLM backend is the local ai-router project, consumed through its
 // Kotlin SDK as a Gradle composite build. Path hardcoded for now — revisit when needed.
 val sdkDir = File("${System.getProperty("user.home")}/Development/open source/ai-router/SDKs/kotlin")

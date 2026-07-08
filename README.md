@@ -1,8 +1,14 @@
 # momo-agent
 
-A Kotlin library for defining and running file-system-based agents. The
-library's only LLM backend is the local [ai-router](https://github.com/mltheuser/ai-router)
+A Kotlin library for defining and running file-system-based agents, plus an
+HTTP server hosting agent sessions for interactive clients. The only LLM
+backend is the local [ai-router](https://github.com/mltheuser/ai-router)
 project, consumed through its Kotlin SDK.
+
+Two Gradle modules:
+
+- `lib/` — the embeddable library.
+- `server/` — the agent server, a runnable binary wrapping `lib`.
 
 ## Prerequisites: local ai-router checkout
 
@@ -30,9 +36,10 @@ ai-router SDK checkout not found at: <path> — clone https://github.com/mltheus
 ./gradlew build
 ```
 
-Runs compilation, detekt (with detekt-formatting) and the unit test suite.
-It does **not** run the live integration tests and does not require a running
-ai-router server — only the checkout on disk.
+Runs compilation, detekt (with detekt-formatting) and the unit test suites
+of both modules. It does **not** run the live or container integration
+tests and does not require a running ai-router server — only the checkout
+on disk.
 
 ## Linting & formatting
 
@@ -45,7 +52,7 @@ Both scripts wrap detekt (with detekt-formatting) and cover all source sets:
 
 ## Live integration tests
 
-The `liveTest` suite (`src/liveTest/kotlin`) exercises the real wiring
+The `liveTest` suite (`lib/src/liveTest/kotlin`) exercises the real wiring
 against a **running** local ai-router server. It is not part of `build` or
 `check`; run it explicitly:
 
@@ -58,7 +65,7 @@ Start a server from the ai-router checkout (see its README; currently
 (e.g. pulled in Ollama).
 
 The suite includes the end-to-end acceptance tests, which run the
-`examples/coder` harness through a full toy task; the container variant
+`lib/examples/coder` harness through a full toy task; the container variant
 additionally needs Docker (see the platform section below).
 
 Configuration (Gradle property takes precedence over the environment
@@ -102,9 +109,10 @@ docker rm -f $(docker ps -aq --filter label=codes.momo.agent)
 
 ## Container integration tests
 
-The `containerTest` suite (`src/containerTest/kotlin`) exercises
-`ContainerExecutionEnvironment` against a local Docker daemon. It is not
-part of `build` or `check`; run it explicitly:
+The `containerTest` suites — `lib/src/containerTest/kotlin` exercising
+`ContainerExecutionEnvironment` and `server/src/containerTest/kotlin`
+exercising container-backed sessions — run against a local Docker daemon.
+They are not part of `build` or `check`; run them explicitly:
 
 ```sh
 ./gradlew containerTest
@@ -113,6 +121,63 @@ part of `build` or `check`; run it explicitly:
 The first run pulls the pinned test images (`debian:12-slim`, `node:12`,
 `alpine:3.20`) and is slow; results are never cached. Docker requirements
 are in the platform section below.
+
+## Agent server
+
+The `server` module hosts multiple concurrent agent sessions behind a
+localhost-only HTTP API — the process boundary interactive clients talk
+to. Run it with:
+
+```sh
+./gradlew :server:run --args="--port=8420"
+```
+
+Each setting resolves from its CLI argument, then its environment
+variable, then the default:
+
+| Setting            | CLI argument           | Environment variable | Default                 |
+| ------------------ | ---------------------- | -------------------- | ----------------------- |
+| Port               | `--port`               | `MOMO_AGENT_PORT`    | `8420`                  |
+| Data directory     | `--data-dir`           | `MOMO_AGENT_DATA_DIR`| `~/.momo-agent`         |
+| ai-router base URL | `--ai-router-base-url` | `AI_ROUTER_BASE_URL` | `http://localhost:8787` |
+
+The server always binds `127.0.0.1`. There is no auth: remote access is
+out of scope for v1.
+
+### Sessions
+
+A session is one agent conversation over a harness and an execution
+environment. Its source of truth is on disk under the data directory —
+`sessions/<session-id>/session.json` (harness path, model, environment
+spec) plus `sessions/<session-id>/events.jsonl` (the event log, one
+serialized `AgentEvent` per line, appended live) — so every session
+survives a server restart: on startup the data directory is indexed and
+prior sessions appear as `closed`, resumable by ID. A running agent and
+its environment are an ephemeral runtime attachment on top; closing a
+session drops the attachment (a container copies its workspace back to
+the host and is removed) and keeps the stored log.
+
+### Endpoints (v1)
+
+| Method & path                 | Effect |
+| ----------------------------- | ------ |
+| `POST /v1/sessions`           | Create a session; body: `{"harnessPath": "<dir>", "environment": {"type": "local", "workspace": "<dir>"}` or `{"type": "container", "image": "<img>", "workspace": "<dir>"}, "title"?: "..."}` → `201` with the session info. |
+| `GET /v1/sessions`            | List all sessions (ID, title, model, harness path, environment, status, created-at, last prompt's budget consumption, pending question). |
+| `GET /v1/sessions/{id}`       | One session's info. |
+| `POST /v1/sessions/{id}/close`| Close the session; aborts in-flight work, tears the environment down, keeps the stored log. Idempotent. |
+| `DELETE /v1/sessions/{id}`    | Close if needed, then remove the session and its stored artifacts → `204`. |
+
+Session `status` is derived, never stored: `running` (a send is in
+flight), `awaiting_user` (live, parked on a question), `idle` (live,
+nothing running), `closed` (no runtime attached; resumable).
+
+Errors are structured JSON — `{"code": "...", "message": "..."}` — with
+`400` for invalid harness/environment/request, `404` for an unknown
+session, `409` for operations conflicting with an active send, and `500`
+otherwise.
+
+Prompting, event streaming, and answering a pending question over HTTP
+are not part of this surface yet.
 
 ## Supported platforms & system assumptions
 

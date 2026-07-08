@@ -1,141 +1,58 @@
+import io.gitlab.arturbosch.detekt.Detekt
+import io.gitlab.arturbosch.detekt.extensions.DetektExtension
+import org.jetbrains.kotlin.gradle.dsl.ExplicitApiMode
+import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
+
+// Umbrella build: the library lives in lib/, the HTTP server in server/.
+// This script only carries the conventions shared by every module.
 plugins {
-    kotlin("jvm") version "2.2.0"
-    kotlin("plugin.serialization") version "2.2.0"
-    id("io.gitlab.arturbosch.detekt") version "1.23.8"
-    `java-library`
-    `jvm-test-suite`
+    alias(libs.plugins.kotlin.jvm) apply false
+    alias(libs.plugins.kotlin.serialization) apply false
+    alias(libs.plugins.detekt) apply false
 }
 
-group = "codes.momo"
-version = "0.1.0"
+subprojects {
+    group = "codes.momo"
+    version = "0.1.0"
 
-repositories {
-    mavenCentral()
-}
-
-dependencies {
-    // Substituted with the local checkout via the composite build
-    // (settings.gradle.kts). `api`: SDK types — and its exported
-    // kotlinx-serialization types — sit in public tool signatures.
-    api("ai.router:ai-router-sdk:0.1.0")
-
-    // YAML parsing for harness.yaml manifests.
-    implementation("com.charleskorn.kaml:kaml:0.83.0")
-
-    // Coroutine primitives for the suspend-based execution seam.
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-
-    // Lint formatting rules (folds ktlint into detekt — no separate ktlint plugin)
-    detektPlugins("io.gitlab.arturbosch.detekt:detekt-formatting:1.23.8")
-}
-
-kotlin {
-    jvmToolchain(21)
-    // Require an explicit visibility modifier and explicit return type on every
-    // public/protected declaration — keeps the published API surface intentional.
-    explicitApi = org.jetbrains.kotlin.gradle.dsl.ExplicitApiMode.Strict
-    compilerOptions {
-        allWarningsAsErrors = true
+    repositories {
+        mavenCentral()
     }
-    // Give the live and container tests `internal` access to main.
-    target.compilations.matching { it.name == "liveTest" || it.name == "containerTest" }.configureEach {
-        associateWith(target.compilations.getByName("main"))
+
+    plugins.withId("org.jetbrains.kotlin.jvm") {
+        extensions.configure<KotlinJvmProjectExtension> {
+            jvmToolchain(21)
+            // Require an explicit visibility modifier and explicit return type on every
+            // public/protected declaration — keeps the published API surface intentional.
+            explicitApi = ExplicitApiMode.Strict
+            compilerOptions {
+                allWarningsAsErrors = true
+            }
+        }
     }
-}
 
-detekt {
-    buildUponDefaultConfig = true
-    config.setFrom(files("detekt.yml"))
-    // Scan all source sets, including the integration-test sources.
-    source.setFrom(files("src/main/kotlin", "src/test/kotlin", "src/liveTest/kotlin", "src/containerTest/kotlin"))
-}
-
-tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
-    // Fail the build on any detekt finding.
-    ignoreFailures = false
-}
-
-// ─── Live integration tests ───────────────────────────────────────────
-//
-// The `liveTest` suite talks to a running local ai-router server. It is
-// deliberately NOT wired into `check`: `./gradlew build` must succeed
-// without a server. Run it explicitly with `./gradlew liveTest`.
-
-// Resolve a setting from a Gradle property, then an environment variable, then
-// the default. Blank/whitespace-only values (e.g. -PaiRouterBaseUrl= or an
-// exported-but-empty env var) are treated as unset. Resolving via `orNull` on
-// value-source providers keeps this configuration-cache safe.
-fun resolveLiveTestSetting(propertyName: String, envName: String, default: String): String =
-    providers.gradleProperty(propertyName).orNull?.takeIf { it.isNotBlank() }
-        ?: providers.environmentVariable(envName).orNull?.takeIf { it.isNotBlank() }
-        ?: default
-
-// NOTE: these defaults also appear in the README table — keep the two in sync
-// when changing them.
-val liveTestBaseUrl: String =
-    resolveLiveTestSetting("aiRouterBaseUrl", "AI_ROUTER_BASE_URL", "http://localhost:8787")
-
-val liveTestChatModel: String =
-    resolveLiveTestSetting("aiRouterChatModel", "AI_ROUTER_CHAT_MODEL", "qwen3.5:9b:local@ollama")
-
-testing {
-    suites {
-        val test by getting(JvmTestSuite::class) {
-            useJUnitJupiter()
-            dependencies {
-                implementation("org.jetbrains.kotlin:kotlin-test")
-                // Virtual-time coroutine testing — the tool timeout budget is minutes long.
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
-            }
-            targets.all {
-                testTask.configure {
-                    testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-                    outputs.upToDateWhen { false } // disable test result caching
-                }
-            }
+    plugins.withId("io.gitlab.arturbosch.detekt") {
+        dependencies {
+            // Lint formatting rules (folds ktlint into detekt — no separate ktlint plugin)
+            "detektPlugins"(libs.detekt.formatting)
         }
-
-        // Shared shape of the opt-in integration suites — all deliberately NOT
-        // wired into `check`: `./gradlew build` must succeed without their backends.
-        val integrationSuite: JvmTestSuite.() -> Unit = {
-            useJUnitJupiter()
-            dependencies {
-                // Also carries the ai-router SDK (exported at `api` scope by main).
-                implementation(project())
-                // The SDK declares its deps as `implementation`, so coroutines are
-                // not on our compile classpath transitively; needed for runBlocking.
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-                implementation("org.jetbrains.kotlin:kotlin-test")
-            }
-            targets.all {
-                testTask.configure {
-                    testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-                    // Always re-run against the live backend: never UP-TO-DATE and
-                    // never restored FROM-CACHE (Test tasks are @CacheableTask).
-                    outputs.upToDateWhen { false }
-                    outputs.cacheIf { false }
-                }
-            }
+        extensions.configure<DetektExtension> {
+            buildUponDefaultConfig = true
+            config.setFrom(rootProject.files("detekt.yml"))
+            // Scan every source set a module may have; missing folders are ignored.
+            source.setFrom(
+                files(
+                    "src/main/kotlin",
+                    "src/test/kotlin",
+                    "src/testFixtures/kotlin",
+                    "src/liveTest/kotlin",
+                    "src/containerTest/kotlin",
+                ),
+            )
         }
-
-        register<JvmTestSuite>("liveTest") {
-            integrationSuite()
-            targets.all {
-                testTask.configure {
-                    description = "Runs the live integration tests against a running local ai-router."
-                    systemProperty("aiRouter.baseUrl", liveTestBaseUrl)
-                    systemProperty("aiRouter.chatModel", liveTestChatModel)
-                }
-            }
-        }
-
-        register<JvmTestSuite>("containerTest") {
-            integrationSuite()
-            targets.all {
-                testTask.configure {
-                    description = "Runs the container integration tests against a local Docker daemon."
-                }
-            }
+        tasks.withType<Detekt>().configureEach {
+            // Fail the build on any detekt finding.
+            ignoreFailures = false
         }
     }
 }
