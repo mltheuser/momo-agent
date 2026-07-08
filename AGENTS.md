@@ -7,8 +7,8 @@ Kotlin library for defining and running file-system-based agents.
 - `./gradlew build` — compile + detekt + unit tests (needs the ai-router
   checkout on disk — see README).
 - `./lint.sh` / `./fmt.sh` — detekt check / auto-fix formatting.
-- `./gradlew liveTest` — live tests against a running local ai-router server
-  (not in `build`/`check`).
+- `./gradlew liveTest` — live tests against a running local ai-router server;
+  the e2e container variant also needs Docker (not in `build`/`check`).
 - `./gradlew containerTest` — container integration tests against local
   Docker (not in `build`/`check`).
 

@@ -57,6 +57,10 @@ Start a server from the ai-router checkout (see its README; currently
 `./bin/ai-router serve`); the configured model must be available locally
 (e.g. pulled in Ollama).
 
+The suite includes the end-to-end acceptance tests, which run the
+`examples/coder` harness through a full toy task; the container variant
+additionally needs Docker (see the platform section below).
+
 Configuration (Gradle property takes precedence over the environment
 variable, which takes precedence over the default):
 

@@ -1,8 +1,6 @@
 package codes.momo.agent
 
 import ai.router.sdk.AiRouterClient
-import ai.router.sdk.models.ChatMessage
-import ai.router.sdk.models.ContentPartType
 import codes.momo.agent.environment.LocalExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import kotlinx.coroutines.runBlocking
@@ -36,21 +34,6 @@ class AgentLiveTest {
         instructions = "You are a careful coding agent working in a project workspace. " +
             "Use your tools to inspect files when a question concerns them, and keep final answers short.",
     )
-
-    private val ChatMessage.text: String
-        get() = content.filter { it.type == ContentPartType.TEXT }.mapNotNull { it.text }.joinToString("")
-
-    /** Every tool call in [transcript] must be answered by a later tool-role message. */
-    private fun assertToolCallsAnswered(transcript: List<ChatMessage>) {
-        transcript.forEachIndexed { index, message ->
-            message.toolCalls.orEmpty().forEach { call ->
-                assertTrue(
-                    transcript.drop(index + 1).any { it.role == "tool" && it.toolCallId == call.id },
-                    "tool call '${call.id}' (${call.function.name}) has no tool result message",
-                )
-            }
-        }
-    }
 
     // ─── Scenarios ────────────────────────────────────────────────────
 
