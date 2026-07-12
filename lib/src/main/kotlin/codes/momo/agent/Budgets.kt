@@ -6,16 +6,16 @@ import kotlin.time.Duration.Companion.minutes
 /**
  * Library-wide execution budgets, enforced by the agent loop and the tool
  * layer at input boundaries: a tool dispatch is bounded by the smaller of
- * [TOOL_TIMEOUT] and the prompt's remaining wall clock, an LLM call starts
+ * [TOOL_TIMEOUT] and the run's remaining wall clock, an LLM call starts
  * only while wall clock remains — the wall clock never cancels work
  * mid-result.
  */
 public object Budgets {
 
-    /** Maximum number of turns per prompt (a turn = one LLM call). */
+    /** Maximum number of turns per run (a turn = one LLM call). */
     public const val MAX_TURNS: Int = 40
 
-    /** Maximum active wall-clock time per prompt; time parked awaiting the user is free and unbounded. */
+    /** Maximum wall-clock time per run. */
     public val MAX_WALL_CLOCK: Duration = 30.minutes
 
     /** Timeout for a single tool execution. */

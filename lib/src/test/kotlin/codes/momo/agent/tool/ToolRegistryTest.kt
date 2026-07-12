@@ -191,20 +191,6 @@ class ToolRegistryTest {
         assertEquals(ToolResult.Success("hi"), result)
     }
 
-    // ─── External tools ───────────────────────────────────────────────
-
-    @Test
-    @DisplayName("Executing an external tool yields an error result: externals are never dispatched in-process")
-    fun externalToolExecutionYieldsError() = runTest {
-        val registry = registryOf(AskUserTool())
-
-        val wellFormed = registry.dispatch("ask_user", buildJsonObject { put("question", "Which?") })
-        val malformed = registry.dispatch("ask_user", buildJsonObject { })
-
-        assertError(wellFormed, "ask_user", "outside the process")
-        assertError(malformed, "invalid arguments", "ask_user")
-    }
-
     // ─── Exception mapping ────────────────────────────────────────────
 
     @Test
@@ -363,7 +349,7 @@ private data class EchoArgs(
 )
 
 /** Echoes `text` back `repeat` times; ignores the workspace. */
-private class EchoTool : DispatchedTool<EchoArgs>(
+private class EchoTool : Tool<EchoArgs>(
     name = "echo",
     description = "Echoes text back.",
     argsSerializer = EchoArgs.serializer(),
@@ -380,7 +366,7 @@ private class EmptyArgs
 private class ScriptedTool(
     name: String = "scripted",
     private val body: suspend () -> ToolResult = { ToolResult.Success("") },
-) : DispatchedTool<EmptyArgs>(
+) : Tool<EmptyArgs>(
     name = name,
     description = "Scripted test behaviour.",
     argsSerializer = EmptyArgs.serializer(),

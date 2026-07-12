@@ -28,7 +28,7 @@ Shared build conventions live in the root build script.
   structure cannot, state each contract fact in exactly one place, and keep
   KDoc self-contained (no planning-doc or issue references).
 - Stored session event logs are a persisted format: the `@SerialName`s on
-  `AgentEvent` and `PromptResult.Status` are a compatibility contract —
+  `AgentEvent` and `RunResult.Status` are a compatibility contract —
   never change them (details in their KDoc); the server's stored session
   logs (see README, Sessions) are in this format.
 - Test compilations are `associateWith`-bound for `internal` access (see

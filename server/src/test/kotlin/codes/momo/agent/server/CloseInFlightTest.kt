@@ -1,7 +1,6 @@
 package codes.momo.agent.server
 
 import ai.router.sdk.AiRouterClient
-import codes.momo.agent.AgentInput
 import codes.momo.agent.baseUrl
 import codes.momo.agent.scriptedServer
 import kotlinx.coroutines.CancellationException
@@ -23,7 +22,7 @@ class CloseInFlightTest {
     lateinit var tempDir: Path
 
     @Test
-    @DisplayName("Closing a session with a prompt in flight aborts the send, then tears down and stays resumable")
+    @DisplayName("Closing a session with a run in flight aborts the send, then tears down and stays resumable")
     fun closeAbortsAnInFlightSend() {
         val dataDir = tempDir.resolve("data")
         val harness = writeHarness(tempDir.resolve("harness")).toString()
@@ -35,7 +34,7 @@ class CloseInFlightTest {
                     runBlocking {
                         val id = registry.create(harness, workspace).id
                         val runtime = registry.attach(id)
-                        val send = async { runtime.send(AgentInput.UserMessage("hang forever")) }
+                        val send = async { runtime.send("hang forever") }
                         withTimeout(WAIT_MILLIS) {
                             while (!runtime.sendInFlight) {
                                 yield()

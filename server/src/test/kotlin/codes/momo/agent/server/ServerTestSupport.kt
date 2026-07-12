@@ -21,7 +21,7 @@ import kotlin.test.assertEquals
 /** Writes a valid harness folder at [folder] and returns it. */
 internal fun writeHarness(folder: Path, model: String = "test-model"): Path {
     folder.createDirectories()
-    folder.resolve("harness.yaml").writeText("model: $model\ntools:\n  - bash\n  - ask_user\n")
+    folder.resolve("harness.yaml").writeText("model: $model\ntools:\n  - bash\n")
     folder.resolve("instructions.md").writeText("Server-test instructions.\n")
     return folder
 }

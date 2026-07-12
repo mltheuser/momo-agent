@@ -152,7 +152,7 @@ environment. Its source of truth is on disk under the data directory —
 spec) plus `sessions/<session-id>/events.jsonl` (the event log, one
 serialized `AgentEvent` per line, appended live) — so every session
 survives a server restart: on startup the data directory is indexed and
-prior sessions appear as `closed`, resumable by ID. A running agent and
+prior sessions appear as `closed`. A running agent and
 its environment are an ephemeral runtime attachment on top; closing a
 session drops the attachment (a container copies its workspace back to
 the host and is removed) and keeps the stored log.
@@ -161,23 +161,31 @@ the host and is removed) and keeps the stored log.
 
 | Method & path                 | Effect |
 | ----------------------------- | ------ |
-| `POST /v1/sessions`           | Create a session; body: `{"harnessPath": "<dir>", "environment": {"type": "local", "workspace": "<dir>"}` or `{"type": "container", "image": "<img>", "workspace": "<dir>"}, "title"?: "..."}` → `201` with the session info. |
-| `GET /v1/sessions`            | List all sessions (ID, title, model, harness path, environment, status, created-at, last prompt's budget consumption, pending question). |
+| `POST /v1/sessions`           | Create a session (request body below) → `201` with the session info. |
+| `GET /v1/sessions`            | List all sessions (ID, title, model, harness path, environment, status, created-at, last run's budget consumption). |
 | `GET /v1/sessions/{id}`       | One session's info. |
 | `POST /v1/sessions/{id}/close`| Close the session; aborts in-flight work, tears the environment down, keeps the stored log. Idempotent. |
 | `DELETE /v1/sessions/{id}`    | Close if needed, then remove the session and its stored artifacts → `204`. |
 
+The create body names a server-local harness folder, an environment, and
+an optional title:
+
+```json
+{"harnessPath": "<dir>", "environment": {"type": "local", "workspace": "<dir>"}, "title": "..."}
+{"harnessPath": "<dir>", "environment": {"type": "container", "image": "<img>", "workspace": "<dir>"}}
+```
+
 Session `status` is derived, never stored: `running` (a send is in
-flight), `awaiting_user` (live, parked on a question), `idle` (live,
-nothing running), `closed` (no runtime attached; resumable).
+flight), `idle` (live, nothing running), `closed` (no runtime attached;
+resumable).
 
 Errors are structured JSON — `{"code": "...", "message": "..."}` — with
 `400` for invalid harness/environment/request, `404` for an unknown
 session, `409` for operations conflicting with an active send, and `500`
 otherwise.
 
-Prompting, event streaming, and answering a pending question over HTTP
-are not part of this surface yet.
+Prompting and event streaming over HTTP are not part of this surface
+yet.
 
 ## Supported platforms & system assumptions
 

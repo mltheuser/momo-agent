@@ -12,10 +12,8 @@ import ai.router.sdk.models.ToolDefinition
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
-import codes.momo.agent.tool.ExternalTool
 import codes.momo.agent.tool.ToolRegistry
 import codes.momo.agent.tool.ToolResult
-import codes.momo.agent.tool.boundedResultText
 import codes.momo.agent.tool.coreToolRegistry
 import kotlinx.coroutines.CancellationException
 import java.util.UUID
@@ -86,9 +84,6 @@ public class Agent internal constructor(
         addAll(session.conversation)
     }
 
-    /** The current prompt's accumulated counters — the only in-memory state a pause keeps. */
-    private var prompt: PromptState = session.parkedPrompt ?: PromptState()
-
     init {
         if (session is SessionState.Fresh) {
             emitter.emit { id, at -> AgentEvent.SessionStarted(id, at, sessionId, title) }
@@ -96,181 +91,120 @@ public class Agent internal constructor(
     }
 
     /**
-     * Advances the session with [input] — a user message starts a new
-     * prompt, an answer resolves the pending question — and runs the
-     * loop until the next outcome: each turn is one LLM call, followed by
-     * executing every requested tool call sequentially, in order. A call
-     * to an [ExternalTool] parks the prompt instead, as
-     * [PromptResult.Status.AWAITING_USER]. Budget breaches and terminal
-     * LLM failures are reported through the returned [PromptResult],
-     * never thrown.
+     * Sends [text] as the next user message and runs the loop to a terminal
+     * outcome: each turn is one LLM call, followed by executing every
+     * requested tool call sequentially, in order, until the model answers
+     * without tool calls or a budget ends the run. Budget breaches and
+     * terminal LLM failures are reported through the returned
+     * [RunResult], never thrown.
      *
-     * Prompts accumulate: each continues the previous conversation with
-     * fresh budget counters, while one prompt's pause-separated segments
-     * share its counters. After every terminal outcome — cancellation
-     * included — the stored conversation stays well-formed for the next
-     * call: tool calls the prompt never finished are answered with
-     * synthesized aborted results. A parked question is never aborted; it
-     * keeps waiting for its answer.
+     * Runs accumulate: each continues the previous conversation with
+     * fresh budget counters. After every outcome — cancellation included —
+     * the stored conversation stays well-formed for the next call: tool
+     * calls the run never finished are answered with synthesized aborted
+     * results.
      *
-     * @throws IllegalStateException when [input] does not fit the session:
-     *   a user message while a question is pending, an answer while none
-     *   is, or a send racing an already active one.
+     * @throws IllegalArgumentException when [text] is blank.
+     * @throws IllegalStateException when a send is already running.
      */
-    public suspend fun send(input: AgentInput): PromptResult {
+    public suspend fun send(text: String): RunResult {
+        require(text.isNotBlank()) { "A user message must not be blank." }
         check(running.compareAndSet(false, true)) {
             "send() is already running on this agent — await the active call before sending another."
         }
         try {
-            return when (input) {
-                is AgentInput.UserMessage -> startPrompt(input.text)
-                is AgentInput.Answer -> answerQuestion(input.text)
-            }
+            return executeRun(text)
         } finally {
             running.set(false)
         }
     }
 
-    private suspend fun startPrompt(text: String): PromptResult {
-        check(unansweredToolCalls(history).isEmpty()) {
-            "a question is pending — answer it with AgentInput.Answer before the next user message."
-        }
-        prompt = PromptState()
+    private suspend fun executeRun(text: String): RunResult {
+        val run = RunState()
         history += userMessage(text)
         emitter.emit { id, at -> AgentEvent.RunStarted(id, at, text) }
-        return runSegment(prompt)
-    }
-
-    private suspend fun answerQuestion(text: String): PromptResult {
-        val call = checkNotNull(unansweredToolCalls(history).firstOrNull()) {
-            "no question is pending — start a prompt with AgentInput.UserMessage."
-        }
-        val answer = text.boundedResultText()
-        history += toolResultMessage(call.id, answer)
-        emitter.emit { id, at -> AgentEvent.QuestionAnswered(id, at, call.id, answer) }
-        return runSegment(prompt)
-    }
-
-    private suspend fun runSegment(prompt: PromptState): PromptResult {
-        val segment = Segment(prompt)
-        prompt.parked = false
-        prompt.pendingQuestion = null
         val status = try {
-            runLoop(segment)
+            runLoop(run)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
-            prompt.failure = failure
-            PromptResult.Status.ERROR
+            run.failure = failure
+            RunResult.Status.ERROR
         } finally {
-            // A finally so the accounting and repair also run on external
-            // cancellation. A parked ask is deliberately left unanswered:
-            // its answer is still to come.
-            prompt.activeElapsed += segment.start.elapsedNow()
-            if (!prompt.parked) {
-                history += abortedToolResults(history)
-            }
+            // A finally so the repair also runs on external cancellation.
+            history += abortedToolResults(history)
         }
-        val result = PromptResult(
+        val result = RunResult(
             status = status,
-            finalMessage = prompt.finalMessage.takeIf { status == PromptResult.Status.COMPLETED },
-            pendingQuestion = prompt.pendingQuestion.takeIf { status == PromptResult.Status.AWAITING_USER },
+            finalMessage = run.finalMessage,
             transcript = history.toList(),
-            usage = prompt.usage,
-            turnsUsed = prompt.turnsUsed,
-            elapsed = prompt.activeElapsed,
-            error = prompt.failure,
+            usage = run.usage,
+            turnsUsed = run.turnsUsed,
+            elapsed = run.elapsed,
+            error = run.failure,
         )
-        if (status != PromptResult.Status.AWAITING_USER) {
-            emitter.emit { id, at ->
-                AgentEvent.RunFinished(
-                    sequenceId = id,
-                    timestampMillis = at,
-                    status = result.status,
-                    finalMessage = result.finalMessage,
-                    usage = result.usage,
-                    turnsUsed = result.turnsUsed,
-                    elapsed = result.elapsed,
-                )
-            }
+        emitter.emit { id, at ->
+            AgentEvent.RunFinished(
+                sequenceId = id,
+                timestampMillis = at,
+                status = result.status,
+                finalMessage = result.finalMessage,
+                usage = result.usage,
+                turnsUsed = result.turnsUsed,
+                elapsed = result.elapsed,
+            )
         }
         return result
     }
 
     /**
-     * Advances the prompt until an outcome: each pass first drains the
-     * trailing assistant message's unanswered tool calls — parking on an
-     * external one — then, while wall clock remains, takes the next LLM
-     * turn.
+     * Advances the run until an outcome: while wall clock remains, each
+     * pass takes one LLM turn, then executes its tool calls.
      */
-    private suspend fun runLoop(segment: Segment): PromptResult.Status {
-        var outcome: PromptResult.Status? = null
-        while (outcome == null) {
-            outcome = when {
-                processPendingCalls(segment) -> PromptResult.Status.AWAITING_USER
-                segment.remaining <= Duration.ZERO -> PromptResult.Status.TIMEOUT
-                else -> turnOutcome(segment.prompt, takeTurn(segment))
+    private suspend fun runLoop(run: RunState): RunResult.Status {
+        while (true) {
+            if (run.remaining <= Duration.ZERO) {
+                return RunResult.Status.TIMEOUT
+            }
+            val response = takeTurn(run)
+            val outcome = turnOutcome(run, response)
+            if (outcome != null) {
+                return outcome
+            }
+            for (call in response.message.toolCalls.orEmpty()) {
+                executeCall(run, call)
             }
         }
-        return outcome
     }
 
-    /**
-     * Executes the still-unanswered tool calls of the trailing assistant
-     * message, in order; true when parked on an external call, leaving the
-     * calls queued behind it untouched until the answer arrives.
-     */
-    private suspend fun processPendingCalls(segment: Segment): Boolean {
-        for (call in unansweredToolCalls(history)) {
-            val tool = registry.toolNamed(call.function.name)
-            if (tool is ExternalTool<*>) {
-                val question = tool.questionOrNull(call.function.arguments)
-                if (question != null) {
-                    park(segment.prompt, call.id, question)
-                    return true
-                }
-            }
-            executeCall(segment, call)
-        }
-        return false
-    }
-
-    /** Parking ignores the remaining budget. */
-    private fun park(prompt: PromptState, callId: String, question: String) {
-        prompt.pendingQuestion = question
-        prompt.parked = true
-        emitter.emit { id, at -> AgentEvent.QuestionAsked(id, at, callId, question) }
-    }
-
-    /** The segment-ending status this turn produced, or null when the loop continues with its tool calls. */
-    private fun turnOutcome(prompt: PromptState, response: ChatResponse): PromptResult.Status? {
+    /** The run-ending status this turn produced, or null when the loop continues with its tool calls. */
+    private fun turnOutcome(run: RunState, response: ChatResponse): RunResult.Status? {
         val toolCalls = response.message.toolCalls.orEmpty()
         return when {
             response.finishReason == FINISH_REASON_ERROR -> {
                 // A provider-side failure can arrive as a successful HTTP
                 // response; its text must not read as the model's answer.
-                prompt.failure = IllegalStateException("the LLM reported a failed response (finish_reason 'error').")
-                PromptResult.Status.ERROR
+                run.failure = IllegalStateException("the LLM reported a failed response (finish_reason 'error').")
+                RunResult.Status.ERROR
             }
 
             toolCalls.isEmpty() -> {
-                prompt.finalMessage = response.textContent
-                PromptResult.Status.COMPLETED
+                run.finalMessage = response.textContent
+                RunResult.Status.COMPLETED
             }
 
             // The pending calls stay unexecuted: no LLM call is left to
             // ever see their results.
-            prompt.turnsUsed >= budgets.maxTurns -> PromptResult.Status.TURNS_EXHAUSTED
+            run.turnsUsed >= budgets.maxTurns -> RunResult.Status.TURNS_EXHAUSTED
 
             else -> null
         }
     }
 
     /** One turn: one successful LLM call — retries cost wall-clock, not turns. */
-    private suspend fun takeTurn(segment: Segment): ChatResponse {
-        val prompt = segment.prompt
+    private suspend fun takeTurn(run: RunState): ChatResponse {
         val request = ChatRequest(model = harness.model, messages = history.toList(), tools = toolDefinitions)
-        emitter.emit { id, at -> AgentEvent.LlmCallStarted(id, at, turn = prompt.turnsUsed + 1) }
+        emitter.emit { id, at -> AgentEvent.LlmCallStarted(id, at, turn = run.turnsUsed + 1) }
         val response = retryTransientFailures(
             onRetry = { cause, attempt, backoff ->
                 emitter.emit { id, at ->
@@ -278,8 +212,8 @@ public class Agent internal constructor(
                 }
             },
         ) { client.chat(request) }
-        prompt.turnsUsed++
-        prompt.usage += response.usage
+        run.turnsUsed++
+        run.usage += response.usage
         history += response.message
         emitter.emit { id, at ->
             AgentEvent.LlmCallFinished(id, at, response.message, response.usage, response.finishReason)
@@ -288,20 +222,20 @@ public class Agent internal constructor(
             AgentEvent.BudgetUpdated(
                 sequenceId = id,
                 timestampMillis = at,
-                turnsUsed = prompt.turnsUsed,
-                turnsRemaining = budgets.maxTurns - prompt.turnsUsed,
-                elapsed = segment.elapsed,
+                turnsUsed = run.turnsUsed,
+                turnsRemaining = budgets.maxTurns - run.turnsUsed,
+                elapsed = run.elapsed,
             )
         }
         return response
     }
 
     /** One dispatched (or registry-rejected) call. */
-    private suspend fun executeCall(segment: Segment, call: ToolCall) {
+    private suspend fun executeCall(run: RunState, call: ToolCall) {
         emitter.emit { id, at ->
             AgentEvent.ToolCallStarted(id, at, call.id, call.function.name, call.function.arguments)
         }
-        val timeout = minOf(Budgets.TOOL_TIMEOUT, segment.remaining.coerceAtLeast(Duration.ZERO))
+        val timeout = minOf(Budgets.TOOL_TIMEOUT, run.remaining.coerceAtLeast(Duration.ZERO))
         val execution = registry.execute(call.function.name, call.function.arguments, environment, timeout)
         history += toolResultMessage(call.id, execution.result.text)
         emitter.emit { id, at ->
@@ -317,14 +251,18 @@ public class Agent internal constructor(
         }
     }
 
-    /** One pause-separated segment of the current prompt: its counters plus this segment's clock. */
-    private inner class Segment(val prompt: PromptState) {
+    /** Mutable accounting for one [send] run. */
+    private inner class RunState {
 
         val start = TimeSource.Monotonic.markNow()
 
-        /** Active wall-clock the prompt has consumed, this segment included. */
+        var turnsUsed: Int = 0
+        var usage: ChatUsage = ZERO_USAGE
+        var finalMessage: String? = null
+        var failure: Exception? = null
+
         val elapsed: Duration
-            get() = prompt.activeElapsed + start.elapsedNow()
+            get() = start.elapsedNow()
 
         val remaining: Duration
             get() = budgets.maxWallClock - elapsed
@@ -337,10 +275,7 @@ public class Agent internal constructor(
          * is derived from the log's verbatim payloads under the system
          * prompt [harness] produces now, tool calls the log left unanswered
          * are answered with synthesized aborted results, and new events
-         * continue the log's sequence IDs. A log ending parked on a
-         * question is restored still awaiting it — answerable via [send] —
-         * with the prompt's turn and usage counters rebuilt from the log.
-         * Loading emits nothing.
+         * continue the log's sequence IDs. Loading emits nothing.
          *
          * @throws IllegalArgumentException when [events] is not a stored
          *   session log (its first event must be
@@ -359,28 +294,17 @@ public class Agent internal constructor(
 }
 
 /**
- * Mutable accounting for one prompt. The transcript's unanswered external
- * call is the authoritative parked state; [parked] and [pendingQuestion]
- * only report the current segment's park to its result and the
- * repair-skip.
+ * The system prompt: the harness instructions plus the library-owned facts
+ * about the workspace and how to reach the user.
  */
-internal class PromptState(
-    var turnsUsed: Int = 0,
-    var usage: ChatUsage = ZERO_USAGE,
-) {
-
-    /** Active wall-clock consumed by ended segments; a restored parked prompt restarts at zero. */
-    var activeElapsed: Duration = Duration.ZERO
-    var parked: Boolean = false
-    var pendingQuestion: String? = null
-    var finalMessage: String? = null
-    var failure: Exception? = null
-}
-
-/** The system prompt: the harness instructions plus the library-owned workspace facts. */
 internal fun systemPromptFor(harness: Harness, workspacePath: String): String =
     harness.instructions.trimEnd() +
-        "\n\nThe workspace root is $workspacePath. File paths passed to tools must be absolute."
+        "\n\nThe workspace root is $workspacePath. File paths passed to tools must be absolute." +
+        "\n\nThe user is not watching you work and sees only your final message; their next message " +
+        "may take hours or days to arrive. Work autonomously and end your turn only when you are " +
+        "done or genuinely blocked. To ask the user something, end your turn with the question as " +
+        "your final message — ask only what you cannot work out from the workspace or your tools, " +
+        "and batch related questions into one message instead of asking them one at a time."
 
 private fun textMessage(role: String, text: String): ChatMessage =
     ChatMessage(role = role, content = listOf(ContentPart(type = ContentPartType.TEXT, text = text)))

@@ -33,9 +33,6 @@ public class ToolRegistry(tools: List<Tool<*>>) {
     public val names: Set<String>
         get() = toolsByName.keys
 
-    /** The registered tool called [name], or null. */
-    internal fun toolNamed(name: String): Tool<*>? = toolsByName[name]
-
     /**
      * The sub-registry holding exactly [toolNames], sharing this
      * registry's tool instances — so a name outside the subset errors as
@@ -66,8 +63,6 @@ public class ToolRegistry(tools: List<Tool<*>>) {
      * - unknown [name] or undecodable arguments → [ToolResult.Error]
      *   naming the problem (unknown argument keys are ignored — small
      *   models often add stray fields);
-     * - an [ExternalTool] → [ToolResult.Error]: externals are never
-     *   dispatched in-process;
      * - an unexpected exception from the tool → [ToolResult.Error];
      * - exceeding [timeout] → [ToolResult.TimedOut];
      * - text over [MAX_RESULT_CHARS] → truncated, with
@@ -82,8 +77,7 @@ public class ToolRegistry(tools: List<Tool<*>>) {
         val start = TimeSource.Monotonic.markNow()
         val result = when (val tool = toolsByName[name]) {
             null -> ToolResult.Error(unknownToolMessage(name))
-            is ExternalTool<*> -> externalCallError(tool, arguments)
-            is DispatchedTool<*> -> dispatch(tool, arguments, environment, timeout)
+            else -> dispatch(tool, arguments, environment, timeout)
         }
         val bounded = result.bounded()
         return ToolExecution(
@@ -93,18 +87,8 @@ public class ToolRegistry(tools: List<Tool<*>>) {
         )
     }
 
-    /** Externals produce no in-process result; bad arguments are still reported as such. */
-    private fun externalCallError(tool: ExternalTool<*>, arguments: JsonObject): ToolResult.Error {
-        try {
-            tool.decode(arguments)
-        } catch (@Suppress("TooGenericExceptionCaught") exception: Exception) {
-            return invalidArgumentsError(tool, exception)
-        }
-        return ToolResult.Error("tool '${tool.name}' is answered from outside the process and cannot be executed.")
-    }
-
     private suspend fun dispatch(
-        tool: DispatchedTool<*>,
+        tool: Tool<*>,
         arguments: JsonObject,
         environment: ExecutionEnvironment,
         timeout: Duration,
@@ -159,7 +143,7 @@ public class ToolRegistry(tools: List<Tool<*>>) {
         /**
          * Headroom the dispatch timer adds over [Budgets.TOOL_TIMEOUT] so
          * a tool's own budget-bound exec call, started after the dispatch
-         * timer, can report its timeout first — see [DispatchedTool.execute].
+         * timer, can report its timeout first — see [Tool.execute].
          */
         private val TIMEOUT_GRACE: Duration = 10.seconds
     }
@@ -168,7 +152,7 @@ public class ToolRegistry(tools: List<Tool<*>>) {
 /**
  * [ToolRegistry.MAX_RESULT_CHARS]-capped model-facing text, with
  * [ToolRegistry.TRUNCATION_MARKER] appended when cut — the bound every
- * tool result passes through, dispatched or external.
+ * tool result passes through.
  */
 internal fun String.boundedResultText(): String {
     if (length <= ToolRegistry.MAX_RESULT_CHARS) return this

@@ -42,7 +42,7 @@ public sealed interface AgentEvent {
         val title: String,
     ) : AgentEvent
 
-    /** An [Agent.send] prompt began; [userMessage] is the verbatim user text. */
+    /** An [Agent.send] run began; [userMessage] is the verbatim user text. */
     @Serializable
     @SerialName("run_started")
     public data class RunStarted(
@@ -52,21 +52,19 @@ public sealed interface AgentEvent {
     ) : AgentEvent
 
     /**
-     * A prompt — a "run" in the log's vocabulary — reached a terminal
-     * status, however it ended. External cancellation is the one
-     * exception: a log records a cancelled run without this event, and
-     * [Agent.load]'s transcript repair covers that missing tail. A pause
-     * is not terminal: it logs only [QuestionAsked], and the answering
-     * segment continues the same run. The fields carry the final
-     * [PromptResult] counterparts: the prompt's totals, the final message
-     * verbatim.
+     * A run reached a terminal status, however it ended. External
+     * cancellation is the one exception: a log records a cancelled run
+     * without this event, and
+     * [Agent.load]'s transcript repair covers that missing tail. The
+     * fields carry the final [RunResult] counterparts: the run's
+     * totals, the final message verbatim.
      */
     @Serializable
     @SerialName("run_finished")
     public data class RunFinished(
         override val sequenceId: Long,
         override val timestampMillis: Long,
-        val status: PromptResult.Status,
+        val status: RunResult.Status,
         val finalMessage: String?,
         val usage: ChatUsage,
         val turnsUsed: Int,
@@ -144,34 +142,6 @@ public sealed interface AgentEvent {
         }
     }
 
-    /**
-     * The prompt parked on an [codes.momo.agent.tool.ExternalTool] call:
-     * [question] is the verbatim question awaiting the user's answer. A
-     * parked call is never dispatched, so no [ToolCallStarted] or
-     * [ToolCallFinished] accompany it.
-     */
-    @Serializable
-    @SerialName("question_asked")
-    public data class QuestionAsked(
-        override val sequenceId: Long,
-        override val timestampMillis: Long,
-        val callId: String,
-        val question: String,
-    ) : AgentEvent
-
-    /**
-     * The pending question was answered; [answer] is the exact tool-result
-     * text appended to the conversation for [callId].
-     */
-    @Serializable
-    @SerialName("question_answered")
-    public data class QuestionAnswered(
-        override val sequenceId: Long,
-        override val timestampMillis: Long,
-        val callId: String,
-        val answer: String,
-    ) : AgentEvent
-
     /** Budget accounting at a turn boundary. */
     @Serializable
     @SerialName("budget_updated")
@@ -180,23 +150,7 @@ public sealed interface AgentEvent {
         override val timestampMillis: Long,
         val turnsUsed: Int,
         val turnsRemaining: Int,
-        /** Active wall-clock time the prompt has consumed. */
+        /** Wall-clock time the run has consumed. */
         val elapsed: Duration,
     ) : AgentEvent
 }
-
-/**
- * The question this log's trailing state awaits, or null. While parked no
- * other input is possible, so the log's last pause-or-run event decides.
- */
-public fun List<AgentEvent>.pendingQuestion(): String? =
-    (lastOrNull { it.decidesParking } as? AgentEvent.QuestionAsked)?.question
-
-private val AgentEvent.decidesParking: Boolean
-    get() = when (this) {
-        is AgentEvent.QuestionAsked, is AgentEvent.QuestionAnswered,
-        is AgentEvent.RunStarted, is AgentEvent.RunFinished,
-        -> true
-
-        else -> false
-    }

@@ -46,13 +46,11 @@ class AgentLiveTest {
             val agent = Agent(harness(), client, environment, "Live test session")
 
             val result = agent.send(
-                AgentInput.UserMessage(
-                    "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
-                        "and reply with the token it contains.",
-                ),
+                "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
+                    "and reply with the token it contains.",
             )
 
-            assertEquals(PromptResult.Status.COMPLETED, result.status, "error: ${result.error}")
+            assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
             val finalMessage = assertNotNull(result.finalMessage)
             assertTrue(
                 finalMessage.contains(TOKEN, ignoreCase = true),
@@ -95,19 +93,17 @@ class AgentLiveTest {
             )
 
             val result = agent.send(
-                AgentInput.UserMessage(
-                    "You must inspect the workspace files with your tools before answering. " +
-                        "What is the content of data.txt?",
-                ),
+                "You must inspect the workspace files with your tools before answering. " +
+                    "What is the content of data.txt?",
             )
 
             // A model answering without any tool call is legal behaviour that
             // just cannot demonstrate exhaustion; skip instead of flaking.
             assumeTrue(
-                result.status != PromptResult.Status.COMPLETED,
+                result.status != RunResult.Status.COMPLETED,
                 "model answered without calling a tool on its only turn",
             )
-            assertEquals(PromptResult.Status.TURNS_EXHAUSTED, result.status, "error: ${result.error}")
+            assertEquals(RunResult.Status.TURNS_EXHAUSTED, result.status, "error: ${result.error}")
             assertNull(result.finalMessage)
             assertEquals(1, result.turnsUsed)
             assertToolCallsAnswered(result.transcript)
@@ -126,20 +122,16 @@ class AgentLiveTest {
             val agent = Agent(harness(), client, environment, "Live test session")
 
             val first = agent.send(
-                AgentInput.UserMessage(
-                    "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
-                        "and reply with the token it contains.",
-                ),
+                "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
+                    "and reply with the token it contains.",
             )
-            assertEquals(PromptResult.Status.COMPLETED, first.status, "error: ${first.error}")
+            assertEquals(RunResult.Status.COMPLETED, first.status, "error: ${first.error}")
 
             val second = agent.send(
-                AgentInput.UserMessage(
-                    "Repeat the exact token you found before. Answer from the conversation, without using any tool.",
-                ),
+                "Repeat the exact token you found before. Answer from the conversation, without using any tool.",
             )
 
-            assertEquals(PromptResult.Status.COMPLETED, second.status, "error: ${second.error}")
+            assertEquals(RunResult.Status.COMPLETED, second.status, "error: ${second.error}")
             val answer = assertNotNull(second.finalMessage)
             assertTrue(
                 answer.contains(TOKEN, ignoreCase = true),

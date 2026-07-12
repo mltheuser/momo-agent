@@ -13,7 +13,6 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -25,16 +24,17 @@ private const val SCRIPT_NAME: String = "greeting.sh"
 private const val TASK_PROMPT: String =
     "Create a shell script named $SCRIPT_NAME in the workspace root that prints one exact " +
         "greeting message and exits successfully. The user has already decided on the exact " +
-        "message, but it is written down nowhere: ask the user for it with the ask_user tool, " +
-        "as one single question — do not ask the user anything else before or after. Then " +
-        "write the script, run it to verify it prints the message, and finish with a short summary."
+        "message, but it is written down nowhere: ask the user for it, as one single question — " +
+        "do not ask the user anything else before or after. Once you have the message, write " +
+        "the script, run it to verify it prints the message, and finish with a short summary."
 
 private const val CANNED_ANSWER: String = "The script must print exactly this message: $GREETING_TOKEN"
 
 /**
- * Drives the toy task end to end over [environment] and asserts everything
- * except the workspace outcome, which the caller checks host-side via
- * [assertToyTaskWorkspace].
+ * Drives the toy task end to end over [environment] — the first run ends
+ * with the agent's question as its final message, the next prompt answers
+ * it — and asserts everything except the workspace outcome, which the
+ * caller checks host-side via [assertToyTaskWorkspace].
  */
 internal fun runToyTaskScenario(environment: ExecutionEnvironment) {
     val harness = Harness.load(Path.of(examplesDir, "coder")).copy(model = liveChatModel)
@@ -42,10 +42,34 @@ internal fun runToyTaskScenario(environment: ExecutionEnvironment) {
     runBlocking {
         AiRouterClient(liveBaseUrl).use { client ->
             val agent = Agent(harness, client, environment, "E2E acceptance session", listener)
-            assertSegments(driveScriptedUser(agent))
+
+            val asked = agent.send(TASK_PROMPT)
+            assertEquals(RunResult.Status.COMPLETED, asked.status, "error: ${asked.error}")
+            assertGreetingUnknown(environment)
+
+            val finished = agent.send(CANNED_ANSWER)
+            assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
+            assertToolCallsAnswered(finished.transcript)
+            val last = finished.transcript.last()
+            assertEquals("assistant", last.role)
+            assertTrue(last.toolCalls.isNullOrEmpty(), "the final message must not carry tool calls")
         }
     }
     assertEventLog(listener.events)
+}
+
+/**
+ * The greeting must be unobtainable without asking: after the first run the
+ * workspace must not contain the planted token anywhere, or the agent
+ * delivered by guessing instead of ending its turn with the question.
+ */
+private suspend fun assertGreetingUnknown(environment: ExecutionEnvironment) {
+    val grep = environment.exec(
+        listOf("grep", "-r", GREETING_TOKEN, environment.workspacePath),
+        timeout = 30.seconds,
+    )
+    val completed = assertIs<ExecResult.Completed>(grep, "the workspace grep timed out")
+    assertEquals(1, completed.exitCode, "the greeting appeared in the workspace before the user revealed it")
 }
 
 /** Isolation check for the container variant: the script has not reached the host yet. */
@@ -68,54 +92,16 @@ internal fun assertToyTaskWorkspace(workspace: Path) {
     assertContains(completed.stdout, GREETING_TOKEN)
 }
 
-/** Sends the task, then answers the single question the task allows; a second ask fails fast. */
-private suspend fun driveScriptedUser(agent: Agent): List<PromptResult> {
-    val segments = mutableListOf(agent.send(AgentInput.UserMessage(TASK_PROMPT)))
-    while (segments.last().status == PromptResult.Status.AWAITING_USER) {
-        assertEquals(
-            1,
-            segments.size,
-            "the agent asked a second question instead of finishing: ${segments.last().pendingQuestion}",
-        )
-        segments += agent.send(AgentInput.Answer(CANNED_ANSWER))
-    }
-    return segments
-}
-
-private fun assertSegments(segments: List<PromptResult>) {
-    val final = segments.last()
-    assertEquals(PromptResult.Status.COMPLETED, final.status, "error: ${final.error}")
-    val pauses = segments.dropLast(1)
-    assertTrue(pauses.isNotEmpty(), "the agent never asked the user, yet the greeting is not in the prompt")
-    pauses.forEach { pause ->
-        assertNotNull(pause.pendingQuestion, "an AWAITING_USER segment must carry its question")
-    }
-    assertToolCallsAnswered(final.transcript)
-    val last = final.transcript.last()
-    assertEquals("assistant", last.role)
-    assertTrue(last.toolCalls.isNullOrEmpty(), "the final message must not carry tool calls")
-}
-
 private fun assertEventLog(events: List<AgentEvent>) {
     assertIs<AgentEvent.SessionStarted>(events.first())
-    assertEquals(1, events.count { it is AgentEvent.RunStarted }, "one prompt means one RunStarted")
     val llmCalls = events.count { it is AgentEvent.LlmCallStarted }
-    assertTrue(llmCalls >= 1, "expected at least one LLM call")
+    assertTrue(llmCalls >= 2, "expected at least two LLM calls across the two runs")
     assertEquals(llmCalls, events.count { it is AgentEvent.LlmCallFinished }, "every LLM call must finish")
     val toolCalls = events.count { it is AgentEvent.ToolCallStarted }
     assertTrue(toolCalls >= 1, "expected tool activity — the script cannot appear without it")
     assertEquals(toolCalls, events.count { it is AgentEvent.ToolCallFinished }, "every tool call must finish")
 
-    val asked = events.filterIsInstance<AgentEvent.QuestionAsked>().single()
-    val answered = events.filterIsInstance<AgentEvent.QuestionAnswered>().single()
-    assertEquals(asked.callId, answered.callId, "the answer must resolve the asked call")
-    assertEquals(CANNED_ANSWER, answered.answer)
-
-    // Exactly one terminal event — the pause emitted none — and it closes the log.
-    val finished = events.filterIsInstance<AgentEvent.RunFinished>().single()
-    assertEquals(PromptResult.Status.COMPLETED, finished.status)
-    assertEquals(finished, events.last())
-
-    assertEquals(List(events.size) { it.toLong() }, events.map { it.sequenceId }, "sequence IDs must be gapless")
+    // Two clean runs: task → question, answer → deliverable.
+    assertTwoCleanRuns(events, secondUserMessage = CANNED_ANSWER)
     assertTrue(events.all { it.timestampMillis > 0 }, "every event must carry a timestamp")
 }

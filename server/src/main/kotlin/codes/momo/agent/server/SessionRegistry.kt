@@ -3,11 +3,9 @@ package codes.momo.agent.server
 import ai.router.sdk.AiRouterClient
 import codes.momo.agent.Agent
 import codes.momo.agent.AgentEvent
-import codes.momo.agent.AgentInput
-import codes.momo.agent.PromptResult
+import codes.momo.agent.RunResult
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
-import codes.momo.agent.pendingQuestion
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -196,21 +194,16 @@ internal class SessionRegistry(
             model = metadata.model,
             harnessPath = metadata.harnessPath,
             environment = metadata.environment,
-            status = entry.status(events),
+            status = entry.status(),
             createdAtMillis = events.sessionCreatedAtMillis(),
-            lastPrompt = events.lastPromptStats(),
-            pendingQuestion = events.pendingQuestion(),
+            lastRun = events.lastRunStats(),
         )
     }
 }
 
-private fun SessionEntry.status(events: List<AgentEvent>): SessionStatus {
+private fun SessionEntry.status(): SessionStatus {
     val runtime = runtime ?: return SessionStatus.CLOSED
-    return when {
-        runtime.sendInFlight -> SessionStatus.RUNNING
-        events.pendingQuestion() != null -> SessionStatus.AWAITING_USER
-        else -> SessionStatus.IDLE
-    }
+    return if (runtime.sendInFlight) SessionStatus.RUNNING else SessionStatus.IDLE
 }
 
 /** Cleanup-and-rethrow: a failed construction must not leak [environment]. */
@@ -248,11 +241,11 @@ internal class SessionRuntime(
      * The one way to drive the agent: the send runs as a child of the
      * runtime, so [abortSends] reaches it.
      *
-     * @throws SessionConflictException when the input does not fit the
-     *   session's state or a send is already active.
+     * @throws SessionConflictException when a send is already active.
+     * @throws IllegalArgumentException from [Agent.send] — passes through unwrapped.
      */
-    suspend fun send(input: AgentInput): PromptResult = try {
-        scope.async { agent.send(input) }.await()
+    suspend fun send(text: String): RunResult = try {
+        scope.async { agent.send(text) }.await()
     } catch (cancellation: CancellationException) {
         throw cancellation // Extends IllegalStateException; an abort is not a conflict.
     } catch (failure: IllegalStateException) {

@@ -15,10 +15,8 @@ internal data class SessionInfo(
     val environment: EnvironmentSpec,
     val status: SessionStatus,
     val createdAtMillis: Long,
-    /** Consumption of the current (or last) prompt; null before the first prompt. */
-    val lastPrompt: PromptStats?,
-    /** The question a parked session awaits; null when none is pending. */
-    val pendingQuestion: String?,
+    /** Consumption of the current (or last) run; null before the first run. */
+    val lastRun: RunStats?,
 )
 
 @Serializable
@@ -27,10 +25,6 @@ internal enum class SessionStatus {
     /** A send is in flight. */
     @SerialName("running")
     RUNNING,
-
-    /** Live and parked on a question. */
-    @SerialName("awaiting_user")
-    AWAITING_USER,
 
     /** Live with nothing running. */
     @SerialName("idle")
@@ -41,12 +35,12 @@ internal enum class SessionStatus {
     CLOSED,
 }
 
-/** Budget consumption of one prompt. */
+/** Budget consumption of one run. */
 @Serializable
-internal data class PromptStats(
+internal data class RunStats(
     val turnsUsed: Int,
     val totalTokens: Int,
-    /** Active wall-clock the prompt consumed, per its latest logged accounting. */
+    /** Wall-clock the run consumed, per its latest logged accounting. */
     val elapsed: Duration,
 )
 
@@ -60,20 +54,20 @@ internal fun List<AgentEvent>.sessionTitle(): String =
         ?: (first() as AgentEvent.SessionStarted).title
 
 /**
- * Consumption of the log's last prompt: its `RunFinished` totals once it
+ * Consumption of the log's last run: its `RunFinished` totals once it
  * ended, otherwise rebuilt from the turns logged so far.
  */
-internal fun List<AgentEvent>.lastPromptStats(): PromptStats? {
+internal fun List<AgentEvent>.lastRunStats(): RunStats? {
     if (none { it is AgentEvent.RunStarted }) {
         return null
     }
     val run = takeLastWhile { it !is AgentEvent.RunStarted }
     val finished = run.filterIsInstance<AgentEvent.RunFinished>().lastOrNull()
     return if (finished != null) {
-        PromptStats(finished.turnsUsed, finished.usage.totalTokens, finished.elapsed)
+        RunStats(finished.turnsUsed, finished.usage.totalTokens, finished.elapsed)
     } else {
         val turns = run.filterIsInstance<AgentEvent.LlmCallFinished>()
-        PromptStats(
+        RunStats(
             turnsUsed = turns.size,
             totalTokens = turns.sumOf { it.usage.totalTokens },
             elapsed = run.filterIsInstance<AgentEvent.BudgetUpdated>().lastOrNull()?.elapsed ?: Duration.ZERO,

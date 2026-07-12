@@ -11,8 +11,8 @@ import kotlin.test.assertEquals
 /**
  * End-to-end acceptance: the example coder harness completes the toy task
  * through the full public surface — harness loading, the agent loop, core
- * tools, an ask_user pause/resume round, the event stream — in a local
- * workspace and fully isolated in a container.
+ * tools, a question-and-answer round over two prompts, the event stream —
+ * in a local workspace and fully isolated in a container.
  */
 class EndToEndAcceptanceLiveTest {
 

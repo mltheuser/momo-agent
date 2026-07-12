@@ -27,10 +27,10 @@ class AgentEventStreamTest {
         listener: AgentEventListener,
         vararg replies: ScriptedReply,
         budgets: RunBudgets = RunBudgets(),
-    ): PromptResult =
+    ): RunResult =
         scriptedServer(*replies).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
-                runBlocking { agent(client, listener, budgets).send(AgentInput.UserMessage("go")) }
+                runBlocking { agent(client, listener, budgets).send("go") }
             }
         }
 
@@ -60,7 +60,7 @@ class AgentEventStreamTest {
             assistantResponse(finishReason = "stop", text = "all done").asReply(),
         )
 
-        assertEquals(PromptResult.Status.COMPLETED, result.status, "error: ${result.error}")
+        assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
         val events = listener.events
         assertEquals(
             listOf(
@@ -110,11 +110,36 @@ class AgentEventStreamTest {
 
         assertEquals(2, assertIs<AgentEvent.LlmCallStarted>(events[7]).turn)
         val finished = assertIs<AgentEvent.RunFinished>(events[10])
-        assertEquals(PromptResult.Status.COMPLETED, finished.status)
+        assertEquals(RunResult.Status.COMPLETED, finished.status)
         assertEquals("all done", finished.finalMessage)
         assertEquals(2, finished.turnsUsed)
         assertEquals(result.usage, finished.usage)
         assertTrue(finished.elapsed > Duration.ZERO)
+    }
+
+    // ─── Conversation continuity ──────────────────────────────────────
+
+    @Test
+    @DisplayName("A question answered on the next send yields two clean runs with gapless sequence IDs")
+    fun answeredQuestionEmitsTwoCleanRunsWithContinuousSequenceIds() {
+        val listener = CollectingEventListener()
+
+        scriptedServer(
+            assistantResponse(finishReason = "stop", text = "Which greeting should the script print?").asReply(),
+            assistantResponse(finishReason = "stop", text = "done").asReply(),
+        ).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                val agent = agent(client, listener)
+                runBlocking {
+                    val asked = agent.send("go")
+                    assertEquals(RunResult.Status.COMPLETED, asked.status, "error: ${asked.error}")
+                    val answered = agent.send("print hello")
+                    assertEquals(RunResult.Status.COMPLETED, answered.status, "error: ${answered.error}")
+                }
+            }
+        }
+
+        assertTwoCleanRuns(listener.events, secondUserMessage = "print hello")
     }
 
     // ─── Retries ──────────────────────────────────────────────────────
@@ -130,7 +155,7 @@ class AgentEventStreamTest {
             assistantResponse(finishReason = "stop", text = "ok").asReply(),
         )
 
-        assertEquals(PromptResult.Status.COMPLETED, result.status, "error: ${result.error}")
+        assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
         assertEquals(
             listOf(
                 AgentEvent.SessionStarted::class,
@@ -162,74 +187,10 @@ class AgentEventStreamTest {
             budgets = RunBudgets(maxWallClock = 500.milliseconds),
         )
 
-        assertEquals(PromptResult.Status.TIMEOUT, result.status)
+        assertEquals(RunResult.Status.TIMEOUT, result.status)
         val finished = assertIs<AgentEvent.RunFinished>(listener.events.last())
-        assertEquals(PromptResult.Status.TIMEOUT, finished.status)
+        assertEquals(RunResult.Status.TIMEOUT, finished.status)
         assertNull(finished.finalMessage)
-    }
-
-    // ─── Pause and resume ─────────────────────────────────────────────
-
-    @Test
-    @DisplayName("A pause logs only QuestionAsked; the resume logs QuestionAnswered and one terminal RunFinished")
-    fun pauseAndResumeEventFlow() {
-        val listener = CollectingEventListener()
-        scriptedServer(
-            toolCallResponse(askUserCall(id = "call-1", question = "Which one?")),
-            assistantResponse(finishReason = "stop", text = "done"),
-        ).use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                val agent = agent(client, listener)
-                runBlocking {
-                    val parked = agent.send(AgentInput.UserMessage("go"))
-
-                    assertEquals(PromptResult.Status.AWAITING_USER, parked.status, "error: ${parked.error}")
-                    val pauseEvents = listener.events.toList()
-                    assertEquals(
-                        listOf(
-                            AgentEvent.SessionStarted::class,
-                            AgentEvent.RunStarted::class,
-                            AgentEvent.LlmCallStarted::class,
-                            AgentEvent.LlmCallFinished::class,
-                            AgentEvent.BudgetUpdated::class,
-                            AgentEvent.QuestionAsked::class,
-                        ),
-                        pauseEvents.map { it::class },
-                    )
-                    val asked = assertIs<AgentEvent.QuestionAsked>(pauseEvents.last())
-                    assertEquals("call-1", asked.callId)
-                    assertEquals("Which one?", asked.question)
-
-                    val finished = agent.send(AgentInput.Answer("that one"))
-
-                    assertEquals(PromptResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
-                    val resumeEvents = listener.events.drop(pauseEvents.size)
-                    assertEquals(
-                        listOf(
-                            AgentEvent.QuestionAnswered::class,
-                            AgentEvent.LlmCallStarted::class,
-                            AgentEvent.LlmCallFinished::class,
-                            AgentEvent.BudgetUpdated::class,
-                            AgentEvent.RunFinished::class,
-                        ),
-                        resumeEvents.map { it::class },
-                    )
-                    val answered = assertIs<AgentEvent.QuestionAnswered>(resumeEvents.first())
-                    assertEquals("call-1", answered.callId)
-                    assertEquals("that one", answered.answer)
-                    // The one RunFinished carries the totals accumulated across both segments.
-                    val runFinished = assertIs<AgentEvent.RunFinished>(listener.events.last())
-                    assertEquals(2, runFinished.turnsUsed)
-                    assertEquals(finished.usage, runFinished.usage)
-                    assertEquals(finished.elapsed, runFinished.elapsed)
-                    // One gapless log across the pause.
-                    assertEquals(
-                        List(listener.events.size) { it.toLong() },
-                        listener.events.map { it.sequenceId },
-                    )
-                }
-            }
-        }
     }
 
     // ─── Listener isolation ───────────────────────────────────────────
@@ -241,7 +202,7 @@ class AgentEventStreamTest {
 
         val result = runScripted(throwing, assistantResponse(finishReason = "stop", text = "done").asReply())
 
-        assertEquals(PromptResult.Status.COMPLETED, result.status, "error: ${result.error}")
+        assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
         assertEquals("done", result.finalMessage)
     }
 }

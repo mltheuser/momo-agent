@@ -49,8 +49,7 @@ class SessionLifecycleTest {
             assertEquals(workspace(), created.environment)
             assertEquals(SessionStatus.IDLE, created.status)
             assertTrue(created.createdAtMillis > 0)
-            assertNull(created.lastPrompt, "no prompt ran yet")
-            assertNull(created.pendingQuestion)
+            assertNull(created.lastRun, "no run happened yet")
 
             assertEquals(created, http.get("/v1/sessions/${created.id}").body<SessionInfo>())
             assertEquals(listOf(created), http.get("/v1/sessions").body<List<SessionInfo>>())

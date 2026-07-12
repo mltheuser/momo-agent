@@ -16,7 +16,6 @@ import java.nio.file.Path
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -29,16 +28,10 @@ class AgentLoadTest {
 
     private fun environment(): LocalExecutionEnvironment = LocalExecutionEnvironment(workspace)
 
-    /** What one recording pass produced: the emitted event log plus each send's result. */
-    private class RecordedSession(
-        val events: List<AgentEvent>,
-        val results: List<PromptResult>,
-    )
-
     /**
-     * Records [prompts] sent in order under [budgets], consuming [replies]
-     * across runs, with [after] applied to the agent once the sends
-     * finished.
+     * The event log recorded by sending [prompts] in order under [budgets],
+     * consuming [replies] across runs, with [after] applied to the agent
+     * once the sends finished.
      */
     private fun recordedSession(
         replies: List<ScriptedReply> = listOf(
@@ -48,9 +41,8 @@ class AgentLoadTest {
         prompts: List<String> = listOf("first question"),
         budgets: RunBudgets = RunBudgets(),
         after: (Agent) -> Unit = {},
-    ): RecordedSession {
+    ): List<AgentEvent> {
         val listener = CollectingEventListener()
-        val results = mutableListOf<PromptResult>()
         scriptedServer(*replies.toTypedArray()).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
                 val agent = Agent(
@@ -61,11 +53,11 @@ class AgentLoadTest {
                     budgets,
                     SessionState.Fresh("Recorded session"),
                 )
-                runBlocking { prompts.mapTo(results) { agent.send(AgentInput.UserMessage(it)) } }
+                runBlocking { prompts.forEach { agent.send(it) } }
                 after(agent)
             }
         }
-        return RecordedSession(listener.events.toList(), results)
+        return listener.events.toList()
     }
 
     // ─── Continuing a loaded session ──────────────────────────────────
@@ -73,7 +65,7 @@ class AgentLoadTest {
     @Test
     @DisplayName("A loaded session continues the conversation with continuous history and sequence IDs")
     fun loadContinuesConversationAndSequenceIds() {
-        val logged = recordedSession().events
+        val logged = recordedSession()
 
         val listener = CollectingEventListener()
         scriptedServer(assistantResponse(finishReason = "stop", text = "second answer")).use { server ->
@@ -84,9 +76,9 @@ class AgentLoadTest {
                 assertEquals("Recorded session", agent.title)
                 assertTrue(listener.events.isEmpty(), "loading must emit nothing")
 
-                val result = runBlocking { agent.send(AgentInput.UserMessage("second question")) }
+                val result = runBlocking { agent.send("second question") }
 
-                assertEquals(PromptResult.Status.COMPLETED, result.status, "error: ${result.error}")
+                assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                 assertEquals("second answer", result.finalMessage)
                 // The recorded conversation, verbatim, under the current harness's system prompt.
                 assertEquals(
@@ -112,7 +104,7 @@ class AgentLoadTest {
     @Test
     @DisplayName("Loading into a harness missing a used tool fails, naming the tool")
     fun loadIntoHarnessMissingUsedToolFails() {
-        val logged = recordedSession().events
+        val logged = recordedSession()
         val slim = TEST_HARNESS.copy(tools = listOf("read_file"))
 
         withUnusedClient { client ->
@@ -133,7 +125,7 @@ class AgentLoadTest {
                 ).asReply(),
                 assistantResponse(finishReason = "stop", text = "ok").asReply(),
             ),
-        ).events
+        )
 
         withUnusedClient { client ->
             Agent.load(logged, TEST_HARNESS, client, environment())
@@ -145,14 +137,14 @@ class AgentLoadTest {
     @Test
     @DisplayName("A log cut mid-run loads with the dangling tool call repaired")
     fun cutLogLoadsWithRepairedTranscript() {
-        val logged = recordedSession().events
+        val logged = recordedSession()
         val cut = logged.subList(0, logged.indexOfFirst { it is AgentEvent.ToolCallStarted } + 1)
 
         scriptedServer(assistantResponse(finishReason = "stop", text = "recovered")).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
                 val agent = Agent.load(cut, TEST_HARNESS, client, environment())
 
-                val result = runBlocking { agent.send(AgentInput.UserMessage("continue")) }
+                val result = runBlocking { agent.send("continue") }
 
                 assertEquals(
                     listOf("system", "user", "assistant", "tool", "user", "assistant"),
@@ -175,13 +167,13 @@ class AgentLoadTest {
             ),
             prompts = listOf("first question", "second question"),
             budgets = RunBudgets(maxTurns = 1),
-        ).events
+        )
 
         scriptedServer(assistantResponse(finishReason = "stop", text = "third answer")).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
                 val agent = Agent.load(logged, TEST_HARNESS, client, environment())
 
-                val result = runBlocking { agent.send(AgentInput.UserMessage("third question")) }
+                val result = runBlocking { agent.send("third question") }
 
                 assertEquals(
                     listOf("system", "user", "assistant", "tool", "user", "assistant", "user", "assistant"),
@@ -203,13 +195,13 @@ class AgentLoadTest {
             ),
             prompts = listOf("first question", "second question"),
             budgets = RunBudgets(maxTurns = 1),
-        ).events
+        )
 
         scriptedServer(assistantResponse(finishReason = "stop", text = "done")).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
                 val agent = Agent.load(logged, TEST_HARNESS, client, environment())
 
-                val result = runBlocking { agent.send(AgentInput.UserMessage("third question")) }
+                val result = runBlocking { agent.send("third question") }
 
                 assertEquals(
                     listOf("system", "user", "assistant", "tool", "user", "assistant", "tool", "user", "assistant"),
@@ -223,94 +215,10 @@ class AgentLoadTest {
         }
     }
 
-    // ─── Parked sessions ──────────────────────────────────────────────
-
-    @Test
-    @DisplayName("A log ending parked loads still awaiting the user, resumable with counters rebuilt from the log")
-    fun parkedLogLoadsAwaitingTheUser() {
-        val recorded = recordedSession(
-            replies = listOf(toolCallResponse(askUserCall(id = "call-1", question = "Which color?")).asReply()),
-        )
-        val parked = recorded.results.single()
-        assertEquals(PromptResult.Status.AWAITING_USER, parked.status, "error: ${parked.error}")
-        val logged = recorded.events
-
-        val resumeListener = CollectingEventListener()
-        scriptedServer(assistantResponse(finishReason = "stop", text = "picked")).use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                val loaded = Agent.load(logged, TEST_HARNESS, client, environment(), resumeListener)
-
-                runBlocking {
-                    // Still parked: a fresh user message is rejected, the answer resumes.
-                    assertFailsWith<IllegalStateException> { loaded.send(AgentInput.UserMessage("nope")) }
-
-                    val result = loaded.send(AgentInput.Answer("blue"))
-
-                    assertEquals(PromptResult.Status.COMPLETED, result.status, "error: ${result.error}")
-                    assertEquals("picked", result.finalMessage)
-                    assertEquals(
-                        listOf("system", "user", "assistant", "tool", "assistant"),
-                        result.transcript.map { it.role },
-                    )
-                    assertEquals("call-1", result.transcript[3].toolCallId)
-                    assertEquals("blue", result.transcript[3].text)
-                    // Counters rebuilt from the log: the logged turn plus the resumed one.
-                    assertEquals(2, result.turnsUsed)
-                }
-                val finished = assertIs<AgentEvent.RunFinished>(resumeListener.events.last())
-                assertEquals(2, finished.turnsUsed)
-                // The stored log plus the new events forms one gaplessly numbered log again.
-                val combined = logged + resumeListener.events
-                assertEquals(List(combined.size) { it.toLong() }, combined.map { it.sequenceId })
-            }
-        }
-    }
-
-    @Test
-    @DisplayName("A log parked mid-batch loads with the queued call intact, running it once the answer arrives")
-    fun midBatchParkedLogResumesTheQueuedCall() {
-        val recorded = recordedSession(
-            replies = listOf(
-                toolCallResponse(
-                    bashCall(id = "call-1", command = "echo first"),
-                    askUserCall(id = "call-2", question = "Continue?"),
-                    bashCall(id = "call-3", command = "echo third"),
-                ).asReply(),
-            ),
-        )
-        val parked = recorded.results.single()
-        assertEquals(PromptResult.Status.AWAITING_USER, parked.status, "error: ${parked.error}")
-        val logged = recorded.events
-
-        scriptedServer(assistantResponse(finishReason = "stop", text = "done")).use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                val loaded = Agent.load(logged, TEST_HARNESS, client, environment())
-
-                val result = runBlocking { loaded.send(AgentInput.Answer("yes")) }
-
-                assertEquals(PromptResult.Status.COMPLETED, result.status, "error: ${result.error}")
-                assertEquals("done", result.finalMessage)
-                assertEquals(
-                    listOf("system", "user", "assistant", "tool", "tool", "tool", "assistant"),
-                    result.transcript.map { it.role },
-                )
-                // The call before the ask ran pre-park; the queued one only after the answer.
-                val toolMessages = result.transcript.filter { it.role == "tool" }
-                assertEquals(listOf("call-1", "call-2", "call-3"), toolMessages.map { it.toolCallId })
-                assertContains(toolMessages[0].text, "first")
-                assertEquals("yes", toolMessages[1].text)
-                assertContains(toolMessages[2].text, "third")
-                // Counters rebuilt from the log accumulate into the resumed segment.
-                assertEquals(2, result.turnsUsed)
-                assertEquals(RESPONSE_USAGE + RESPONSE_USAGE, result.usage)
-            }
-        }
-    }
-
     @Test
     @DisplayName("Loading recovers the latest title")
     fun loadRecoversLatestTitle() {
-        val logged = recordedSession(after = { it.title = "Renamed session" }).events
+        val logged = recordedSession(after = { it.title = "Renamed session" })
 
         withUnusedClient { client ->
             val agent = Agent.load(logged, TEST_HARNESS, client, environment())
@@ -322,7 +230,7 @@ class AgentLoadTest {
     @Test
     @DisplayName("A log not starting with SessionStarted is rejected")
     fun logWithoutSessionStartedIsRejected() {
-        val logged = recordedSession().events
+        val logged = recordedSession()
 
         withUnusedClient { client ->
             assertFailsWith<IllegalArgumentException> {
@@ -359,12 +267,10 @@ class AgentLoadTest {
                 truncated = true,
             ),
             AgentEvent.BudgetUpdated(8, 9, turnsUsed = 1, turnsRemaining = 39, elapsed = 2.seconds),
-            AgentEvent.QuestionAsked(9, 10, callId = "call-2", question = "Which color?"),
-            AgentEvent.QuestionAnswered(10, 11, callId = "call-2", answer = "blue"),
             AgentEvent.RunFinished(
-                sequenceId = 11,
-                timestampMillis = 12,
-                status = PromptResult.Status.TIMEOUT,
+                sequenceId = 9,
+                timestampMillis = 10,
+                status = RunResult.Status.TIMEOUT,
                 finalMessage = null,
                 usage = ZERO_USAGE,
                 turnsUsed = 1,
@@ -381,8 +287,5 @@ class AgentLoadTest {
         assertContains(json, "\"type\":\"run_finished\"")
         assertContains(json, "\"status\":\"timeout\"")
         assertContains(json, "\"outcome\":\"timed_out\"")
-        assertContains(json, "\"type\":\"question_asked\"")
-        assertContains(json, "\"type\":\"question_answered\"")
-        assertEquals("\"awaiting_user\"", Json.encodeToString(PromptResult.Status.AWAITING_USER))
     }
 }

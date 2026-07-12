@@ -1,6 +1,8 @@
 package codes.momo.agent
 
 import ai.router.sdk.AiRouterClient
+import ai.router.sdk.models.ToolCall
+import ai.router.sdk.models.ToolCallFunction
 import codes.momo.agent.environment.LocalExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
@@ -10,6 +12,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.buildJsonObject
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -72,10 +75,19 @@ class AgentTest {
         assertContains(prompt, "absolute")
     }
 
+    // ─── Input validation ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("A blank user message is rejected with IllegalArgumentException")
+    fun blankUserMessageIsRejected() =
+        workspace.withScriptedAgent(assistantResponse(finishReason = "stop", text = "never reached")) { agent ->
+            assertFailsWith<IllegalArgumentException> { agent.send("   ") }
+        }
+
     // ─── Concurrency guard ────────────────────────────────────────────
 
     @Test
-    @DisplayName("A send while another is running is rejected with IllegalStateException, whatever its input kind")
+    @DisplayName("A send while another is running is rejected with IllegalStateException")
     fun concurrentSendIsRejected() {
         hangingServer().use { server ->
             AiRouterClient(server.baseUrl).use { client ->
@@ -86,18 +98,14 @@ class AgentTest {
                     // returns; nothing here suspends before the assertion,
                     // so the first send cannot have resumed.
                     val first = launch(start = CoroutineStart.UNDISPATCHED) {
-                        agent.send(AgentInput.UserMessage("first"))
+                        agent.send("first")
                     }
 
-                    val userMessage = assertFailsWith<IllegalStateException> {
-                        agent.send(AgentInput.UserMessage("second"))
-                    }
-                    val answer = assertFailsWith<IllegalStateException> {
-                        agent.send(AgentInput.Answer("answer"))
+                    val rejected = assertFailsWith<IllegalStateException> {
+                        agent.send("second")
                     }
 
-                    assertContains(userMessage.message.orEmpty(), "already running")
-                    assertContains(answer.message.orEmpty(), "already running")
+                    assertContains(rejected.message.orEmpty(), "already running")
                     first.cancelAndJoin()
                 }
             }
@@ -112,19 +120,18 @@ class AgentTest {
         AiRouterClient(refusingBaseUrl()).use { client ->
             val agent = agent(client)
             runBlocking {
-                val first = agent.send(AgentInput.UserMessage("hello"))
+                val first = agent.send("hello")
 
-                assertEquals(PromptResult.Status.ERROR, first.status)
+                assertEquals(RunResult.Status.ERROR, first.status)
                 assertNull(first.finalMessage)
-                assertNull(first.pendingQuestion)
                 assertNotNull(first.error)
                 assertEquals(0, first.turnsUsed)
                 assertEquals(ZERO_USAGE, first.usage)
                 assertEquals(listOf("system", "user"), first.transcript.map { it.role })
 
-                val second = agent.send(AgentInput.UserMessage("again"))
+                val second = agent.send("again")
 
-                assertEquals(PromptResult.Status.ERROR, second.status)
+                assertEquals(RunResult.Status.ERROR, second.status)
                 assertEquals(listOf("system", "user", "user"), second.transcript.map { it.role })
             }
         }
@@ -134,14 +141,36 @@ class AgentTest {
     @DisplayName("A response reporting finish_reason 'error' ends the run as ERROR, not COMPLETED")
     fun reportedFinishErrorBecomesErrorResult() =
         workspace.withScriptedAgent(assistantResponse(finishReason = "error")) { agent ->
-            val result = agent.send(AgentInput.UserMessage("hello"))
+            val result = agent.send("hello")
 
-            assertEquals(PromptResult.Status.ERROR, result.status)
+            assertEquals(RunResult.Status.ERROR, result.status)
             assertNull(result.finalMessage)
             assertContains(assertNotNull(result.error).message.orEmpty(), "finish_reason")
             assertEquals(1, result.turnsUsed)
             assertEquals(listOf("system", "user", "assistant"), result.transcript.map { it.role })
         }
+
+    // ─── Unlisted tool calls ──────────────────────────────────────────
+
+    @Test
+    @DisplayName("A call to any tool the harness does not list errors as unknown")
+    fun unlistedToolCallsGetErrorResults() = workspace.withScriptedAgent(
+        toolCallResponse(
+            ToolCall(id = "call-1", function = ToolCallFunction("write_file", buildJsonObject { })),
+            ToolCall(id = "call-2", function = ToolCallFunction("edit_file", buildJsonObject { })),
+        ),
+        assistantResponse(finishReason = "stop", text = "done"),
+        harness = Harness(model = "test-model", tools = listOf("bash"), instructions = "i"),
+    ) { agent ->
+        val result = agent.send("go")
+
+        assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+        val toolMessages = result.transcript.filter { it.role == "tool" }
+        assertContains(toolMessages[0].text, "unknown tool 'write_file'")
+        assertContains(toolMessages[1].text, "unknown tool 'edit_file'")
+        // From the model's view only the harness's tools exist.
+        toolMessages.forEach { assertContains(it.text, "available tools: bash.") }
+    }
 
     // ─── Budgets and abrupt exits ─────────────────────────────────────
 
@@ -151,9 +180,9 @@ class AgentTest {
         toolCallResponse(bashCall(id = "call-1", command = "echo never-run")),
         budgets = RunBudgets(maxTurns = 1),
     ) { agent ->
-        val result = agent.send(AgentInput.UserMessage("go"))
+        val result = agent.send("go")
 
-        assertEquals(PromptResult.Status.TURNS_EXHAUSTED, result.status)
+        assertEquals(RunResult.Status.TURNS_EXHAUSTED, result.status)
         assertNull(result.finalMessage)
         assertEquals(1, result.turnsUsed)
         assertEquals(listOf("system", "user", "assistant", "tool"), result.transcript.map { it.role })
@@ -175,9 +204,9 @@ class AgentTest {
         // budget before the tool batch starts; the sleep still dwarfs it.
         budgets = RunBudgets(maxWallClock = 1.seconds),
     ) { agent ->
-        val result = agent.send(AgentInput.UserMessage("go"))
+        val result = agent.send("go")
 
-        assertEquals(PromptResult.Status.TIMEOUT, result.status)
+        assertEquals(RunResult.Status.TIMEOUT, result.status)
         assertEquals(1, result.turnsUsed)
         assertEquals(
             listOf("system", "user", "assistant", "tool", "tool"),
@@ -197,11 +226,13 @@ class AgentTest {
     @DisplayName("External cancellation mid-tool propagates, repairs the transcript, and leaves the agent usable")
     fun externalCancellationRepairsTranscriptAndAgentStaysUsable() {
         val marker = workspace.resolve("tool-started")
+        val listener = CollectingEventListener()
         workspace.withScriptedAgent(
             toolCallResponse(bashCall(id = "call-1", command = "touch '$marker' && sleep 30")),
             assistantResponse(finishReason = "stop", text = "done"),
+            listener = listener,
         ) { agent ->
-            val first = launch { agent.send(AgentInput.UserMessage("first")) }
+            val first = launch { agent.send("first") }
             withTimeout(5.seconds) {
                 while (marker.notExists()) {
                     delay(10.milliseconds)
@@ -211,8 +242,8 @@ class AgentTest {
             first.cancelAndJoin()
 
             assertTrue(first.isCancelled)
-            val second = agent.send(AgentInput.UserMessage("second"))
-            assertEquals(PromptResult.Status.COMPLETED, second.status)
+            val second = agent.send("second")
+            assertEquals(RunResult.Status.COMPLETED, second.status)
             assertEquals("done", second.finalMessage)
             assertEquals(
                 listOf("system", "user", "assistant", "tool", "user", "assistant"),
@@ -221,6 +252,10 @@ class AgentTest {
             val aborted = second.transcript.single { it.role == "tool" }
             assertEquals("call-1", aborted.toolCallId)
             assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.text)
+
+            // The cancelled run logs no RunFinished — the sole carve-out from run-end emission.
+            val finished = listener.events.filterIsInstance<AgentEvent.RunFinished>().single()
+            assertEquals("done", finished.finalMessage)
         }
     }
 }

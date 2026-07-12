@@ -22,7 +22,7 @@ public data class ReadFileArgs(
  * footer saying how the window ended and how to continue. Every successful
  * read marks the path in the session's [FileReadTracker].
  */
-public class ReadFileTool(private val tracker: FileReadTracker) : DispatchedTool<ReadFileArgs>(
+public class ReadFileTool(private val tracker: FileReadTracker) : Tool<ReadFileArgs>(
     name = "read_file",
     description = READ_FILE_DESCRIPTION,
     argsSerializer = ReadFileArgs.serializer(),
