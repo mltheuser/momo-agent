@@ -1,17 +1,15 @@
 package codes.momo.agent.tool
 
 /**
- * Builds one agent's tool set. Called once per agent — a spawned agent gets its own set by calling
- * again — so per-session state is never shared between agents.
+ * Builds the core tool set every harness draws its tool list from. Called
+ * once per agent: a future tool holding a session-owned collaborator must
+ * never share instances across sessions.
  */
-internal fun coreToolRegistry(): ToolRegistry {
-    val tracker = FileReadTracker()
-    return ToolRegistry(
-        listOf(
-            BashTool(),
-            ReadFileTool(tracker),
-            WriteFileTool(tracker),
-            EditFileTool(tracker),
-        ),
-    )
-}
+internal fun coreToolRegistry(): ToolRegistry = ToolRegistry(
+    listOf(
+        BashTool(),
+        ReadFileTool(),
+        WriteFileTool(),
+        EditFileTool(),
+    ),
+)

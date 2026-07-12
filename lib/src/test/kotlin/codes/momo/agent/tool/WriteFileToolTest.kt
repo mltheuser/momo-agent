@@ -30,20 +30,18 @@ class WriteFileToolTest {
     @TempDir
     lateinit var tempDir: Path
 
-    private val tracker = FileReadTracker()
-
     // ─── Helpers ──────────────────────────────────────────────────────
 
     /** Writes [content] to [path], resolved under the temp workspace, against a real local environment. */
     private fun write(path: String, content: String): ToolResult = runBlocking {
-        WriteFileTool(tracker).execute(
+        WriteFileTool().execute(
             WriteFileArgs(tempDir.resolve(path).toString(), content),
             LocalExecutionEnvironment(tempDir),
         )
     }
 
     private fun runStubbed(execResult: ExecResult): ToolResult = runBlocking {
-        WriteFileTool(tracker).execute(WriteFileArgs("/file.txt", "content"), FixedResultEnvironment(execResult))
+        WriteFileTool().execute(WriteFileArgs("/file.txt", "content"), FixedResultEnvironment(execResult))
     }
 
     private fun assertRoundTrips(content: String, path: String = "file.txt") {
@@ -56,15 +54,14 @@ class WriteFileToolTest {
     // ─── Definition ───────────────────────────────────────────────────
 
     @Test
-    @DisplayName("The definition documents overwrite semantics, read-first, parent creation, and edit_file steering")
+    @DisplayName("The definition documents create semantics, parent creation, and edit_file steering")
     fun definitionDocumentsTheContract() {
-        val definition = WriteFileTool(tracker).definition
+        val definition = WriteFileTool().definition
 
         assertEquals("write_file", definition.name)
         val description = assertNotNull(definition.description)
-        assertContains(description, "replacing")
+        assertContains(description, "Creates")
         assertContains(description, "ABSOLUTE path")
-        assertContains(description, "read_file")
         assertContains(description, "parent directories")
         assertContains(description, "edit_file")
     }
@@ -72,7 +69,7 @@ class WriteFileToolTest {
     @Test
     @DisplayName("The parameters schema requires path and content as string properties")
     fun parametersSchemaShape() {
-        val schema = assertNotNull(WriteFileTool(tracker).definition.parameters)
+        val schema = assertNotNull(WriteFileTool().definition.parameters)
 
         val properties = schema.getValue("properties").jsonObject
         assertEquals("string", properties.getValue("path").jsonObject.getValue("type").jsonPrimitive.content)
@@ -83,34 +80,20 @@ class WriteFileToolTest {
         )
     }
 
-    // ─── Create & overwrite ───────────────────────────────────────────
+    // ─── Create-only semantics ────────────────────────────────────────
 
     @Test
-    @DisplayName("Writing a new file reports created, lands the exact content, and marks the path read")
+    @DisplayName("Writing a new file reports created and lands the exact content")
     fun createReportsCreatedWithExactContent() {
         val result = write("notes.txt", "alpha\nbeta\n")
 
         assertEquals("created '${tempDir.resolve("notes.txt")}'", assertIs<ToolResult.Success>(result).text)
         assertEquals("alpha\nbeta\n", catBack(tempDir, "notes.txt"))
-        assertTrue(tracker.wasRead(tempDir.resolve("notes.txt").toString()))
     }
 
     @Test
-    @DisplayName("Overwriting a file read this session reports replaced with the old content fully gone")
-    fun overwriteAfterReadReportsReplaced() {
-        val path = tempDir.resolve("notes.txt")
-        path.writeText("old content, much longer than what replaces it\n")
-        tracker.markRead(path.toString())
-
-        val result = write("notes.txt", "new\n")
-
-        assertEquals("replaced '$path'", assertIs<ToolResult.Success>(result).text)
-        assertEquals("new\n", catBack(tempDir, "notes.txt"))
-    }
-
-    @Test
-    @DisplayName("Overwriting an unread existing file fails with the read-first guardrail, file untouched")
-    fun overwriteUnreadFileIsGuarded() {
+    @DisplayName("An existing target is refused with steering to edit_file or a bash delete, file untouched")
+    fun existingTargetIsRefused() {
         val path = tempDir.resolve("notes.txt")
         path.writeText("precious\n")
 
@@ -118,32 +101,39 @@ class WriteFileToolTest {
 
         val error = assertIs<ToolResult.Error>(result)
         assertContains(error.message, path.toString())
-        assertContains(error.message, "read_file")
+        assertContains(error.message, "already exists")
+        assertContains(error.message, "edit_file")
+        assertContains(error.message, "bash")
         assertEquals("precious\n", catBack(tempDir, "notes.txt"))
-        assertFalse(tracker.wasRead(path.toString()), "a guarded write must not mark the path read")
     }
 
     @Test
-    @DisplayName("A write marks the path read, so writing the same path again needs no interleaved read")
-    fun writeThenOverwriteWithoutReadSucceeds() {
+    @DisplayName("Deleting a written file via bash frees the path for a fresh write")
+    fun bashDeleteThenWriteSucceeds() = runBlocking {
         write("notes.txt", "first\n")
+
+        val deleted = BashTool().execute(
+            BashArgs("rm '${tempDir.resolve("notes.txt")}'"),
+            LocalExecutionEnvironment(tempDir),
+        )
+        assertIs<ToolResult.Success>(deleted, "delete failed: ${deleted.text}")
 
         val result = write("notes.txt", "second\n")
 
-        assertEquals("replaced '${tempDir.resolve("notes.txt")}'", assertIs<ToolResult.Success>(result).text)
+        assertEquals("created '${tempDir.resolve("notes.txt")}'", assertIs<ToolResult.Success>(result).text)
         assertEquals("second\n", catBack(tempDir, "notes.txt"))
     }
 
     @Test
-    @DisplayName("A read path whose file has meanwhile vanished reports created, not replaced")
-    fun overwritePermittedButMissingFileReportsCreated() {
-        val path = tempDir.resolve("gone.txt")
-        tracker.markRead(path.toString())
+    @DisplayName("A dangling symlink target is an error — nothing is written through the link")
+    fun danglingSymlinkTargetIsError() {
+        val target = tempDir.resolve("missing-target.txt")
+        Files.createSymbolicLink(tempDir.resolve("link.txt"), target)
 
-        val result = write("gone.txt", "fresh\n")
+        val result = write("link.txt", "smuggled\n")
 
-        assertEquals("created '$path'", assertIs<ToolResult.Success>(result).text)
-        assertEquals("fresh\n", catBack(tempDir, "gone.txt"))
+        assertIs<ToolResult.Error>(result)
+        assertFalse(Files.exists(target), "content must not land at the link's target")
     }
 
     // ─── Content robustness ───────────────────────────────────────────
@@ -251,8 +241,8 @@ class WriteFileToolTest {
     fun invalidPathsAreRejectedBeforeExec() = runBlocking {
         val environment = FixedResultEnvironment(completed())
 
-        val relativeError = WriteFileTool(tracker).execute(WriteFileArgs("src/Foo.kt", "content"), environment)
-        val slashError = WriteFileTool(tracker).execute(WriteFileArgs("/workspace/dir/", "content"), environment)
+        val relativeError = WriteFileTool().execute(WriteFileArgs("src/Foo.kt", "content"), environment)
+        val slashError = WriteFileTool().execute(WriteFileArgs("/workspace/dir/", "content"), environment)
 
         assertContains(assertIs<ToolResult.Error>(relativeError).message, "absolute")
         assertContains(assertIs<ToolResult.Error>(slashError).message, "end with '/'")
@@ -262,20 +252,19 @@ class WriteFileToolTest {
     // ─── exec invocation ──────────────────────────────────────────────
 
     @Test
-    @DisplayName("One bash -c call: fixed script, path and mode as arguments, content as stdin, under the budget")
+    @DisplayName("One bash -c call: fixed script, path as argument, content as stdin, under the budget")
     fun execInvocationShape() = runBlocking {
-        val environment = FixedResultEnvironment(completed(stdout = "created\n"))
+        val environment = FixedResultEnvironment(completed())
         val content = "hostile 'content' \$(x)\n"
 
-        WriteFileTool(tracker).execute(WriteFileArgs("/workspace/file.txt", content), environment)
+        WriteFileTool().execute(WriteFileArgs("/workspace/file.txt", content), environment)
 
         val command = assertNotNull(environment.lastCommand)
-        assertEquals(6, command.size)
+        assertEquals(5, command.size)
         assertEquals(listOf("bash", "-c"), command.take(2))
         assertFalse(command[2].contains("/workspace"), "the path must never be interpolated into the script")
         assertEquals("write_file", command[3])
         assertEquals("/workspace/file.txt", command[4])
-        assertEquals("create-only", command[5])
         assertContentEquals(content.toByteArray(), environment.lastStdin)
         assertEquals(Budgets.TOOL_TIMEOUT, environment.lastTimeout)
     }
@@ -283,13 +272,12 @@ class WriteFileToolTest {
     // ─── Timeout mapping ──────────────────────────────────────────────
 
     @Test
-    @DisplayName("An exec timeout maps to TimedOut with no partial output, even when the marker was captured")
+    @DisplayName("An exec timeout maps to TimedOut with no partial output, even when stdout was captured")
     fun execTimeoutCarriesNoPartialOutput() {
         val result = runStubbed(
-            ExecResult.TimedOut(stdout = "created\n", stderr = "", stdoutTruncated = false, stderrTruncated = false),
+            ExecResult.TimedOut(stdout = "stray\n", stderr = "", stdoutTruncated = false, stderrTruncated = false),
         )
 
         assertNull(assertIs<ToolResult.TimedOut>(result).partialOutput)
-        assertFalse(tracker.wasRead("/file.txt"), "a timed-out write must not mark the path read")
     }
 }

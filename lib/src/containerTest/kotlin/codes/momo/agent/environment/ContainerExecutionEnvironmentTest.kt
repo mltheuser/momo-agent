@@ -5,7 +5,6 @@ import codes.momo.agent.tool.BashArgs
 import codes.momo.agent.tool.BashTool
 import codes.momo.agent.tool.EditFileArgs
 import codes.momo.agent.tool.EditFileTool
-import codes.momo.agent.tool.FileReadTracker
 import codes.momo.agent.tool.ReadFileArgs
 import codes.momo.agent.tool.ReadFileTool
 import codes.momo.agent.tool.ToolResult
@@ -76,19 +75,18 @@ class ContainerExecutionEnvironmentTest {
     @Test
     @DisplayName("write_file, read_file, and edit_file round-trip stdin-borne tricky content")
     fun fileToolsRoundTripTrickyContent() {
-        val tracker = FileReadTracker()
         val tricky = "it's \"double\" `backtick` \$(sub) \${brace} \\slash\nsecond line\nno trailing newline"
         withEnvironment { environment ->
-            val write = WriteFileTool(tracker).execute(WriteFileArgs("/workspace/tricky.txt", tricky), environment)
+            val write = WriteFileTool().execute(WriteFileArgs("/workspace/tricky.txt", tricky), environment)
             assertIs<ToolResult.Success>(write, write.text)
 
-            val read = ReadFileTool(tracker).execute(ReadFileArgs("/workspace/tricky.txt", 1, 50), environment)
+            val read = ReadFileTool().execute(ReadFileArgs("/workspace/tricky.txt", 1, 50), environment)
             assertTrue(
                 assertIs<ToolResult.Success>(read, read.text).text.startsWith(tricky),
                 "read_file did not return the written content verbatim: ${read.text}",
             )
 
-            val edit = EditFileTool(tracker).execute(
+            val edit = EditFileTool().execute(
                 EditFileArgs("/workspace/tricky.txt", "`backtick`", "[EDITED]"),
                 environment,
             )

@@ -22,11 +22,9 @@ public data class EditFileArgs(
 /**
  * Targeted editor: replaces the single exact occurrence of one string with
  * another, splicing in memory so every byte outside the matched span is
- * written back untouched. The session's [FileReadTracker] gates edits to
- * files the model has seen; the target is therefore already marked read,
- * and tracker state is left as is.
+ * written back untouched.
  */
-public class EditFileTool(private val tracker: FileReadTracker) : Tool<EditFileArgs>(
+public class EditFileTool : Tool<EditFileArgs>(
     name = "edit_file",
     description = EDIT_FILE_DESCRIPTION,
     argsSerializer = EditFileArgs.serializer(),
@@ -43,10 +41,6 @@ public class EditFileTool(private val tracker: FileReadTracker) : Tool<EditFileA
 
         args.oldString == args.newString -> ToolResult.Error(
             "old_string and new_string are identical — the edit would change nothing.",
-        )
-
-        !tracker.wasRead(args.path) -> ToolResult.Error(
-            "'${args.path}' has not been read this session — read it with read_file before editing.",
         )
 
         else -> edit(args, environment)
@@ -71,7 +65,10 @@ public class EditFileTool(private val tracker: FileReadTracker) : Tool<EditFileA
         // A capped capture means the content in hand is not the whole file;
         // splicing and writing it back would silently drop the lost tail.
         read.stdoutTruncated ->
-            ToolResult.Error("'${args.path}' is too large to edit in place — rewrite it with write_file.")
+            ToolResult.Error(
+                "'${args.path}' is too large to edit in place — delete it with bash and " +
+                    "rewrite it with write_file.",
+            )
 
         else -> replace(args, read.stdout, environment)
     }
@@ -151,7 +148,6 @@ private val EDIT_WRITE_SCRIPT: String = """
 private val EDIT_FILE_DESCRIPTION: String = """
     Replaces one exact string in an existing file. `old_string` must match the file content
     exactly — including whitespace and indentation, with no normalization and no regex — and
-    must occur exactly once. The file must have been read this session with `read_file` first.
-    Binary content does not round-trip; use this tool only on text files. For creating files
-    or full rewrites use `write_file`.
+    must occur exactly once. Binary content does not round-trip; use this tool only on
+    text files. For creating a new file use `write_file`.
 """.trimIndent()

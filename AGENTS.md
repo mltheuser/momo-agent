@@ -37,6 +37,13 @@ Shared build conventions live in the root build script.
 - Shared test helpers live once, in the lib's `testFixtures` source set
   (`lib/src/testFixtures/kotlin`), consumed by every lib suite and by the
   server's tests — no per-suite fixture copies.
+- Control characters in source files are written as visible escapes
+  (`\u0007`), never raw bytes — editors strip raw bytes silently and
+  diffs don't show it.
+- Work lands from an issue-named branch as **one squashed commit** with a
+  single-line message — `feat:`/`refactor:`-style prefix, then an em-dash
+  summary of design substance, no trailers — fast-forward-merged into
+  `main`.
 
 ## Docs
 

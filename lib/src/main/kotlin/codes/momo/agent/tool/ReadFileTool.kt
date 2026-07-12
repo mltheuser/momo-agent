@@ -19,10 +19,9 @@ public data class ReadFileArgs(
 /**
  * Windowed text-file reader: returns file content verbatim — byte-exact, so
  * output can be matched back against the file as exact strings — plus a
- * footer saying how the window ended and how to continue. Every successful
- * read marks the path in the session's [FileReadTracker].
+ * footer saying how the window ended and how to continue.
  */
-public class ReadFileTool(private val tracker: FileReadTracker) : Tool<ReadFileArgs>(
+public class ReadFileTool : Tool<ReadFileArgs>(
     name = "read_file",
     description = READ_FILE_DESCRIPTION,
     argsSerializer = ReadFileArgs.serializer(),
@@ -47,12 +46,7 @@ public class ReadFileTool(private val tracker: FileReadTracker) : Tool<ReadFileA
             timeout = Budgets.TOOL_TIMEOUT,
         )
         return when (result) {
-            is ExecResult.Completed -> {
-                val outcome = interpret(args, result)
-                if (outcome is ToolResult.Success) tracker.markRead(args.path)
-                outcome
-            }
-
+            is ExecResult.Completed -> interpret(args, result)
             is ExecResult.TimedOut -> ToolResult.TimedOut(partialOutput = result.stdout.ifEmpty { null })
         }
     }
