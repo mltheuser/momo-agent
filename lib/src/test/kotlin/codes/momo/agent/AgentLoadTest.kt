@@ -266,10 +266,11 @@ class AgentLoadTest {
                 duration = 5.seconds,
                 truncated = true,
             ),
-            AgentEvent.BudgetUpdated(8, 9, turnsUsed = 1, turnsRemaining = 39, elapsed = 2.seconds),
+            AgentEvent.SubagentSpawned(8, 9, name = "helper", sessionId = "child-session-1"),
+            AgentEvent.BudgetUpdated(9, 10, turnsUsed = 1, turnsRemaining = 39, elapsed = 2.seconds),
             AgentEvent.RunFinished(
-                sequenceId = 9,
-                timestampMillis = 10,
+                sequenceId = 10,
+                timestampMillis = 11,
                 status = RunResult.Status.TIMEOUT,
                 finalMessage = null,
                 usage = ZERO_USAGE,
@@ -285,6 +286,7 @@ class AgentLoadTest {
         // The wire strings are the stored-log compatibility contract: a
         // rename that changes them must fail here, not corrupt stored logs.
         assertContains(json, "\"type\":\"run_finished\"")
+        assertContains(json, "\"type\":\"subagent_spawned\"")
         assertContains(json, "\"status\":\"timeout\"")
         assertContains(json, "\"outcome\":\"timed_out\"")
     }

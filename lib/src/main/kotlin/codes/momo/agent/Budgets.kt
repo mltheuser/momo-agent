@@ -20,10 +20,17 @@ public object Budgets {
 
     /** Timeout for a single tool execution. */
     public val TOOL_TIMEOUT: Duration = 5.minutes
+
+    /**
+     * Maximum subagent nesting depth: agents this many spawns below the
+     * root are not offered the subagent tools.
+     */
+    public const val MAX_SUBAGENT_DEPTH: Int = 5
 }
 
 /** A specific loop's budget values. */
 internal data class RunBudgets(
     val maxTurns: Int = Budgets.MAX_TURNS,
     val maxWallClock: Duration = Budgets.MAX_WALL_CLOCK,
+    val toolTimeout: Duration = Budgets.TOOL_TIMEOUT,
 )

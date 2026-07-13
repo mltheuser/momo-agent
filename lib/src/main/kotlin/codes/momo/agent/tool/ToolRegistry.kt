@@ -56,7 +56,8 @@ public class ToolRegistry(tools: List<Tool<*>>) {
 
     /**
      * Executes tool [name] with the model-provided [arguments] against
-     * [environment], bounded by [timeout]. Every outcome is a
+     * [environment], bounded by [timeout] ([Tool.timeoutExempt] tools run
+     * unbounded). Every outcome is a
      * [ToolExecution] whose result the model can react to; only coroutine
      * cancellation and JVM [Error]s escape:
      *
@@ -102,7 +103,7 @@ public class ToolRegistry(tools: List<Tool<*>>) {
         // constraint; a smaller wall-clock remainder must fire sharp.
         val backstop = if (timeout >= Budgets.TOOL_TIMEOUT) timeout + TIMEOUT_GRACE else timeout
         return try {
-            withTimeout(backstop) { invocation() }
+            if (tool.timeoutExempt) invocation() else withTimeout(backstop) { invocation() }
         } catch (_: TimeoutCancellationException) {
             ToolResult.TimedOut(timeout = timeout)
         } catch (exception: CancellationException) {

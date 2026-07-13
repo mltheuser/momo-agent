@@ -27,6 +27,13 @@ public abstract class Tool<A : Any> protected constructor(
         require(name.none { it.isWhitespace() }) { "Tool name must not contain whitespace: '$name'." }
     }
 
+    /**
+     * Exempts the tool's dispatch from the per-execution timeout — for
+     * tools whose wait is bounded by the awaited work's own budgets (a
+     * subagent's run), not by this agent's clock.
+     */
+    internal open val timeoutExempt: Boolean = false
+
     /** The LLM-facing definition sent with chat requests. */
     public val definition: ToolDefinition = ToolDefinition(
         name = name,

@@ -4,3 +4,5 @@ tools:
   - read_file
   - write_file
   - edit_file
+  - spawn_subagent
+  - prompt_subagent

@@ -68,7 +68,7 @@ class AgentTest {
     @Test
     @DisplayName("The system prompt keeps the instructions and states the absolute workspace path")
     fun systemPromptStatesWorkspaceAndPathContract() {
-        val prompt = systemPromptFor(TEST_HARNESS, "/some/workspace")
+        val prompt = systemPromptFor(TEST_HARNESS, "/some/workspace", subagent = false)
 
         assertTrue(prompt.startsWith("Unit-test instructions."))
         assertContains(prompt, "/some/workspace")

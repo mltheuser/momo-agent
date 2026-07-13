@@ -9,6 +9,15 @@ package codes.momo.agent
 public fun interface AgentEventListener {
 
     public fun onEvent(event: AgentEvent)
+
+    /**
+     * The listener observing the subagent this session spawns as [name],
+     * with session identity [sessionId] — asked once per spawn, before the
+     * child emits its first event. The default observes nothing, so
+     * observation covers the subagent tree only where an embedder opts in.
+     */
+    public fun listenerForSubagent(name: String, sessionId: String): AgentEventListener =
+        NoOpAgentEventListener
 }
 
 /** Listener that ignores everything — the default for embedders that do not observe. */

@@ -12,11 +12,11 @@ import ai.router.sdk.models.ToolDefinition
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
+import codes.momo.agent.tool.SUBAGENT_TOOL_NAMES
 import codes.momo.agent.tool.ToolRegistry
 import codes.momo.agent.tool.ToolResult
 import codes.momo.agent.tool.coreToolRegistry
 import kotlinx.coroutines.CancellationException
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration
 import kotlin.time.TimeSource
@@ -37,7 +37,7 @@ public class Agent internal constructor(
     private val harness: Harness,
     private val client: AiRouterClient,
     private val environment: ExecutionEnvironment,
-    eventListener: AgentEventListener,
+    private val eventListener: AgentEventListener,
     private val budgets: RunBudgets,
     session: SessionState,
 ) {
@@ -51,15 +51,26 @@ public class Agent internal constructor(
         eventListener: AgentEventListener = NoOpAgentEventListener,
     ) : this(harness, client, environment, eventListener, RunBudgets(), SessionState.Fresh(title))
 
+    internal val subagents: Subagents = Subagents(this)
+
+    private val depth: Int = session.depth
+
     private val registry: ToolRegistry
 
     private val toolDefinitions: List<ToolDefinition>
 
     init {
-        val coreRegistry = coreToolRegistry()
+        val coreRegistry = coreToolRegistry(subagents)
         harness.requireToolsKnown(coreRegistry.names)
-        registry = coreRegistry.restrictedTo(harness.tools)
-        toolDefinitions = registry.definitions(harness.tools)
+        // The depth cap withholds rather than fails: a hallucinated call at
+        // the cap draws the standard unknown-tool error.
+        val offered = if (depth >= Budgets.MAX_SUBAGENT_DEPTH) {
+            harness.tools.filterNot { it in SUBAGENT_TOOL_NAMES }
+        } else {
+            harness.tools
+        }
+        registry = coreRegistry.restrictedTo(offered)
+        toolDefinitions = registry.definitions(offered)
     }
 
     private val running = AtomicBoolean(false)
@@ -67,10 +78,7 @@ public class Agent internal constructor(
     private val emitter = AgentEventEmitter(eventListener, session.nextSequenceId)
 
     /** Stable identity of this session, recoverable from its event log. */
-    public val sessionId: String = when (session) {
-        is SessionState.Fresh -> UUID.randomUUID().toString()
-        is SessionState.Restored -> session.id
-    }
+    public val sessionId: String = session.id
 
     /** User-facing session title; every assignment emits [AgentEvent.SessionRenamed]. */
     public var title: String = session.title
@@ -80,9 +88,11 @@ public class Agent internal constructor(
         }
 
     private val history: MutableList<ChatMessage> = mutableListOf<ChatMessage>().apply {
-        add(textMessage(ROLE_SYSTEM, systemPromptFor(harness, environment.workspacePath)))
+        add(textMessage(ROLE_SYSTEM, systemPromptFor(harness, environment.workspacePath, subagent = depth > 0)))
         addAll(session.conversation)
     }
+
+    private var currentRun: RunState? = null
 
     init {
         if (session is SessionState.Fresh) {
@@ -121,6 +131,7 @@ public class Agent internal constructor(
 
     private suspend fun executeRun(text: String): RunResult {
         val run = RunState()
+        currentRun = run
         history += userMessage(text)
         emitter.emit { id, at -> AgentEvent.RunStarted(id, at, text) }
         val status = try {
@@ -131,6 +142,7 @@ public class Agent internal constructor(
             run.failure = failure
             RunResult.Status.ERROR
         } finally {
+            currentRun = null
             // A finally so the repair also runs on external cancellation.
             history += abortedToolResults(history)
         }
@@ -235,7 +247,7 @@ public class Agent internal constructor(
         emitter.emit { id, at ->
             AgentEvent.ToolCallStarted(id, at, call.id, call.function.name, call.function.arguments)
         }
-        val timeout = minOf(Budgets.TOOL_TIMEOUT, run.remaining.coerceAtLeast(Duration.ZERO))
+        val timeout = minOf(budgets.toolTimeout, run.remaining.coerceAtLeast(Duration.ZERO))
         val execution = registry.execute(call.function.name, call.function.arguments, environment, timeout)
         history += toolResultMessage(call.id, execution.result.text)
         emitter.emit { id, at ->
@@ -251,6 +263,48 @@ public class Agent internal constructor(
         }
     }
 
+    /**
+     * Constructs the child agent [Subagents] registers as [name]: a fresh
+     * session titled [name] at one level deeper, sharing this agent's
+     * harness, collaborators, and budget values — announced in this
+     * session's log as [AgentEvent.SubagentSpawned] before the child emits
+     * its first event.
+     */
+    internal fun spawnChild(name: String): Agent {
+        val session = SessionState.Fresh(title = name, depth = depth + 1)
+        emitter.emit { id, at -> AgentEvent.SubagentSpawned(id, at, name, session.id) }
+        return Agent(
+            harness = harness,
+            client = client,
+            environment = environment,
+            eventListener = childListener(name, session.id),
+            budgets = budgets,
+            session = session,
+        )
+    }
+
+    /** The embedder-supplied child listener, degraded to no-op — never a failed spawn — when it throws. */
+    private fun childListener(name: String, sessionId: String): AgentEventListener = try {
+        eventListener.listenerForSubagent(name, sessionId)
+    } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
+        NoOpAgentEventListener
+    }
+
+    /**
+     * Runs [block] — the wait on a child's run — with its duration excluded
+     * from the current run's wall clock: blocked time is the child's to
+     * account for, not this agent's.
+     */
+    internal suspend fun <T> awaitingChildRun(block: suspend () -> T): T {
+        val active = checkNotNull(currentRun) { "a child can only be awaited from within a run." }
+        val blockedSince = TimeSource.Monotonic.markNow()
+        try {
+            return block()
+        } finally {
+            active.blocked += blockedSince.elapsedNow()
+        }
+    }
+
     /** Mutable accounting for one [send] run. */
     private inner class RunState {
 
@@ -261,8 +315,11 @@ public class Agent internal constructor(
         var finalMessage: String? = null
         var failure: Exception? = null
 
+        /** Time spent blocked on child runs. */
+        var blocked: Duration = Duration.ZERO
+
         val elapsed: Duration
-            get() = start.elapsedNow()
+            get() = start.elapsedNow() - blocked
 
         val remaining: Duration
             get() = budgets.maxWallClock - elapsed
@@ -295,16 +352,25 @@ public class Agent internal constructor(
 
 /**
  * The system prompt: the harness instructions plus the library-owned facts
- * about the workspace and how to reach the user.
+ * about the workspace and who is on the other end — the human user, or for
+ * a [subagent] the parent blocked on its reply.
  */
-internal fun systemPromptFor(harness: Harness, workspacePath: String): String =
+internal fun systemPromptFor(harness: Harness, workspacePath: String, subagent: Boolean): String =
     harness.instructions.trimEnd() +
         "\n\nThe workspace root is $workspacePath. File paths passed to tools must be absolute." +
-        "\n\nThe user is not watching you work and sees only your final message; their next message " +
+        "\n\n" + (if (subagent) SUBAGENT_GUIDANCE else USER_GUIDANCE)
+
+private const val USER_GUIDANCE: String =
+    "The user is not watching you work and sees only your final message; their next message " +
         "may take hours or days to arrive. Work autonomously and end your turn only when you are " +
         "done or genuinely blocked. To ask the user something, end your turn with the question as " +
         "your final message — ask only what you cannot work out from the workspace or your tools, " +
         "and batch related questions into one message instead of asking them one at a time."
+
+private const val SUBAGENT_GUIDANCE: String =
+    "You are a subagent: the agent that spawned you is blocked waiting on you, and your final " +
+        "message is delivered to it as the result of this prompt. Work autonomously to completion " +
+        "and end your turn early only when you are genuinely blocked on input from your spawner."
 
 private fun textMessage(role: String, text: String): ChatMessage =
     ChatMessage(role = role, content = listOf(ContentPart(type = ContentPartType.TEXT, text = text)))

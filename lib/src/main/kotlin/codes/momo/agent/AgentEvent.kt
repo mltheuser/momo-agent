@@ -142,6 +142,19 @@ public sealed interface AgentEvent {
         }
     }
 
+    /**
+     * A child agent was allocated under [name]; [sessionId] identifies the
+     * child session, whose own event log records everything it does.
+     */
+    @Serializable
+    @SerialName("subagent_spawned")
+    public data class SubagentSpawned(
+        override val sequenceId: Long,
+        override val timestampMillis: Long,
+        val name: String,
+        val sessionId: String,
+    ) : AgentEvent
+
     /** Budget accounting at a turn boundary. */
     @Serializable
     @SerialName("budget_updated")
@@ -150,7 +163,7 @@ public sealed interface AgentEvent {
         override val timestampMillis: Long,
         val turnsUsed: Int,
         val turnsRemaining: Int,
-        /** Wall-clock time the run has consumed. */
+        /** The run's [RunResult.elapsed] so far. */
         val elapsed: Duration,
     ) : AgentEvent
 }

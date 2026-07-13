@@ -21,7 +21,7 @@ public data class RunResult(
     val usage: ChatUsage,
     /** LLM calls the run made (retries not counted). */
     val turnsUsed: Int,
-    /** Wall-clock time the run consumed. */
+    /** Wall-clock time the run consumed; waits on subagent runs are excluded. */
     val elapsed: Duration,
     /** What failed; non-null exactly when [status] is [Status.ERROR]. */
     val error: Throwable?,

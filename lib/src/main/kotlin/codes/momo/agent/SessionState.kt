@@ -3,12 +3,19 @@ package codes.momo.agent
 import ai.router.sdk.models.ChatMessage
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
+import java.util.UUID
 
 /** What [Agent] construction starts a session from: freshly created, or restored from a stored event log. */
 internal sealed interface SessionState {
 
+    /** Stable session identity: generated fresh, recovered from the log when restored. */
+    val id: String
+
     /** The session's title (for a restored session, the latest logged one). */
     val title: String
+
+    /** Nesting depth in the subagent tree: 0 for a root; restored sessions are always roots. */
+    val depth: Int
 
     /** Sequence ID of the next event the session emits. */
     val nextSequenceId: Long
@@ -16,7 +23,9 @@ internal sealed interface SessionState {
     /** Conversation following the system message; empty for a fresh session. */
     val conversation: List<ChatMessage>
 
-    class Fresh(override val title: String) : SessionState {
+    class Fresh(override val title: String, override val depth: Int = 0) : SessionState {
+
+        override val id: String = UUID.randomUUID().toString()
 
         override val nextSequenceId: Long
             get() = 0
@@ -26,11 +35,15 @@ internal sealed interface SessionState {
     }
 
     class Restored(
-        val id: String,
+        override val id: String,
         override val title: String,
         override val nextSequenceId: Long,
         override val conversation: List<ChatMessage>,
-    ) : SessionState
+    ) : SessionState {
+
+        override val depth: Int
+            get() = 0
+    }
 }
 
 /**
