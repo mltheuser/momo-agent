@@ -2,12 +2,24 @@ package codes.momo.agent.server
 
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.AgentEventListener
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import java.io.BufferedInputStream
 import java.io.BufferedWriter
+import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import kotlin.io.path.createDirectories
@@ -82,6 +94,33 @@ internal class SessionStore(dataDir: Path) {
         }
     }
 
+    /**
+     * Tails [id]'s stored log as a cold flow: every event strictly after
+     * [afterSequenceId], oldest first — the flushed history, then live
+     * events as [signal] announces them — completing only when [signal]
+     * announces [SESSION_DELETED_SIGNAL]. Sequence IDs are the log's line
+     * positions, the same gapless numbering the events carry. Torn lines
+     * are never served — see [LineTail]; each subscriber reads the file
+     * independently at its own pace.
+     */
+    fun tailEvents(id: String, signal: StateFlow<Long>, afterSequenceId: Long): Flow<StoredEvent> = flow {
+        LineTail(directory(id).resolve(EVENTS_FILE)).use { tail ->
+            var sequenceId = 0L
+            signal.takeWhile { it != SESSION_DELETED_SIGNAL }.collect {
+                var line = tail.nextLine()
+                while (line != null) {
+                    if (line.isNotBlank()) {
+                        if (sequenceId > afterSequenceId) {
+                            emit(StoredEvent(sequenceId, line))
+                        }
+                        sequenceId++
+                    }
+                    line = tail.nextLine()
+                }
+            }
+        }
+    }.flowOn(Dispatchers.IO)
+
     /** Listener persisting a fresh session's log; its `SessionStarted` event names the folder. */
     fun eventLogForNewSession(): PersistedEventLog = PersistedEventLog(sessionsDir, id = null)
 
@@ -99,6 +138,54 @@ internal class SessionStore(dataDir: Path) {
     }
 
     private fun directory(id: String): Path = sessionsDir.resolve(id)
+}
+
+/** One stored event as the stream serves it: its position plus its log line verbatim. */
+internal data class StoredEvent(val sequenceId: Long, val json: String)
+
+/** Wake-up signal value announcing the session's deletion: its tails complete instead of waiting on. */
+internal const val SESSION_DELETED_SIGNAL = Long.MIN_VALUE
+
+/** Wake-up signal value before any event is logged; also the tail offset replaying everything. */
+internal const val BEFORE_FIRST_EVENT = -1L
+
+/**
+ * Incremental reader over a growing log file, returning only complete —
+ * newline-terminated — lines: the writer flushes each line with its
+ * terminator, so a line without one is still being appended.
+ */
+private class LineTail(private val file: Path) : AutoCloseable {
+
+    private var input: InputStream? = null
+
+    private val partial = ByteArrayOutputStream()
+
+    /** The next complete line, or null once everything flushed so far is consumed. */
+    fun nextLine(): String? {
+        val stream = input ?: openIfPresent() ?: return null
+        var byte = stream.read()
+        while (byte >= 0 && byte != '\n'.code) {
+            partial.write(byte)
+            byte = stream.read()
+        }
+        return if (byte < 0) {
+            null
+        } else {
+            val line = partial.toString(Charsets.UTF_8)
+            partial.reset()
+            line
+        }
+    }
+
+    override fun close() {
+        input?.close()
+    }
+
+    private fun openIfPresent(): InputStream? = try {
+        BufferedInputStream(Files.newInputStream(file)).also { input = it }
+    } catch (_: NoSuchFileException) {
+        null
+    }
 }
 
 /**
@@ -152,7 +239,35 @@ internal class PersistedEventLog(
             ?: (event as? AgentEvent.SessionStarted)?.sessionId?.also { id = it }
             ?: error("a fresh session's first event must be SessionStarted, got: $event")
         val file = sessionsDir.resolve(sessionId).createDirectories().resolve(EVENTS_FILE)
+        dropTornTail(file)
         return Files.newBufferedWriter(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+    }
+}
+
+/**
+ * Truncates a trailing line torn by an earlier process death mid-append, so
+ * the next append starts a fresh line instead of fusing with the torn bytes.
+ */
+private fun dropTornTail(file: Path) {
+    val channel = try {
+        FileChannel.open(file, StandardOpenOption.READ, StandardOpenOption.WRITE)
+    } catch (_: NoSuchFileException) {
+        return
+    }
+    channel.use {
+        val size = it.size()
+        val terminator = ByteBuffer.allocate(1)
+        var end = size
+        while (end > 0) {
+            it.read(terminator.clear(), end - 1)
+            if (terminator.get(0) == '\n'.code.toByte()) {
+                break
+            }
+            end--
+        }
+        if (end < size) {
+            it.truncate(end)
+        }
     }
 }
 

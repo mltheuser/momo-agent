@@ -1,6 +1,7 @@
 package codes.momo.agent
 
 import ai.router.sdk.models.ChatResponse
+import java.util.concurrent.CountDownLatch
 
 /** One [scriptedServer] turn: a chat completion, or a failing HTTP status with an API error body. */
 public sealed interface ScriptedReply {
@@ -8,6 +9,21 @@ public sealed interface ScriptedReply {
     public data class Success(val response: ChatResponse) : ScriptedReply
 
     public data class Failure(val statusCode: Int, val message: String) : ScriptedReply
+
+    /** A completion withheld until [release]: its request stays in flight, keeping the run active. */
+    public class Held(private val response: ChatResponse) : ScriptedReply {
+
+        private val latch = CountDownLatch(1)
+
+        public fun release() {
+            latch.countDown()
+        }
+
+        internal fun awaitRelease(): ChatResponse {
+            latch.await()
+            return response
+        }
+    }
 }
 
 /** Shorthand wrapping a response as a [scriptedServer] turn. */

@@ -2,6 +2,7 @@ package codes.momo.agent
 
 import ai.router.sdk.models.ApiError
 import ai.router.sdk.models.ChatMessage
+import ai.router.sdk.models.ChatRequest
 import ai.router.sdk.models.ChatResponse
 import ai.router.sdk.models.ChatUsage
 import ai.router.sdk.models.ContentPart
@@ -16,6 +17,7 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.thread
 
 /**
@@ -26,7 +28,16 @@ import kotlin.concurrent.thread
  * (a failed finish reason, a transient HTTP error, a budget expiring
  * mid-tool-batch): the agent runs through the real client and HTTP stack.
  */
-public fun scriptedServer(vararg replies: ScriptedReply): ServerSocket {
+public fun scriptedServer(vararg replies: ScriptedReply): ServerSocket = serveScripted(null, replies)
+
+/** A [scriptedServer] also recording every received [ChatRequest], in order, into [requests]. */
+public fun scriptedServer(requests: CopyOnWriteArrayList<ChatRequest>, vararg replies: ScriptedReply): ServerSocket =
+    serveScripted(requests, replies)
+
+private fun serveScripted(
+    requests: CopyOnWriteArrayList<ChatRequest>?,
+    replies: Array<out ScriptedReply>,
+): ServerSocket {
     val server = ServerSocket(0, replies.size, InetAddress.getLoopbackAddress())
     thread(isDaemon = true) {
         for (reply in replies) {
@@ -35,7 +46,13 @@ public fun scriptedServer(vararg replies: ScriptedReply): ServerSocket {
             } catch (_: IOException) {
                 return@thread
             }
-            socket.use { it.respond(reply) }
+            socket.use {
+                val body = it.consumeRequest()
+                if (requests != null && body.isNotEmpty()) {
+                    requests.add(Json.decodeFromString(ChatRequest.serializer(), body))
+                }
+                it.respond(reply)
+            }
         }
     }
     return server
@@ -63,6 +80,9 @@ private fun Socket.respond(reply: ScriptedReply) {
                     ErrorResponse(ApiError(type = "scripted", message = reply.message)),
                 ),
             )
+
+        is ScriptedReply.Held ->
+            respondWith(200, Json.encodeToString(ChatResponse.serializer(), reply.awaitRelease()))
     }
 }
 
@@ -100,7 +120,6 @@ public val RESPONSE_USAGE: ChatUsage = ChatUsage(
 )
 
 private fun Socket.respondWith(statusCode: Int, body: String) {
-    consumeRequest()
     val payload = body.toByteArray()
     getOutputStream().run {
         write(
@@ -116,22 +135,26 @@ private fun Socket.respondWith(statusCode: Int, body: String) {
     }
 }
 
-/** Reads the full request first, so closing after the response cannot reset the client mid-send. */
-private fun Socket.consumeRequest() {
+/**
+ * Reads the full request first — so closing after the response cannot reset
+ * the client mid-send — and returns its body.
+ */
+private fun Socket.consumeRequest(): String {
     val input = getInputStream()
     val head = StringBuilder()
     while (!head.endsWith("\r\n\r\n")) {
         val byte = input.read()
-        if (byte < 0) return
+        if (byte < 0) return ""
         head.append(byte.toChar())
     }
     val bodyLength = Regex("content-length:\\s*(\\d+)", RegexOption.IGNORE_CASE)
         .find(head)?.groupValues?.get(1)?.toInt() ?: 0
-    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-    var remaining = bodyLength
-    while (remaining > 0) {
-        val read = input.read(buffer, 0, minOf(remaining, buffer.size))
+    val body = ByteArray(bodyLength)
+    var filled = 0
+    while (filled < bodyLength) {
+        val read = input.read(body, filled, bodyLength - filled)
         if (read < 0) break
-        remaining -= read
+        filled += read
     }
+    return String(body, 0, filled)
 }

@@ -1,7 +1,10 @@
 package codes.momo.agent.server
 
 import ai.router.sdk.AiRouterClient
+import ai.router.sdk.models.ChatRequest
+import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
+import codes.momo.agent.asReply
 import codes.momo.agent.assistantResponse
 import codes.momo.agent.baseUrl
 import codes.momo.agent.scriptedServer
@@ -12,8 +15,10 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.io.path.createDirectories
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 
 class RestartSurvivalTest {
 
@@ -21,7 +26,7 @@ class RestartSurvivalTest {
     lateinit var tempDir: Path
 
     @Test
-    @DisplayName("A mid-conversation session survives a restart as an ordinary session answering the next send")
+    @DisplayName("A mid-conversation session survives a restart as an ordinary session answering the next prompt")
     fun midConversationSessionSurvivesARestart() {
         val dataDir = tempDir.resolve("data")
         val harness = writeHarness(tempDir.resolve("harness")).toString()
@@ -34,10 +39,8 @@ class RestartSurvivalTest {
                     val registry = SessionRegistry(dataDir, client)
                     runBlocking {
                         val created = registry.create(harness, workspace)
-                        val result = registry.attach(created.id)
-                            .send("Ask the user which color to use.")
-                        assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
-                        assertEquals("Which color?", result.finalMessage)
+                        registry.startRun(created.id, "Ask the user which color to use.")
+                        registry.awaitRunEnd(created.id)
                         created.id
                     }
                     // The registry is deliberately abandoned unclosed: a process death, not a clean stop.
@@ -45,33 +48,41 @@ class RestartSurvivalTest {
             }
 
         // Second server process over the same data directory.
-        scriptedServer(assistantResponse(finishReason = "stop", text = "picked blue")).use { llm ->
-            AiRouterClient(llm.baseUrl).use { client ->
-                SessionRegistry(dataDir, client).use { registry ->
-                    withServer(registry) { http ->
-                        val info = http.get("/v1/sessions/$id").body<SessionInfo>()
-                        assertEquals(SessionStatus.CLOSED, info.status)
-                        assertEquals(1, info.lastRun?.turnsUsed)
-                        assertEquals(2, info.lastRun?.totalTokens)
+        val requests = CopyOnWriteArrayList<ChatRequest>()
+        scriptedServer(requests, assistantResponse(finishReason = "stop", text = "picked blue").asReply())
+            .use { llm ->
+                AiRouterClient(llm.baseUrl).use { client ->
+                    SessionRegistry(dataDir, client).use { registry ->
+                        withServer(registry) { http ->
+                            val info = http.get("/v1/sessions/$id").body<SessionInfo>()
+                            assertEquals(SessionStatus.CLOSED, info.status)
+                            assertEquals(1, info.lastRun?.turnsUsed)
+                            assertEquals(2, info.lastRun?.totalTokens)
 
-                        // Resumable: reattaching rebuilds the runtime from the stored
-                        // log; the next prompt answers the question in the same
-                        // conversation.
-                        val resumed = registry.attach(id)
-                        val result = resumed.send("blue")
-                        assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
-                        assertEquals("picked blue", result.finalMessage)
-                        assertEquals(
-                            listOf("system", "user", "assistant", "user", "assistant"),
-                            result.transcript.map { it.role },
-                        )
+                            // The stored history streams without attaching the dormant session.
+                            val history = http.streamEvents(id)
+                            val question = assertIs<AgentEvent.RunFinished>(history.last().event)
+                            assertEquals("Which color?", question.finalMessage)
+                            assertEquals(SessionStatus.CLOSED, http.get("/v1/sessions/$id").body<SessionInfo>().status)
 
-                        val after = http.get("/v1/sessions/$id").body<SessionInfo>()
-                        assertEquals(SessionStatus.IDLE, after.status)
-                        assertEquals(1, after.lastRun?.turnsUsed)
+                            // Resumable: the next prompt rebuilds the runtime from the
+                            // stored log and answers the question in the same conversation.
+                            http.prompt(id, "blue")
+                            val resumed = http.streamEvents(id, afterSequenceId = history.last().id)
+                            val answer = assertIs<AgentEvent.RunFinished>(resumed.last().event)
+                            assertEquals(RunResult.Status.COMPLETED, answer.status)
+                            assertEquals("picked blue", answer.finalMessage)
+                            assertEquals(
+                                listOf("system", "user", "assistant", "user"),
+                                requests.single().messages.map { it.role },
+                            )
+
+                            val after = http.get("/v1/sessions/$id").body<SessionInfo>()
+                            assertEquals(SessionStatus.IDLE, after.status)
+                            assertEquals(1, after.lastRun?.turnsUsed)
+                        }
                     }
                 }
             }
-        }
     }
 }

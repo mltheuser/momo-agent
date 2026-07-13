@@ -164,6 +164,8 @@ the host and is removed) and keeps the stored log.
 | `POST /v1/sessions`           | Create a session (request body below) → `201` with the session info. |
 | `GET /v1/sessions`            | List all sessions (ID, title, model, harness path, environment, status, created-at, last run's budget consumption). |
 | `GET /v1/sessions/{id}`       | One session's info. |
+| `POST /v1/sessions/{id}/prompt` | Send the next user message; the run starts in the background → `202` with a snapshot of the session info. |
+| `GET /v1/sessions/{id}/events`| The session's event log as an SSE stream: stored history, then live events. |
 | `POST /v1/sessions/{id}/close`| Close the session; aborts in-flight work, tears the environment down, keeps the stored log. Idempotent. |
 | `DELETE /v1/sessions/{id}`    | Close if needed, then remove the session and its stored artifacts → `204`. |
 
@@ -175,17 +177,42 @@ an optional title:
 {"harnessPath": "<dir>", "environment": {"type": "container", "image": "<img>", "workspace": "<dir>"}}
 ```
 
-Session `status` is derived, never stored: `running` (a send is in
+Session `status` is derived, never stored: `running` (a run is in
 flight), `idle` (live, nothing running), `closed` (no runtime attached;
 resumable).
 
 Errors are structured JSON — `{"code": "...", "message": "..."}` — with
 `400` for invalid harness/environment/request, `404` for an unknown
-session, `409` for operations conflicting with an active send, and `500`
+session, `409` for operations conflicting with an active run, and `500`
 otherwise.
 
-Prompting and event streaming over HTTP are not part of this surface
-yet.
+### Prompting
+
+```json
+{"prompt": "..."}
+```
+
+The body carries the next user message. Prompting a `closed` session
+rebuilds its runtime first — that is the resume path. No endpoint returns the run's outcome: its `run_finished`
+event (status, final message verbatim, usage, turns used, elapsed) is the
+record, observed via the event stream. The one run without that record is
+one aborted by closing the session — the log ends mid-run and the session's
+`status` is the indicator. A blank prompt is a `400 invalid_request`, a
+prompt while a run is active a `409 conflict`, and a session whose event
+log can no longer persist refuses new runs with a `500 event_log_failed`.
+
+### The event stream
+
+`GET /v1/sessions/{id}/events` serves the stored event log verbatim as
+server-sent events: each frame's `id:` is the event's `sequenceId`
+(gapless, 0-based) and its `data:` is the event JSON exactly as stored —
+one serialized `AgentEvent` (its serialization is the wire contract —
+see `AgentEvent`'s KDoc). No `event:` name is used. The
+stream replays history — all of it, or strictly after the `Last-Event-ID`
+request header on reconnect — then stays open and follows live events.
+Any number of subscribers can follow one session, each at its own pace;
+subscribing to a `closed` session serves its history without resuming it.
+Deleting the session ends its streams.
 
 ## Supported platforms & system assumptions
 

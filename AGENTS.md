@@ -49,6 +49,7 @@ Shared build conventions live in the root build script.
 
 - [README.md](README.md) — read when setting up the build, running the
   live/container test suites, running or configuring the agent server,
+  working on or against its HTTP API (endpoints and wire format),
   working with container-backed execution, or checking platform
   assumptions.
 - [../planning/issues/agent-lib/README.md](../planning/issues/agent-lib/README.md) — read when

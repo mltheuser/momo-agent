@@ -22,7 +22,7 @@ internal data class SessionInfo(
 @Serializable
 internal enum class SessionStatus {
 
-    /** A send is in flight. */
+    /** A run is in flight. */
     @SerialName("running")
     RUNNING,
 
