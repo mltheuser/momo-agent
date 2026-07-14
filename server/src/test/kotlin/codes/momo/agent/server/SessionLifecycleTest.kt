@@ -17,7 +17,6 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
-import kotlin.io.path.createDirectories
 import kotlin.io.path.writeText
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -30,9 +29,6 @@ class SessionLifecycleTest {
     @TempDir
     lateinit var tempDir: Path
 
-    private fun workspace(name: String = "workspace"): EnvironmentSpec.Local =
-        EnvironmentSpec.Local(tempDir.resolve(name).createDirectories().toString())
-
     // ─── Happy path ───────────────────────────────────────────────────
 
     @Test
@@ -40,13 +36,13 @@ class SessionLifecycleTest {
     fun createGetAndListReportTheSession() {
         val harness = harnessPath(tempDir)
         withSessionServer(tempDir) { http ->
-            val created = http.createSession(harness, workspace())
+            val created = http.createSession(harness, localWorkspace(tempDir))
 
             assertTrue(created.id.isNotBlank())
             assertEquals("harness", created.title)
             assertEquals("test-model", created.model)
             assertEquals(harness, created.harnessPath)
-            assertEquals(workspace(), created.environment)
+            assertEquals(localWorkspace(tempDir), created.environment)
             assertEquals(SessionStatus.IDLE, created.status)
             assertTrue(created.createdAtMillis > 0)
             assertNull(created.lastRun, "no run happened yet")
@@ -60,7 +56,7 @@ class SessionLifecycleTest {
     @DisplayName("Close parks the session — still listed, resumable — and closing again is a no-op success")
     fun closeParksAndIsIdempotent() {
         withSessionServer(tempDir) { http ->
-            val created = http.createSession(harnessPath(tempDir), workspace())
+            val created = http.createSession(harnessPath(tempDir), localWorkspace(tempDir))
 
             val closed = http.post("/v1/sessions/${created.id}/close").body<SessionInfo>()
             assertEquals(SessionStatus.CLOSED, closed.status)
@@ -76,7 +72,7 @@ class SessionLifecycleTest {
     @DisplayName("Delete removes the session and its stored artifacts; subsequent lookups 404")
     fun deleteRemovesTheSession() {
         withSessionServer(tempDir) { http ->
-            val created = http.createSession(harnessPath(tempDir), workspace())
+            val created = http.createSession(harnessPath(tempDir), localWorkspace(tempDir))
 
             assertEquals(HttpStatusCode.NoContent, http.delete("/v1/sessions/${created.id}").status)
 
@@ -96,7 +92,7 @@ class SessionLifecycleTest {
         withSessionServer(tempDir) { http ->
             val missing = tempDir.resolve("no-such-harness").toString()
 
-            val response = http.createSessionResponse(CreateSessionRequest(missing, workspace()))
+            val response = http.createSessionResponse(CreateSessionRequest(missing, localWorkspace(tempDir)))
 
             assertEquals(HttpStatusCode.BadRequest, response.status)
             val error = response.body<ApiError>()
@@ -145,8 +141,8 @@ class SessionLifecycleTest {
     @DisplayName("A session with unreadable stored state drops out of the list; get reports it loudly")
     fun corruptSessionDoesNotPoisonTheList() {
         withSessionServer(tempDir) { http ->
-            val healthy = http.createSession(harnessPath(tempDir), workspace("workspace-a"))
-            val corrupt = http.createSession(harnessPath(tempDir), workspace("workspace-b"))
+            val healthy = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "workspace-a"))
+            val corrupt = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "workspace-b"))
             tempDir.resolve("data/sessions/${corrupt.id}/session.json").writeText("not json")
 
             assertEquals(listOf(healthy), http.get("/v1/sessions").body<List<SessionInfo>>())
@@ -175,8 +171,8 @@ class SessionLifecycleTest {
         withSessionServer(tempDir) { http ->
             val (first, second) = coroutineScope {
                 listOf(
-                    async { http.createSession(harness, workspace("workspace-a")) },
-                    async { http.createSession(harness, workspace("workspace-b")) },
+                    async { http.createSession(harness, localWorkspace(tempDir, "workspace-a")) },
+                    async { http.createSession(harness, localWorkspace(tempDir, "workspace-b")) },
                 ).awaitAll()
             }
 

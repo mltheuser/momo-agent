@@ -148,8 +148,9 @@ out of scope for v1.
 
 A session is one agent conversation over a harness and an execution
 environment. Its source of truth is on disk under the data directory —
-`sessions/<session-id>/session.json` (harness path, model, environment
-spec) plus `sessions/<session-id>/events.jsonl` (the event log, one
+`sessions/<session-id>/session.json` (for a root: harness path, model,
+environment spec; for a subagent: its parent's session ID) plus
+`sessions/<session-id>/events.jsonl` (the event log, one
 serialized `AgentEvent` per line, appended live) — so every session
 survives a server restart: on startup the data directory is indexed and
 prior sessions appear as `closed`. A running agent and
@@ -162,12 +163,12 @@ the host and is removed) and keeps the stored log.
 | Method & path                 | Effect |
 | ----------------------------- | ------ |
 | `POST /v1/sessions`           | Create a session (request body below) → `201` with the session info. |
-| `GET /v1/sessions`            | List all sessions (ID, title, model, harness path, environment, status, created-at, last run's budget consumption). |
+| `GET /v1/sessions`            | List the root sessions (ID, parent, title, model, harness path, environment, status, created-at, last run's budget consumption). Subagent sessions are omitted — fetch them by ID. |
 | `GET /v1/sessions/{id}`       | One session's info. |
 | `POST /v1/sessions/{id}/prompt` | Send the next user message; the run starts in the background → `202` with a snapshot of the session info. |
 | `GET /v1/sessions/{id}/events`| The session's event log as an SSE stream: stored history, then live events. |
-| `POST /v1/sessions/{id}/close`| Close the session; aborts in-flight work, tears the environment down, keeps the stored log. Idempotent. |
-| `DELETE /v1/sessions/{id}`    | Close if needed, then remove the session and its stored artifacts → `204`. |
+| `POST /v1/sessions/{id}/close`| Close the session's whole subagent tree; aborts in-flight work, tears the environment down, keeps the stored logs. Idempotent. |
+| `DELETE /v1/sessions/{id}`    | Close the tree if needed, then remove the session and its descendants with their stored artifacts → `204`. |
 
 The create body names a server-local harness folder, an environment, and
 an optional title:
@@ -193,7 +194,8 @@ otherwise.
 ```
 
 The body carries the next user message. Prompting a `closed` session
-rebuilds its runtime first — that is the resume path. No endpoint returns the run's outcome: its `run_finished`
+rebuilds its tree's runtime first — that is the resume path (see Subagent
+sessions). No endpoint returns the run's outcome: its `run_finished`
 event (status, final message verbatim, usage, turns used, elapsed) is the
 record, observed via the event stream. The one run without that record is
 one aborted by closing the session — the log ends mid-run and the session's
@@ -213,6 +215,33 @@ request header on reconnect — then stays open and follows live events.
 Any number of subscribers can follow one session, each at its own pace;
 subscribing to a `closed` session serves its history without resuming it.
 Deleting the session ends its streams.
+
+### Subagent sessions
+
+Agents can spawn subagents (the library's `spawn_subagent` /
+`prompt_subagent` tools); each child is a full session under the same data
+directory, created the moment its spawn is announced. Clients discover
+children through the parent's `subagent_spawned` event, which carries the
+child's session ID: `GET /{id}`, the event stream, and `POST /{id}/prompt`
+all work on children, while the listing stays roots-only. A child's info
+carries `parent` (`null` on a root); its `model`, `harnessPath`, and
+`environment` are resolved through its root — children execute in the
+root's environment and own none themselves.
+
+The runtime attachment belongs to the whole tree and is dropped only by an
+explicit close or server shutdown — close is how a tree's memory is
+reclaimed. Closing or deleting *any* member affects the whole tree:
+in-flight runs anywhere in it are aborted, the one environment is torn
+down, and every member becomes `closed` with its log intact. Delete
+additionally removes the target session and all its descendants; a deleted
+child later prompted by its parent draws the unknown-subagent error
+result, and the name is free to spawn anew. Prompting any dormant member —
+root or child — rebuilds the tree's runtime and revives just the chain
+from the root to the prompted session from the stored logs, so a
+re-prompted parent can still converse with children spawned before a
+restart. A human may prompt an idle child at any time; a running child
+answers `409`, and a parent's `prompt_subagent` to a human-busy child gets
+an error result in its own log.
 
 ## Supported platforms & system assumptions
 

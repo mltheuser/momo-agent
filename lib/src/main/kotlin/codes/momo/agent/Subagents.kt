@@ -2,35 +2,60 @@ package codes.momo.agent
 
 import codes.momo.agent.tool.ToolResult
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * The children a session has spawned, keyed by their caller-chosen names —
  * the session-owned collaborator behind the subagent tools. The map
  * outlives individual runs: a later run can prompt a child an earlier one
- * spawned.
+ * spawned. A restored session starts with its log's spawned children as
+ * dormant entries, revived on first use.
  */
-internal class Subagents(private val parent: Agent) {
+internal class Subagents(private val parent: Agent, spawned: Map<String, String>) {
 
-    private val children = mutableMapOf<String, Agent>()
+    /** One registered child: live, or dormant — known only by session identity until revived. */
+    private sealed interface Child {
+        val sessionId: String
+    }
 
-    /** The child spawned as [name], for test access into the tree. */
-    operator fun get(name: String): Agent? = children[name]
+    private class Live(val agent: Agent) : Child {
+        override val sessionId: String
+            get() = agent.sessionId
+    }
 
-    fun spawn(name: String): ToolResult = when {
-        name.isBlank() -> ToolResult.Error("subagent name must not be blank.")
+    private class Dormant(override val sessionId: String) : Child
 
-        name in children -> ToolResult.Error(
-            "a subagent named '$name' already exists — pick an unused name, or prompt the existing one.",
-        )
+    // Guards the map so a parent-run tool call and an embedder navigating
+    // by session ID cannot revive the same child twice.
+    private val mutex = Mutex()
 
-        else -> {
-            children[name] = parent.spawnChild(name)
-            ToolResult.Success("spawned subagent '$name'")
+    private val children = LinkedHashMap<String, Child>()
+
+    init {
+        spawned.forEach { (name, sessionId) -> children[name] = Dormant(sessionId) }
+    }
+
+    /** The live child spawned as [name], for test access into the tree. */
+    operator fun get(name: String): Agent? = (children[name] as? Live)?.agent
+
+    suspend fun spawn(name: String): ToolResult = mutex.withLock {
+        when {
+            name.isBlank() -> ToolResult.Error("subagent name must not be blank.")
+
+            name in children -> ToolResult.Error(
+                "a subagent named '$name' already exists — pick an unused name, or prompt the existing one.",
+            )
+
+            else -> {
+                children[name] = Live(parent.spawnChild(name))
+                ToolResult.Success("spawned subagent '$name'")
+            }
         }
     }
 
     suspend fun prompt(name: String, message: String): ToolResult {
-        val child = children[name]
+        val child = mutex.withLock { resolve(name) }
         return when {
             child == null -> ToolResult.Error(
                 "no subagent named '$name' — spawn it first. Existing subagents: ${formatNames()}.",
@@ -39,6 +64,30 @@ internal class Subagents(private val parent: Agent) {
             message.isBlank() -> ToolResult.Error("the message to a subagent must not be blank.")
 
             else -> promptChild(child, name, message)
+        }
+    }
+
+    /** The child registered under [sessionId], revived when dormant; null when unknown. */
+    suspend fun childBySessionId(sessionId: String): Agent? = mutex.withLock {
+        children.entries.firstOrNull { it.value.sessionId == sessionId }?.let { resolve(it.key) }
+    }
+
+    /** The child registered under [sessionId] while it is live; never revives. */
+    suspend fun liveChildBySessionId(sessionId: String): Agent? = mutex.withLock {
+        children.values.firstNotNullOfOrNull { child -> (child as? Live)?.agent?.takeIf { it.sessionId == sessionId } }
+    }
+
+    /**
+     * The live child registered as [name], reviving a dormant one; the
+     * caller holds [mutex].
+     */
+    private suspend fun resolve(name: String): Agent? = when (val child = children[name]) {
+        null -> null
+
+        is Live -> child.agent
+
+        is Dormant -> parent.reviveChild(name, child.sessionId).also { revived ->
+            if (revived == null) children.remove(name) else children[name] = Live(revived)
         }
     }
 

@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.takeWhile
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -32,15 +33,29 @@ import kotlin.io.path.writeText
 
 /**
  * What the event log deliberately omits about a session: everything needed
- * to rebuild its runtime.
+ * to rebuild its runtime. Stored once per fact — a root owns the tree-wide
+ * facts, a child only its place in the tree; a child's harness, model, and
+ * environment resolve through its root.
  */
 @Serializable
-internal data class SessionMetadata(
-    val harnessPath: String,
-    /** The harness's model string when the session was created. */
-    val model: String,
-    val environment: EnvironmentSpec,
-)
+internal sealed interface SessionMetadata {
+
+    @Serializable
+    @SerialName("root")
+    data class Root(
+        val harnessPath: String,
+        /** The harness's model string when the session was created. */
+        val model: String,
+        val environment: EnvironmentSpec,
+    ) : SessionMetadata
+
+    @Serializable
+    @SerialName("child")
+    data class Child(
+        /** Session ID of the immediate parent. */
+        val parent: String,
+    ) : SessionMetadata
+}
 
 /** Thrown when a session's stored files no longer parse. */
 internal class CorruptSessionException(id: String, cause: Exception) :

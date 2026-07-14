@@ -1,18 +1,12 @@
 package codes.momo.agent
 
 import ai.router.sdk.AiRouterClient
-import ai.router.sdk.models.ChatMessage
 import ai.router.sdk.models.ChatRequest
-import ai.router.sdk.models.ToolCall
-import ai.router.sdk.models.ToolCallFunction
-import codes.momo.agent.environment.LocalExecutionEnvironment
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -29,75 +23,10 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
-/** [TEST_HARNESS] with the subagent tools added. */
-private val SUBAGENT_HARNESS = TEST_HARNESS.copy(
-    tools = TEST_HARNESS.tools + listOf("spawn_subagent", "prompt_subagent"),
-)
-
-/** Listener collecting one session's events and handing every spawned subagent a child of itself. */
-private class TreeEventListener : AgentEventListener {
-
-    val events = mutableListOf<AgentEvent>()
-    val children = mutableMapOf<String, TreeEventListener>()
-
-    override fun onEvent(event: AgentEvent) {
-        events += event
-    }
-
-    override fun listenerForSubagent(name: String, sessionId: String): AgentEventListener =
-        TreeEventListener().also { children[name] = it }
-}
-
 class SubagentTest {
 
     @TempDir
     lateinit var workspace: Path
-
-    // ─── Fixture helpers ──────────────────────────────────────────────
-
-    private fun agent(
-        client: AiRouterClient,
-        listener: AgentEventListener = NoOpAgentEventListener,
-        budgets: RunBudgets = RunBudgets(),
-        depth: Int = 0,
-    ): Agent = Agent(
-        harness = SUBAGENT_HARNESS,
-        client = client,
-        environment = LocalExecutionEnvironment(workspace),
-        eventListener = listener,
-        budgets = budgets,
-        session = SessionState.Fresh("Test session", depth = depth),
-    )
-
-    /** Runs one "go" prompt against a scripted LLM shared by the whole agent tree. */
-    private fun runScripted(
-        listener: AgentEventListener,
-        vararg replies: ScriptedReply,
-        budgets: RunBudgets = RunBudgets(),
-    ): RunResult =
-        scriptedServer(*replies).use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                runBlocking { agent(client, listener, budgets).send("go") }
-            }
-        }
-
-    private fun spawnCall(id: String, name: String): ToolCall = ToolCall(
-        id = id,
-        function = ToolCallFunction("spawn_subagent", buildJsonObject { put("name", name) }),
-    )
-
-    private fun promptCall(id: String, name: String, message: String): ToolCall = ToolCall(
-        id = id,
-        function = ToolCallFunction(
-            "prompt_subagent",
-            buildJsonObject {
-                put("name", name)
-                put("message", message)
-            },
-        ),
-    )
-
-    private fun List<ChatMessage>.toolTexts(): List<String> = filter { it.role == "tool" }.map { it.text }
 
     // ─── Delegation round trips ───────────────────────────────────────
 
@@ -109,14 +38,14 @@ class SubagentTest {
         scriptedServer(
             requests,
             toolCallResponse(
-                spawnCall(id = "call-1", name = "helper"),
-                promptCall(id = "call-2", name = "helper", message = "compute the answer"),
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "compute the answer"),
             ).asReply(),
             assistantResponse(finishReason = "stop", text = "the answer is 42").asReply(),
             assistantResponse(finishReason = "stop", text = "done").asReply(),
         ).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
-                val result = runBlocking { agent(client, tree).send("go") }
+                val result = runBlocking { workspace.agent(client, tree).send("go") }
 
                 assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                 assertEquals("done", result.finalMessage)
@@ -149,14 +78,14 @@ class SubagentTest {
     fun childQuestionAnsweredViaSecondPrompt() {
         val tree = TreeEventListener()
 
-        val result = runScripted(
+        val result = workspace.runScripted(
             tree,
             toolCallResponse(
-                spawnCall(id = "call-1", name = "helper"),
-                promptCall(id = "call-2", name = "helper", message = "bake a cake"),
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "bake a cake"),
             ).asReply(),
             assistantResponse(finishReason = "stop", text = "Which flavor should it be?").asReply(),
-            toolCallResponse(promptCall(id = "call-3", name = "helper", message = "vanilla")).asReply(),
+            toolCallResponse(promptSubagentCall(id = "call-3", name = "helper", message = "vanilla")).asReply(),
             assistantResponse(finishReason = "stop", text = "vanilla cake baked").asReply(),
             assistantResponse(finishReason = "stop", text = "done").asReply(),
         )
@@ -176,15 +105,15 @@ class SubagentTest {
     fun childSpawnsGrandchild() {
         val tree = TreeEventListener()
 
-        val result = runScripted(
+        val result = workspace.runScripted(
             tree,
             toolCallResponse(
-                spawnCall(id = "call-1", name = "child"),
-                promptCall(id = "call-2", name = "child", message = "delegate this"),
+                spawnSubagentCall(id = "call-1", name = "child"),
+                promptSubagentCall(id = "call-2", name = "child", message = "delegate this"),
             ).asReply(),
             toolCallResponse(
-                spawnCall(id = "call-3", name = "grandchild"),
-                promptCall(id = "call-4", name = "grandchild", message = "solve this"),
+                spawnSubagentCall(id = "call-3", name = "grandchild"),
+                promptSubagentCall(id = "call-4", name = "grandchild", message = "solve this"),
             ).asReply(),
             assistantResponse(finishReason = "stop", text = "grandchild answer").asReply(),
             assistantResponse(finishReason = "stop", text = "child answer").asReply(),
@@ -209,11 +138,11 @@ class SubagentTest {
         val requests = CopyOnWriteArrayList<ChatRequest>()
         scriptedServer(
             requests,
-            toolCallResponse(spawnCall(id = "call-1", name = "too-deep")).asReply(),
+            toolCallResponse(spawnSubagentCall(id = "call-1", name = "too-deep")).asReply(),
             assistantResponse(finishReason = "stop", text = "understood").asReply(),
         ).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
-                val capped = agent(client, depth = Budgets.MAX_SUBAGENT_DEPTH)
+                val capped = workspace.agent(client, depth = Budgets.MAX_SUBAGENT_DEPTH)
                 val result = runBlocking { capped.send("go") }
 
                 assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
@@ -234,7 +163,7 @@ class SubagentTest {
             assistantResponse(finishReason = "stop", text = "ready").asReply(),
         ).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
-                val nearCap = agent(client, depth = Budgets.MAX_SUBAGENT_DEPTH - 1)
+                val nearCap = workspace.agent(client, depth = Budgets.MAX_SUBAGENT_DEPTH - 1)
                 val result = runBlocking { nearCap.send("go") }
 
                 assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
@@ -248,12 +177,12 @@ class SubagentTest {
     @Test
     @DisplayName("Duplicate and unknown names are error results, not failures")
     fun duplicateAndUnknownNamesAreErrorResults() {
-        val result = runScripted(
+        val result = workspace.runScripted(
             NoOpAgentEventListener,
             toolCallResponse(
-                spawnCall(id = "call-1", name = "helper"),
-                spawnCall(id = "call-2", name = "helper"),
-                promptCall(id = "call-3", name = "ghost", message = "anyone there?"),
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                spawnSubagentCall(id = "call-2", name = "helper"),
+                promptSubagentCall(id = "call-3", name = "ghost", message = "anyone there?"),
             ).asReply(),
             assistantResponse(finishReason = "stop", text = "noted").asReply(),
         )
@@ -269,11 +198,11 @@ class SubagentTest {
     @Test
     @DisplayName("A child run ending non-COMPLETED surfaces as an error result naming the status")
     fun nonCompletedChildRunIsAnErrorResult() {
-        val result = runScripted(
+        val result = workspace.runScripted(
             NoOpAgentEventListener,
             toolCallResponse(
-                spawnCall(id = "call-1", name = "helper"),
-                promptCall(id = "call-2", name = "helper", message = "try this"),
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "try this"),
             ).asReply(),
             // The child's only turn reports a failed finish: its run ends as ERROR.
             assistantResponse(finishReason = "error").asReply(),
@@ -287,17 +216,17 @@ class SubagentTest {
     @Test
     @DisplayName("A turns-exhausted child surfaces as an error result and a fresh prompt revives it")
     fun turnsExhaustedChildIsAnErrorResultAndRevivable() {
-        val result = runScripted(
+        val result = workspace.runScripted(
             NoOpAgentEventListener,
             toolCallResponse(
-                spawnCall(id = "call-1", name = "helper"),
-                promptCall(id = "call-2", name = "helper", message = "grind away"),
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "grind away"),
             ).asReply(),
             // The child spends its whole inherited turn budget still wanting tools.
             toolCallResponse(bashCall(id = "call-c1", command = "true")).asReply(),
             toolCallResponse(bashCall(id = "call-c2", command = "true")).asReply(),
             toolCallResponse(bashCall(id = "call-c3", command = "true")).asReply(),
-            toolCallResponse(promptCall(id = "call-3", name = "helper", message = "wrap up")).asReply(),
+            toolCallResponse(promptSubagentCall(id = "call-3", name = "helper", message = "wrap up")).asReply(),
             assistantResponse(finishReason = "stop", text = "wrapped up").asReply(),
             assistantResponse(finishReason = "stop", text = "done").asReply(),
             budgets = RunBudgets(maxTurns = 3),
@@ -316,14 +245,14 @@ class SubagentTest {
     fun busyChildIsAnErrorResult() {
         val marker = workspace.resolve("child-tool-started")
         scriptedServer(
-            toolCallResponse(spawnCall(id = "call-1", name = "worker")).asReply(),
+            toolCallResponse(spawnSubagentCall(id = "call-1", name = "worker")).asReply(),
             assistantResponse(finishReason = "stop", text = "spawned").asReply(),
             toolCallResponse(bashCall(id = "call-2", command = "touch '$marker' && sleep 30")).asReply(),
-            toolCallResponse(promptCall(id = "call-3", name = "worker", message = "status?")).asReply(),
+            toolCallResponse(promptSubagentCall(id = "call-3", name = "worker", message = "status?")).asReply(),
             assistantResponse(finishReason = "stop", text = "worker is busy").asReply(),
         ).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
-                val parent = agent(client)
+                val parent = workspace.agent(client)
                 runBlocking {
                     assertEquals(RunResult.Status.COMPLETED, parent.send("spawn a worker").status)
                     // Occupy the child directly, the way the server API will
@@ -360,14 +289,14 @@ class SubagentTest {
         val listener = CollectingEventListener()
         scriptedServer(
             toolCallResponse(
-                spawnCall(id = "call-1", name = "helper"),
-                promptCall(id = "call-2", name = "helper", message = "take your time"),
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "take your time"),
             ).asReply(),
             held,
             assistantResponse(finishReason = "stop", text = "done").asReply(),
         ).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
-                val parent = agent(client, listener, budgets = RunBudgets(toolTimeout = 100.milliseconds))
+                val parent = workspace.agent(client, listener, budgets = RunBudgets(toolTimeout = 100.milliseconds))
                 runBlocking {
                     launch {
                         delay(2.seconds)
@@ -391,58 +320,6 @@ class SubagentTest {
         }
     }
 
-    // ─── Cancellation ─────────────────────────────────────────────────
-
-    @Test
-    @DisplayName("Cancelling the parent mid-child-run cascades to the child and both logs stay loadable")
-    fun cancellationCascadesToTheChildAndBothLogsLoad() {
-        val tree = TreeEventListener()
-        val held = ScriptedReply.Held(assistantResponse(finishReason = "stop", text = "never delivered"))
-        scriptedServer(
-            toolCallResponse(
-                spawnCall(id = "call-1", name = "helper"),
-                promptCall(id = "call-2", name = "helper", message = "work away"),
-            ).asReply(),
-            held,
-        ).use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                runBlocking {
-                    val run = launch { agent(client, tree).send("go") }
-                    withTimeout(5.seconds) {
-                        while (tree.children["helper"]?.events.orEmpty().none { it is AgentEvent.LlmCallStarted }) {
-                            delay(10.milliseconds)
-                        }
-                    }
-
-                    withTimeout(5.seconds) { run.cancelAndJoin() }
-
-                    assertTrue(run.isCancelled)
-                }
-            }
-        }
-        // The held reply was never released, so only the cascade can have ended the child's run.
-        val childEvents = assertNotNull(tree.children["helper"]).events
-        assertTrue(childEvents.none { it is AgentEvent.RunFinished })
-
-        // The parent's cut log loads with its dangling prompt call repaired.
-        scriptedServer(assistantResponse(finishReason = "stop", text = "recovered")).use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                val parent = Agent.load(tree.events, SUBAGENT_HARNESS, client, LocalExecutionEnvironment(workspace))
-                val result = runBlocking { parent.send("continue") }
-
-                assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
-                val aborted = result.transcript.filter { it.role == "tool" }.last()
-                assertEquals("call-2", aborted.toolCallId)
-                assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.text)
-            }
-        }
-        // The child's cut log loads too, keeping its identity.
-        withUnusedClient { client ->
-            val child = Agent.load(childEvents, SUBAGENT_HARNESS, client, LocalExecutionEnvironment(workspace))
-            assertEquals(assertIs<AgentEvent.SessionStarted>(childEvents.first()).sessionId, child.sessionId)
-        }
-    }
-
     // ─── Listener robustness ──────────────────────────────────────────
 
     @Test
@@ -455,11 +332,11 @@ class SubagentTest {
                 error("cannot observe the child")
         }
 
-        val result = runScripted(
+        val result = workspace.runScripted(
             listener,
             toolCallResponse(
-                spawnCall(id = "call-1", name = "helper"),
-                promptCall(id = "call-2", name = "helper", message = "compute the answer"),
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "compute the answer"),
             ).asReply(),
             assistantResponse(finishReason = "stop", text = "the answer is 42").asReply(),
             assistantResponse(finishReason = "stop", text = "done").asReply(),

@@ -24,7 +24,6 @@ import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
 import java.util.concurrent.CopyOnWriteArrayList
-import kotlin.io.path.createDirectories
 import kotlin.io.path.setPosixFilePermissions
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -34,9 +33,6 @@ class InteractionApiTest {
 
     @TempDir
     lateinit var tempDir: Path
-
-    private fun workspace(): EnvironmentSpec.Local =
-        EnvironmentSpec.Local(tempDir.resolve("workspace").createDirectories().toString())
 
     // ─── Prompt + stream happy path ───────────────────────────────────
 
@@ -50,7 +46,7 @@ class InteractionApiTest {
             assistantResponse(finishReason = "stop", text = "Which color?").asReply(),
             assistantResponse(finishReason = "stop", text = "picked blue").asReply(),
         ) { http ->
-            val id = http.createSession(harnessPath(tempDir), workspace()).id
+            val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir)).id
 
             assertEquals(id, http.prompt(id, "Ask the user which color to use.").id)
             val firstRun = http.streamEvents(id)
@@ -77,7 +73,7 @@ class InteractionApiTest {
     @DisplayName("Reconnecting with Last-Event-ID resumes strictly after it")
     fun lastEventIdReplaysExactlyTheTail() {
         withScriptedSessionServer(tempDir, assistantResponse(finishReason = "stop", text = "done")) { http ->
-            val id = http.createSession(harnessPath(tempDir), workspace()).id
+            val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir)).id
             http.prompt(id, "go")
 
             val full = http.streamEvents(id)
@@ -92,7 +88,7 @@ class InteractionApiTest {
     @DisplayName("Two concurrent subscribers see the same stream: same events, same order")
     fun concurrentSubscribersSeeTheSameStream() {
         withScriptedSessionServer(tempDir, assistantResponse(finishReason = "stop", text = "done")) { http ->
-            val id = http.createSession(harnessPath(tempDir), workspace()).id
+            val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir)).id
             coroutineScope {
                 val first = async { http.streamEvents(id) }
                 val second = async { http.streamEvents(id) }
@@ -111,7 +107,7 @@ class InteractionApiTest {
             assistantResponse(finishReason = "stop", text = "first"),
             assistantResponse(finishReason = "stop", text = "second"),
         ) { http ->
-            val id = http.createSession(harnessPath(tempDir), workspace()).id
+            val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir)).id
             http.prompt(id, "one")
             val firstRun = http.streamEvents(id)
 
@@ -133,7 +129,7 @@ class InteractionApiTest {
     @DisplayName("Deleting a session ends its live event streams")
     fun deleteEndsLiveStreams() {
         withScriptedSessionServer(tempDir, assistantResponse(finishReason = "stop", text = "done")) { http ->
-            val id = http.createSession(harnessPath(tempDir), workspace()).id
+            val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir)).id
             http.prompt(id, "go")
             http.awaitRunEnd(id)
 
@@ -165,7 +161,7 @@ class InteractionApiTest {
     fun promptWhileRunningConflicts() {
         val held = ScriptedReply.Held(assistantResponse(finishReason = "stop", text = "done"))
         withScriptedSessionServer(tempDir, held) { http ->
-            val id = http.createSession(harnessPath(tempDir), workspace()).id
+            val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir)).id
 
             assertEquals(SessionStatus.RUNNING, http.prompt(id, "work").status)
 
@@ -185,7 +181,7 @@ class InteractionApiTest {
     @DisplayName("A blank prompt is a 400 invalid_request")
     fun blankPromptIsRejected() {
         withSessionServer(tempDir) { http ->
-            val id = http.createSession(harnessPath(tempDir), workspace()).id
+            val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir)).id
 
             val response = http.promptResponse(id, "   ")
 
@@ -212,7 +208,7 @@ class InteractionApiTest {
     @DisplayName("A session whose event log stopped persisting refuses new runs with a 500 event_log_failed")
     fun failedEventLogRefusesNewRuns() {
         withScriptedSessionServer(tempDir, assistantResponse(finishReason = "stop", text = "done")) { http ->
-            val id = http.createSession(harnessPath(tempDir), workspace()).id
+            val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir)).id
             http.post("/v1/sessions/$id/close") // Detaches the log's open writer.
             val events = tempDir.resolve("data/sessions/$id/events.jsonl")
             events.setPosixFilePermissions(setOf(PosixFilePermission.OWNER_READ))

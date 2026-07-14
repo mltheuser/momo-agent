@@ -31,6 +31,8 @@ public sealed interface AgentEvent {
         override val timestampMillis: Long,
         val sessionId: String,
         val title: String,
+        /** Nesting depth in the subagent tree: 0 for a root session (and for logs predating the field). */
+        val depth: Int = 0,
     ) : AgentEvent
 
     /** The session's title changed; the last such event in a log names it. */

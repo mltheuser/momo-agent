@@ -6,6 +6,8 @@ import codes.momo.agent.AgentEvent
 import codes.momo.agent.AgentEventListener
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
+import codes.momo.agent.liveSubagentBySessionId
+import codes.momo.agent.subagentBySessionId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -22,7 +24,6 @@ import java.io.IOException
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** Thrown by every operation naming a session the registry does not know. */
 internal class UnknownSessionException(id: String) : RuntimeException("No such session: $id")
@@ -36,15 +37,16 @@ internal class EventLogFailedException(cause: IOException) :
 
 /**
  * All sessions the server knows, live or dormant. A session *is* its stored
- * log and metadata (see [SessionStore]); a running [Agent] plus its
- * environment are an ephemeral [SessionRuntime] attached to the entry,
- * dropped on close and rebuilt on demand when a prompt arrives (see
- * [startRun]). Startup indexes the
- * data directory, so sessions stored by an earlier process appear as
- * dormant entries — a restart is an implicit close of everything that was
- * live.
+ * log and metadata (see [SessionStore]); the running agents of a subagent
+ * tree plus their one shared environment are an ephemeral [TreeRuntime]
+ * attached to the tree's root entry — dropped only on explicit close,
+ * delete, or shutdown, and rebuilt on demand when a prompt arrives (see
+ * [startRun]). Startup indexes the data directory, so sessions stored by
+ * an earlier process appear as dormant entries — a restart is an implicit
+ * close of everything that was live.
  *
- * Lifecycle transitions serialize per session, never across sessions;
+ * Tree lifecycle transitions serialize on the root entry's mutex — the
+ * only mutex ever locked, so there is no lock ordering to get wrong;
  * blocking work (harness and store IO, environment construction — possibly
  * a slow image pull) runs on the IO dispatcher.
  */
@@ -78,11 +80,14 @@ internal class SessionRegistry(
             val eventLog = store.eventLogForNewSession()
             val environment = spec.build()
             val entry = SessionEntry()
+            val logs = ConcurrentHashMap<String, PersistedEventLog>()
             val agent = closingOnFailure(environment) {
-                Agent(harness, client, environment, title ?: path.fileName.toString(), entry.signaling(eventLog))
+                val listener = TreeMemberListener(logs, entry, eventLog, sessionId = null)
+                Agent(harness, client, environment, title ?: path.fileName.toString(), listener)
             }
+            logs[agent.sessionId] = eventLog
             try {
-                store.writeMetadata(agent.sessionId, SessionMetadata(harnessPath, harness.model, spec))
+                store.writeMetadata(agent.sessionId, SessionMetadata.Root(harnessPath, harness.model, spec))
             } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
                 // Without metadata the session can never be rebuilt: discard
                 // every artifact instead of leaking the live environment.
@@ -91,14 +96,18 @@ internal class SessionRegistry(
                 runCatching { store.delete(agent.sessionId) }
                 throw failure
             }
-            entry.runtime = SessionRuntime(agent, environment, eventLog)
+            entry.runtime = TreeRuntime(agent, environment, logs)
             entries[agent.sessionId] = entry
             info(agent.sessionId)
         }
 
+    /** Root sessions only: children are discovered through their parent's `subagent_spawned` events. */
     suspend fun list(): List<SessionInfo> = entries.keys.mapNotNull { id ->
         try {
-            info(id)
+            when (withContext(Dispatchers.IO) { store.readMetadata(id) }) {
+                is SessionMetadata.Root -> info(id)
+                is SessionMetadata.Child -> null
+            }
         } catch (_: UnknownSessionException) {
             null // Deleted while listing.
         } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
@@ -107,66 +116,112 @@ internal class SessionRegistry(
     }.sortedBy { it.createdAtMillis }
 
     suspend fun info(id: String): SessionInfo = withContext(Dispatchers.IO) {
-        val entry = entries[id] ?: throw UnknownSessionException(id)
-        val metadata: SessionMetadata
+        entries.known(id)
         val events: List<AgentEvent>
+        val position: TreePosition
         try {
-            metadata = store.readMetadata(id)
             events = store.readEvents(id)
+            position = store.position(id)
         } catch (_: NoSuchFileException) {
             throw UnknownSessionException(id) // Deleted between lookup and read.
         }
+        // Status comes from the tree's runtime, never from the log's tail:
+        // an aborted run leaves no RunFinished behind to read.
+        val runtime = entries[position.path.first()]?.runtime
         SessionInfo(
             id = id,
+            parent = position.path.dropLast(1).lastOrNull(),
             title = events.sessionTitle(),
-            model = metadata.model,
-            harnessPath = metadata.harnessPath,
-            environment = metadata.environment,
-            status = entry.status(),
+            model = position.root.model,
+            harnessPath = position.root.harnessPath,
+            environment = position.root.environment,
+            status = when {
+                runtime == null -> SessionStatus.CLOSED
+                runtime.isRunning(position.path) -> SessionStatus.RUNNING
+                else -> SessionStatus.IDLE
+            },
             createdAtMillis = events.sessionCreatedAtMillis(),
             lastRun = events.lastRunStats(),
         )
     }
 
     /**
-     * Closes [id]: cancels in-flight work, closes the environment (a
-     * container copies its workspace back to the host), and drops the
-     * runtime attachment. The stored session stays listed and resumable.
-     * Closing a dormant session is a no-op.
+     * Closes [id]'s whole tree: cancels every in-flight run in it, closes
+     * the open event logs, closes the one environment (a container copies
+     * its workspace back to the host), and drops the runtime attachment.
+     * Every member stays stored and resumable. Closing a dormant tree is a
+     * no-op.
      *
      * @throws codes.momo.agent.environment.EnvironmentFailureException when
-     *   the environment's teardown failed; the session is closed regardless.
+     *   the environment's teardown failed; the tree is closed regardless.
      */
     suspend fun close(id: String) {
-        val entry = entries[id] ?: throw UnknownSessionException(id)
-        entry.mutex.withLock { teardown(entry) }
+        val (_, root) = treeOf(entries, store, id)
+        root.mutex.withLock { teardown(root) }
     }
 
-    /** Closes [id] if live, then removes it: the registry entry and every stored artifact. */
+    /**
+     * Closes [id]'s whole tree, then removes [id]'s subtree: the session
+     * itself and every stored descendant lose their registry entries and
+     * stored artifacts, and their event streams end. The rest of the tree
+     * stays stored, closed.
+     */
     suspend fun delete(id: String) {
-        val entry = entries[id] ?: throw UnknownSessionException(id)
-        entry.mutex.withLock {
-            teardown(entry)
-            entries.remove(id)
-            withContext(NonCancellable + Dispatchers.IO) { store.delete(id) }
-            entry.eventSignal.value = SESSION_DELETED_SIGNAL
+        val target = entries.known(id)
+        val root = withContext(Dispatchers.IO) {
+            try {
+                entries.known(store.position(id).path.first())
+            } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
+                // Unresolvable ancestry — unreadable metadata or a broken
+                // parent link — must not make a session undeletable; such a
+                // tree can never be attached, so the target's own entry
+                // serializes the removal and there is nothing to tear down.
+                target
+            }
+        }
+        root.mutex.withLock {
+            teardown(root)
+            withContext(NonCancellable + Dispatchers.IO) {
+                // Leaves first: a removal cut short by process death leaves
+                // a consistent tree, never children orphaned by a missing
+                // parent link.
+                store.subtreeIds(id).asReversed().forEach { member ->
+                    val memberEntry = entries.remove(member)
+                    store.delete(member)
+                    memberEntry?.eventSignal?.value = SESSION_DELETED_SIGNAL
+                }
+            }
         }
     }
 
     /**
-     * Starts a run over [prompt] on [id], reattaching a dormant session.
-     * Attach and start happen under the entry's mutex, so a concurrent
-     * close cannot void an accepted prompt between them.
+     * Starts a run over [prompt] on [id], rebuilding its tree's runtime
+     * when dormant and reviving just the chain from the root down to [id].
+     * Attach, navigation, and start happen under the root entry's mutex, so
+     * a concurrent close cannot void an accepted prompt between them.
      *
      * @throws EventLogFailedException when the session's log stopped
      *   persisting: without it a run would leave no record.
-     * @throws SessionConflictException when a run is already active.
+     * @throws SessionConflictException when the session already has a run
+     *   in flight — its own, or a parent-driven one.
      */
     suspend fun startRun(id: String, prompt: String) {
-        val entry = entries[id] ?: throw UnknownSessionException(id)
-        entry.mutex.withLock {
-            val runtime = entry.runtime ?: rebuild(entry, id).also { entry.runtime = it }
-            runtime.startRun(prompt)
+        val (path, root) = treeOf(entries, store, id)
+        root.mutex.withLock {
+            val attached = root.runtime
+            val runtime = attached ?: rebuild(root, path.first()).also { root.runtime = it }
+            try {
+                val agent = runtime.agentAt(path) ?: throw UnknownSessionException(id)
+                runtime.startRun(agent, prompt)
+            } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
+                // A failed prompt must not leave behind the runtime it
+                // attached — a member unreachable from its parent's log (a
+                // torn spawn tail) or a failed revival throws here.
+                if (attached == null) {
+                    teardown(root)
+                }
+                throw failure
+            }
         }
     }
 
@@ -174,19 +229,15 @@ internal class SessionRegistry(
      * Stream of [id]'s stored events via [SessionStore.tailEvents];
      * subscribing never attaches a dormant session.
      */
-    fun eventsAfter(id: String, afterSequenceId: Long): Flow<StoredEvent> {
-        val entry = entries[id] ?: throw UnknownSessionException(id)
-        return store.tailEvents(id, entry.eventSignal, afterSequenceId)
-    }
+    fun eventsAfter(id: String, afterSequenceId: Long): Flow<StoredEvent> =
+        store.tailEvents(id, entries.known(id).eventSignal, afterSequenceId)
 
     /** @throws UnknownSessionException when [id] names no known session. */
     fun requireKnown(id: String) {
-        if (!entries.containsKey(id)) {
-            throw UnknownSessionException(id)
-        }
+        entries.known(id)
     }
 
-    /** Closes every live session; the stored sessions stay for the next process. */
+    /** Closes every live tree; the stored sessions stay for the next process. */
     override fun close() {
         runBlocking {
             entries.keys.forEach { id ->
@@ -195,10 +246,10 @@ internal class SessionRegistry(
         }
     }
 
-    /** Rebuilds [id]'s runtime from its stored artifacts; the caller holds the entry's mutex. */
-    private suspend fun rebuild(entry: SessionEntry, id: String): SessionRuntime = withContext(Dispatchers.IO) {
+    /** Rebuilds the tree runtime rooted at [id] from its stored artifacts; the caller holds the root's mutex. */
+    private suspend fun rebuild(entry: SessionEntry, id: String): TreeRuntime = withContext(Dispatchers.IO) {
         val metadata = try {
-            store.readMetadata(id)
+            store.position(id).root
         } catch (_: NoSuchFileException) {
             throw UnknownSessionException(id) // Deleted while waiting on the mutex.
         }
@@ -206,38 +257,132 @@ internal class SessionRegistry(
         val events = store.readEvents(id)
         val eventLog = store.eventLogFor(id)
         val environment = metadata.environment.build()
+        val logs = ConcurrentHashMap<String, PersistedEventLog>()
+        logs[id] = eventLog
         val agent = closingOnFailure(environment) {
-            Agent.load(events, harness, client, environment, entry.signaling(eventLog))
+            Agent.load(events, harness, client, environment, TreeMemberListener(logs, entry, eventLog, id))
         }
-        SessionRuntime(agent, environment, eventLog)
+        TreeRuntime(agent, environment, logs)
+    }
+
+    /**
+     * One tree member's listener: the log first — the event is on disk when
+     * the signal fires — then the wake-up. Every subagent the member
+     * constructs (a spawn, or a revival) becomes a session here, before its
+     * spawn event is observable: the child gets a registry entry, metadata
+     * naming this member as its parent, and an open log registered in the
+     * tree's [logs] for teardown — reusing whatever of that already exists.
+     * Never throws: a child that cannot be persisted merely goes unobserved
+     * instead of failing the spawn. Revival reads the stored logs back
+     * through [storedEventsFor]; a deleted session yields null there.
+     */
+    private inner class TreeMemberListener(
+        private val logs: ConcurrentHashMap<String, PersistedEventLog>,
+        private val entry: SessionEntry,
+        private val log: PersistedEventLog,
+        sessionId: String?,
+    ) : AgentEventListener {
+
+        // A fresh session's ID becomes known with its first event.
+        @Volatile
+        private var sessionId: String? = sessionId
+
+        override fun onEvent(event: AgentEvent) {
+            if (sessionId == null && event is AgentEvent.SessionStarted) {
+                sessionId = event.sessionId
+            }
+            log.onEvent(event)
+            entry.eventSignal.value = event.sequenceId
+        }
+
+        override fun listenerForSubagent(name: String, sessionId: String): AgentEventListener = try {
+            attachChild(parentId = checkNotNull(this.sessionId), childId = sessionId)
+        } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
+            AgentEventListener { }
+        }
+
+        override suspend fun storedEventsFor(sessionId: String): List<AgentEvent>? = withContext(Dispatchers.IO) {
+            try {
+                store.readEvents(sessionId)
+            } catch (_: NoSuchFileException) {
+                null
+            }
+        }
+
+        private fun attachChild(parentId: String, childId: String): TreeMemberListener {
+            val childEntry = entries[childId] ?: SessionEntry().also { fresh ->
+                store.writeMetadata(childId, SessionMetadata.Child(parentId))
+                entries[childId] = fresh
+            }
+            val childLog = logs.computeIfAbsent(childId) { store.eventLogFor(childId) }
+            return TreeMemberListener(logs, childEntry, childLog, childId)
+        }
     }
 }
 
-/** Tears down [entry]'s runtime if live; the caller holds the entry's mutex. */
-private suspend fun teardown(entry: SessionEntry) {
-    val runtime = entry.runtime ?: return
-    entry.runtime = null
+/** The entry of [id]; sessions the registry does not know throw. */
+private fun Map<String, SessionEntry>.known(id: String): SessionEntry =
+    this[id] ?: throw UnknownSessionException(id)
+
+/**
+ * [id]'s path from its tree root — walked through the stored parent links —
+ * plus the root's registry entry, whose mutex serializes the tree's
+ * lifecycle. Metadata vanishing mid-walk reads as a deleted session.
+ */
+private suspend fun treeOf(
+    entries: Map<String, SessionEntry>,
+    store: SessionStore,
+    id: String,
+): Pair<List<String>, SessionEntry> = withContext(Dispatchers.IO) {
+    entries.known(id)
+    val path = try {
+        store.position(id).path
+    } catch (_: NoSuchFileException) {
+        throw UnknownSessionException(id)
+    }
+    path to entries.known(path.first())
+}
+
+/** [id]'s position in its tree, resolved through the stored parent links. */
+private fun SessionStore.position(id: String): TreePosition {
+    val ancestry = mutableListOf(id)
+    var current = readMetadata(id)
+    while (current is SessionMetadata.Child) {
+        check(current.parent !in ancestry) { "Stored session $id has a parent cycle in its metadata." }
+        ancestry += current.parent
+        current = readMetadata(current.parent)
+    }
+    return TreePosition(ancestry.asReversed(), current as SessionMetadata.Root)
+}
+
+/** [id] plus its stored descendants, discovered through the metadata parent links. */
+private fun SessionStore.subtreeIds(id: String): List<String> {
+    val childrenByParent = sessionIds().groupBy { sessionId ->
+        (runCatching { readMetadata(sessionId) }.getOrNull() as? SessionMetadata.Child)?.parent
+    }
+    val subtree = mutableListOf(id)
+    var index = 0
+    while (index < subtree.size) {
+        subtree += childrenByParent[subtree[index]].orEmpty()
+        index++
+    }
+    return subtree
+}
+
+/** Tears down [rootEntry]'s tree runtime if attached; the caller holds the root's mutex. */
+private suspend fun teardown(rootEntry: SessionEntry) {
+    val runtime = rootEntry.runtime ?: return
+    rootEntry.runtime = null
     // Shielded: a caller's cancellation (a client disconnecting
     // mid-request) must not abandon a live environment.
     withContext(NonCancellable + Dispatchers.IO) {
         try {
             runtime.abortRuns()
-            runtime.eventLog.close()
+            runtime.closeLogs()
         } finally {
             runtime.environment.close()
         }
     }
-}
-
-private fun SessionEntry.status(): SessionStatus {
-    val runtime = runtime ?: return SessionStatus.CLOSED
-    return if (runtime.runInFlight) SessionStatus.RUNNING else SessionStatus.IDLE
-}
-
-/** The runtime's listener: the log first — the event is on disk when the signal fires — then the wake-up. */
-private fun SessionEntry.signaling(log: PersistedEventLog): AgentEventListener = AgentEventListener { event ->
-    log.onEvent(event)
-    eventSignal.value = event.sequenceId
 }
 
 /** Cleanup-and-rethrow: a failed construction must not leak [environment]. */
@@ -249,10 +394,11 @@ private inline fun <T> closingOnFailure(environment: ExecutionEnvironment, block
 }
 
 /**
- * One registry slot; [mutex] guards the lifecycle transitions of [runtime].
- * [eventSignal] carries the latest logged sequenceId as the wake-up event
- * tails wait on; it outlives the runtime so subscribers of a dormant
- * session see the events of a later reattachment.
+ * One registry slot. [eventSignal] carries the latest logged sequenceId as
+ * the wake-up event tails wait on; it outlives the runtime so subscribers
+ * of a dormant session see the events of a later reattachment. [runtime]
+ * and [mutex] matter on tree roots only: the runtime belongs to the whole
+ * tree, and every tree lifecycle transition serializes on its root's mutex.
  */
 private class SessionEntry {
 
@@ -261,41 +407,84 @@ private class SessionEntry {
     val eventSignal = MutableStateFlow(BEFORE_FIRST_EVENT)
 
     @Volatile
-    var runtime: SessionRuntime? = null
+    var runtime: TreeRuntime? = null
 }
 
-/** The ephemeral runtime attachment of a live session. */
-internal class SessionRuntime(
-    private val agent: Agent,
+/**
+ * The ephemeral runtime attachment of a live subagent tree: the root
+ * agent, the one environment every member executes in, and the open event
+ * log of every member that has been live under this attachment.
+ */
+private class TreeRuntime(
+    private val rootAgent: Agent,
     val environment: ExecutionEnvironment,
-    val eventLog: PersistedEventLog,
+    private val logs: ConcurrentHashMap<String, PersistedEventLog>,
 ) {
 
     private val job = SupervisorJob()
 
     private val scope = CoroutineScope(job + Dispatchers.Default)
 
-    private val runActive = AtomicBoolean(false)
+    /** Session IDs with a server-started run in flight. */
+    private val activeRuns = ConcurrentHashMap.newKeySet<String>()
 
-    val runInFlight: Boolean
-        get() = runActive.get()
+    /** The live-or-revived agent at [path] (root ID first); null when a link is unknown to its parent. */
+    suspend fun agentAt(path: List<String>): Agent? =
+        path.drop(1).fold(rootAgent as Agent?) { agent, childId -> agent?.subagentBySessionId(childId) }
 
     /**
-     * The one way to drive the agent: starts a run over [prompt] as a child
-     * of the runtime — so [abortRuns] reaches it — and returns as soon as
-     * it is started. The run's outcome is never returned; its
-     * [AgentEvent.RunFinished] log entry is the record.
+     * Whether [path]'s member has a run in flight: a server-started one, or
+     * one on the live agent. Walks live links only — a member without a
+     * live agent cannot be running, and a status read must not revive one.
      */
-    fun startRun(prompt: String) {
-        eventLog.failure?.let { throw EventLogFailedException(it) }
-        if (!runActive.compareAndSet(false, true)) {
-            throw SessionConflictException("A run is already active on this session.")
-        }
-        scope.launch { agent.send(prompt) }.invokeOnCompletion { runActive.set(false) }
+    suspend fun isRunning(path: List<String>): Boolean =
+        path.last() in activeRuns || liveAgentAt(path)?.isRunning == true
+
+    private suspend fun liveAgentAt(path: List<String>): Agent? =
+        path.drop(1).fold(rootAgent as Agent?) { agent, childId -> agent?.liveSubagentBySessionId(childId) }
+
+    /**
+     * The one way to drive a member of the tree: starts a run over [prompt]
+     * as a child of the tree's scope — so [abortRuns] reaches it — and
+     * returns as soon as it is started. The run's outcome is never
+     * returned; its [AgentEvent.RunFinished] log entry is the record.
+     */
+    fun startRun(agent: Agent, prompt: String) {
+        logs[agent.sessionId]?.failure?.let { throw EventLogFailedException(it) }
+        claimRun(agent)
+        scope.launch { agent.send(prompt) }.invokeOnCompletion { activeRuns.remove(agent.sessionId) }
     }
 
-    /** Cancels an in-flight run and waits for its abort to complete; the runtime takes no further runs. */
+    /** Cancels every in-flight run in the tree and waits for the aborts; the runtime takes no further runs. */
     suspend fun abortRuns() {
         job.cancelAndJoin()
     }
+
+    /** Closes every member's open log; the first failure propagates once all are closed. */
+    fun closeLogs() {
+        logs.values.map { runCatching { it.close() } }
+            .firstNotNullOfOrNull { it.exceptionOrNull() }
+            ?.let { throw it }
+    }
+
+    /**
+     * Claims [agent]'s run slot, conflicting on an already-active run. The
+     * unclaimed parent-driven case is a pre-check: should such a run start
+     * concurrently, the agent's own busy guard fails the claimed run
+     * without wedging the slot.
+     */
+    private fun claimRun(agent: Agent) {
+        if (!activeRuns.add(agent.sessionId)) {
+            throw SessionConflictException(RUN_ACTIVE_MESSAGE)
+        }
+        if (agent.isRunning) {
+            activeRuns.remove(agent.sessionId)
+            throw SessionConflictException(RUN_ACTIVE_MESSAGE)
+        }
+    }
 }
+
+/** [id]'s place in its subagent tree: the IDs from the root down to it, and the root's stored facts. */
+private class TreePosition(val path: List<String>, val root: SessionMetadata.Root)
+
+private const val RUN_ACTIVE_MESSAGE = "A run is already active on this session."

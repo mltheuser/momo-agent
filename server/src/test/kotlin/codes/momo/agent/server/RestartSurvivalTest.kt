@@ -9,7 +9,9 @@ import codes.momo.agent.assistantResponse
 import codes.momo.agent.baseUrl
 import codes.momo.agent.scriptedServer
 import io.ktor.client.call.body
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -17,7 +19,10 @@ import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.io.path.createDirectories
+import kotlin.io.path.isDirectory
+import kotlin.io.path.writeText
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 
 class RestartSurvivalTest {
@@ -30,7 +35,7 @@ class RestartSurvivalTest {
     fun midConversationSessionSurvivesARestart() {
         val dataDir = tempDir.resolve("data")
         val harness = writeHarness(tempDir.resolve("harness")).toString()
-        val workspace = EnvironmentSpec.Local(tempDir.resolve("workspace").createDirectories().toString())
+        val workspace = localWorkspace(tempDir)
 
         // First server process: one run ending with a question as the final message.
         val id = scriptedServer(assistantResponse(finishReason = "stop", text = "Which color?"))
@@ -84,5 +89,23 @@ class RestartSurvivalTest {
                     }
                 }
             }
+    }
+
+    @Test
+    @DisplayName("A stored session whose metadata no longer parses is unreadable but still deletable")
+    fun unreadableMetadataSessionCanBeDeleted() {
+        val folder = tempDir.resolve("data/sessions/broken-session").createDirectories()
+        folder.resolve("session.json").writeText("""{"harnessPath":"/h","model":"m"}""")
+        folder.resolve("events.jsonl").writeText(
+            """{"type":"session_started","sequenceId":0,"timestampMillis":0,""" +
+                """"sessionId":"broken-session","title":"b"}""" + "\n",
+        )
+
+        withSessionServer(tempDir) { http ->
+            assertEquals(HttpStatusCode.InternalServerError, http.get("/v1/sessions/broken-session").status)
+            assertEquals(HttpStatusCode.NoContent, http.delete("/v1/sessions/broken-session").status)
+            assertEquals(HttpStatusCode.NotFound, http.get("/v1/sessions/broken-session").status)
+            assertFalse(folder.isDirectory())
+        }
     }
 }

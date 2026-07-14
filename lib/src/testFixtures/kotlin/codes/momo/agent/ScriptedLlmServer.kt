@@ -110,6 +110,22 @@ public fun bashCall(id: String, command: String): ToolCall = ToolCall(
     function = ToolCallFunction(name = "bash", arguments = buildJsonObject { put("command", command) }),
 )
 
+public fun spawnSubagentCall(id: String, name: String): ToolCall = ToolCall(
+    id = id,
+    function = ToolCallFunction(name = "spawn_subagent", arguments = buildJsonObject { put("name", name) }),
+)
+
+public fun promptSubagentCall(id: String, name: String, message: String): ToolCall = ToolCall(
+    id = id,
+    function = ToolCallFunction(
+        name = "prompt_subagent",
+        arguments = buildJsonObject {
+            put("name", name)
+            put("message", message)
+        },
+    ),
+)
+
 /** The usage every scripted response reports. */
 public val RESPONSE_USAGE: ChatUsage = ChatUsage(
     promptTokens = 1,

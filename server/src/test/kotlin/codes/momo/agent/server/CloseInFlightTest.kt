@@ -8,7 +8,6 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
-import kotlin.io.path.createDirectories
 import kotlin.test.assertEquals
 
 class CloseInFlightTest {
@@ -21,7 +20,7 @@ class CloseInFlightTest {
     fun closeAbortsAnInFlightRun() {
         val dataDir = tempDir.resolve("data")
         val harness = writeHarness(tempDir.resolve("harness")).toString()
-        val workspace = EnvironmentSpec.Local(tempDir.resolve("workspace").createDirectories().toString())
+        val workspace = localWorkspace(tempDir)
 
         // A server that never answers: the run stays in flight until aborted.
         scriptedServer().use { llm ->

@@ -8,7 +8,9 @@ Shared build conventions live in the root build script.
 ## Build & verify
 
 - `./gradlew build` — compile + detekt + unit tests of both modules (needs
-  the ai-router checkout on disk — see README).
+  the ai-router checkout on disk — see README). The server's SSE tests run
+  real-time 30 s timeouts and can flake when the machine is loaded —
+  re-run under normal load before suspecting a change.
 - `./lint.sh` / `./fmt.sh` — detekt check / auto-fix formatting.
 - `./gradlew liveTest` — live tests against a running local ai-router
   server; the e2e container variant also needs Docker (not in
@@ -27,10 +29,10 @@ Shared build conventions live in the root build script.
 - Comments and KDoc are minimal and purposeful: say only what naming and
   structure cannot, state each contract fact in exactly one place, and keep
   KDoc self-contained (no planning-doc or issue references).
-- Stored session event logs are a persisted format: the `@SerialName`s on
-  `AgentEvent` and `RunResult.Status` are a compatibility contract —
-  never change them (details in their KDoc); the server's stored session
-  logs (see README, Sessions) are in this format.
+- Stored session state is a persisted format: the `@SerialName`s on
+  `AgentEvent` and `RunResult.Status` and the `SessionMetadata` variant
+  names in `session.json` are a compatibility contract — never change
+  them (details in the event KDoc; storage layout in README, Sessions).
 - Test compilations are `associateWith`-bound for `internal` access (see
   the module build scripts): the lib's suites and `testFixtures` to its
   main, the server's `containerTest` to its main and test.

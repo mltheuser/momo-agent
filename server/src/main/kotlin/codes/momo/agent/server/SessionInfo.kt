@@ -5,10 +5,16 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlin.time.Duration
 
-/** One session as the inspection endpoints report it — derived, never stored. */
+/**
+ * One session as the inspection endpoints report it — derived, never
+ * stored. A subagent session's [model], [harnessPath], and [environment]
+ * are its root's.
+ */
 @Serializable
 internal data class SessionInfo(
     val id: String,
+    /** Session ID of the immediate parent; null for a root session. */
+    val parent: String?,
     val title: String,
     val model: String,
     val harnessPath: String,

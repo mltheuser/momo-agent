@@ -51,7 +51,7 @@ public class Agent internal constructor(
         eventListener: AgentEventListener = NoOpAgentEventListener,
     ) : this(harness, client, environment, eventListener, RunBudgets(), SessionState.Fresh(title))
 
-    internal val subagents: Subagents = Subagents(this)
+    internal val subagents: Subagents = Subagents(this, session.spawned)
 
     private val depth: Int = session.depth
 
@@ -75,6 +75,10 @@ public class Agent internal constructor(
 
     private val running = AtomicBoolean(false)
 
+    /** Whether a [send] run is in flight right now. */
+    public val isRunning: Boolean
+        get() = running.get()
+
     private val emitter = AgentEventEmitter(eventListener, session.nextSequenceId)
 
     /** Stable identity of this session, recoverable from its event log. */
@@ -96,7 +100,7 @@ public class Agent internal constructor(
 
     init {
         if (session is SessionState.Fresh) {
-            emitter.emit { id, at -> AgentEvent.SessionStarted(id, at, sessionId, title) }
+            emitter.emit { id, at -> AgentEvent.SessionStarted(id, at, sessionId, title, depth) }
         }
     }
 
@@ -272,22 +276,39 @@ public class Agent internal constructor(
      */
     internal fun spawnChild(name: String): Agent {
         val session = SessionState.Fresh(title = name, depth = depth + 1)
+        // The listener is asked first, so an embedder tracking children has
+        // registered the session by the time the spawn event is observable.
+        val listener = eventListener.subagentListener(name, session.id)
         emitter.emit { id, at -> AgentEvent.SubagentSpawned(id, at, name, session.id) }
         return Agent(
             harness = harness,
             client = client,
             environment = environment,
-            eventListener = childListener(name, session.id),
+            eventListener = listener,
             budgets = budgets,
             session = session,
         )
     }
 
-    /** The embedder-supplied child listener, degraded to no-op — never a failed spawn — when it throws. */
-    private fun childListener(name: String, sessionId: String): AgentEventListener = try {
-        eventListener.listenerForSubagent(name, sessionId)
-    } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
-        NoOpAgentEventListener
+    /**
+     * Reconstructs the dormant child registered as [name] from the stored
+     * log this session's listener serves for [sessionId], wired like a
+     * fresh spawn; null when the listener does not know the session.
+     */
+    internal suspend fun reviveChild(name: String, sessionId: String): Agent? {
+        val events = eventListener.storedEventsFor(sessionId) ?: return null
+        val session = restoredSession(events, harness)
+        check(session.depth == depth + 1) {
+            "the stored log for subagent '$name' records depth ${session.depth}, expected ${depth + 1}."
+        }
+        return Agent(
+            harness = harness,
+            client = client,
+            environment = environment,
+            eventListener = eventListener.subagentListener(name, sessionId),
+            budgets = budgets,
+            session = session,
+        )
     }
 
     /**
@@ -332,7 +353,10 @@ public class Agent internal constructor(
          * is derived from the log's verbatim payloads under the system
          * prompt [harness] produces now, tool calls the log left unanswered
          * are answered with synthesized aborted results, and new events
-         * continue the log's sequence IDs. Loading emits nothing.
+         * continue the log's sequence IDs. Loading emits nothing. The
+         * session's subagent-tree position is restored with it: its depth,
+         * and its spawned children as dormant names revived on use through
+         * [eventListener]'s [AgentEventListener.storedEventsFor].
          *
          * @throws IllegalArgumentException when [events] is not a stored
          *   session log (its first event must be
@@ -371,6 +395,30 @@ private const val SUBAGENT_GUIDANCE: String =
     "You are a subagent: the agent that spawned you is blocked waiting on you, and your final " +
         "message is delivered to it as the result of this prompt. Work autonomously to completion " +
         "and end your turn early only when you are genuinely blocked on input from your spawner."
+
+/**
+ * The direct child with session identity [sessionId], revived from its
+ * stored log first when dormant — or null when no such child is
+ * registered. Every child is constructed exactly once, by this library:
+ * navigating the tree always yields the child session's one live
+ * instance.
+ */
+public suspend fun Agent.subagentBySessionId(sessionId: String): Agent? = subagents.childBySessionId(sessionId)
+
+/**
+ * The direct child with session identity [sessionId] while it is live —
+ * never reviving a dormant one, so observation cannot materialize agents
+ * as a side effect.
+ */
+public suspend fun Agent.liveSubagentBySessionId(sessionId: String): Agent? =
+    subagents.liveChildBySessionId(sessionId)
+
+/** The embedder-supplied child listener, degraded to no-op — never a failed child construction — when it throws. */
+private fun AgentEventListener.subagentListener(name: String, sessionId: String): AgentEventListener = try {
+    listenerForSubagent(name, sessionId)
+} catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
+    NoOpAgentEventListener
+}
 
 private fun textMessage(role: String, text: String): ChatMessage =
     ChatMessage(role = role, content = listOf(ContentPart(type = ContentPartType.TEXT, text = text)))
