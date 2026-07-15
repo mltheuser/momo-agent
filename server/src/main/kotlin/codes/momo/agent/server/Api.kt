@@ -40,6 +40,14 @@ internal data class CreateSessionRequest(
 @Serializable
 internal data class PromptRequest(val prompt: String)
 
+/** Body of a rename request: the session's new title. */
+@Serializable
+internal data class RenameRequest(val title: String)
+
+/** Body of a favorite request: the flag's new value. */
+@Serializable
+internal data class FavoriteRequest(val favorite: Boolean)
+
 /** Every failing response's body: a machine-readable [code] plus a human [message]. */
 @Serializable
 internal data class ApiError(val code: String, val message: String)
@@ -106,6 +114,17 @@ private fun Route.sessionRoutes(registry: SessionRegistry) {
                 val id = call.sessionId()
                 registry.startRun(id, request.prompt)
                 call.respond(HttpStatusCode.Accepted, registry.info(id))
+            }
+            post("/rename") {
+                val request = call.receive<RenameRequest>()
+                if (request.title.isBlank()) {
+                    throw BadRequestException("A title must not be blank.")
+                }
+                call.respond(registry.rename(call.sessionId(), request.title))
+            }
+            post("/favorite") {
+                val request = call.receive<FavoriteRequest>()
+                call.respond(registry.setFavorite(call.sessionId(), request.favorite))
             }
             eventStreamRoute(registry)
             post("/close") {

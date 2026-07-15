@@ -62,6 +62,25 @@ class SubagentSessionTest {
         return { it is AgentEvent.RunFinished && ++finished == count }
     }
 
+    /** Runs [block] after a scripted run in which the root spawned the child "helper" and went idle. */
+    private fun withSpawnedChild(block: suspend (http: HttpClient, rootId: String, childId: String) -> Unit) {
+        withScriptedSessionServer(
+            tempDir,
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "get ready"),
+            ).asReply(),
+            assistantResponse(finishReason = "stop", text = "ready").asReply(),
+            assistantResponse(finishReason = "stop", text = "spawned").asReply(),
+        ) { http ->
+            val rootId = http.createSession(subagentHarness(), localWorkspace(tempDir)).id
+            http.prompt(rootId, "go")
+            val childId = spawnedChildId(http, rootId)
+            http.awaitRunEnd(rootId)
+            block(http, rootId, childId)
+        }
+    }
+
     // ─── Children are sessions ────────────────────────────────────────
 
     @Test
@@ -329,6 +348,45 @@ class SubagentSessionTest {
             assertEquals(HttpStatusCode.NotFound, response.status)
             // The failed prompt tore down the runtime it attached.
             assertEquals(SessionStatus.CLOSED, http.get("/v1/sessions/$rootId").body<SessionInfo>().status)
+        }
+    }
+
+    // ─── Rename & favorite through a child ────────────────────────────
+
+    @Test
+    @DisplayName("Favoriting through a child's ID marks the tree-wide flag on the root, appending no events")
+    fun favoriteThroughAChildMarksTheRoot() {
+        withSpawnedChild { http, rootId, childId ->
+            val store = SessionStore(tempDir.resolve("data"))
+            val logSizes = listOf(rootId, childId).associateWith { store.readEvents(it).size }
+
+            val child = http.setFavorite(childId, true)
+
+            assertTrue(child.favorite)
+            assertEquals(SessionStatus.IDLE, child.status, "a favorite toggle must not change the child's status")
+            assertTrue(http.get("/v1/sessions/$rootId").body<SessionInfo>().favorite)
+            logSizes.forEach { (id, size) ->
+                assertEquals(size, store.readEvents(id).size, "favorite is metadata, never an event")
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Renaming through a dormant child's ID retitles just the child, leaving the root's title alone")
+    fun renameThroughADormantChild() {
+        withSpawnedChild { http, rootId, childId ->
+            http.post("/v1/sessions/$rootId/close")
+
+            val renamed = http.renameSession(childId, "diligent helper")
+
+            assertEquals("diligent helper", renamed.title)
+            assertEquals(SessionStatus.CLOSED, renamed.status, "a rename must not resume the tree")
+            assertEquals("diligent helper", http.get("/v1/sessions/$childId").body<SessionInfo>().title)
+            assertEquals("harness", http.get("/v1/sessions/$rootId").body<SessionInfo>().title)
+            assertIs<AgentEvent.SessionRenamed>(
+                SessionStore(tempDir.resolve("data")).readEvents(childId).last(),
+                "a dormant child's rename appends to the child's own log",
+            )
         }
     }
 

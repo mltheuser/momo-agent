@@ -50,6 +50,7 @@ internal class EventLogFailedException(cause: IOException) :
  * blocking work (harness and store IO, environment construction — possibly
  * a slow image pull) runs on the IO dispatcher.
  */
+@Suppress("TooManyFunctions") // One cohesive surface over the shared entry map and the root-mutex discipline.
 internal class SessionRegistry(
     dataDir: Path,
     private val client: AiRouterClient,
@@ -140,9 +141,71 @@ internal class SessionRegistry(
                 runtime.isRunning(position.path) -> SessionStatus.RUNNING
                 else -> SessionStatus.IDLE
             },
+            favorite = position.root.favorite,
             createdAtMillis = events.sessionCreatedAtMillis(),
+            updatedAtMillis = events.sessionUpdatedAtMillis(),
             lastRun = events.lastRunStats(),
         )
+    }
+
+    /**
+     * Sets [id]'s title to [title], returning the updated info. A member of
+     * an attached tree renames through its agent; a dormant session gets
+     * the [AgentEvent.SessionRenamed] appended straight to its stored log —
+     * a rename never attaches a runtime. The root's mutex serializes both
+     * paths, so a direct append cannot race a prompt rebuilding the tree.
+     */
+    suspend fun rename(id: String, title: String): SessionInfo {
+        val (path, root) = treeOf(entries, store, id)
+        root.mutex.withLock {
+            val runtime = root.runtime
+            if (runtime == null) {
+                appendRenamed(id, title)
+            } else {
+                val agent = runtime.agentAt(path) ?: throw UnknownSessionException(id)
+                withContext(Dispatchers.IO) { agent.title = title }
+            }
+        }
+        return info(id)
+    }
+
+    /**
+     * Sets [id]'s [SessionInfo.favorite] and returns the updated info.
+     * Never attaches a runtime, so a `closed` session stays closed.
+     */
+    suspend fun setFavorite(id: String, favorite: Boolean): SessionInfo {
+        val (path, root) = treeOf(entries, store, id)
+        root.mutex.withLock {
+            withContext(Dispatchers.IO) {
+                val rootId = path.first()
+                val metadata = try {
+                    store.position(rootId).root
+                } catch (_: NoSuchFileException) {
+                    throw UnknownSessionException(id) // Deleted while waiting on the mutex.
+                }
+                store.writeMetadata(rootId, metadata.copy(favorite = favorite))
+            }
+        }
+        return info(id)
+    }
+
+    /** Appends an [AgentEvent.SessionRenamed] to dormant [id]'s stored log; the caller holds the root's mutex. */
+    private suspend fun appendRenamed(id: String, title: String) = withContext(Dispatchers.IO) {
+        val nextSequenceId = try {
+            // The next sequence ID exactly as the lib's restore path —
+            // restoredSession in SessionState.kt — derives it; the two
+            // must always agree.
+            store.readEvents(id).last().sequenceId + 1
+        } catch (_: NoSuchFileException) {
+            throw UnknownSessionException(id) // Deleted while waiting on the mutex.
+        }
+        val event = AgentEvent.SessionRenamed(nextSequenceId, System.currentTimeMillis(), title)
+        try {
+            store.eventLogFor(id).use { it.onEvent(event) }
+        } catch (failure: IOException) {
+            throw EventLogFailedException(failure)
+        }
+        entries.known(id).eventSignal.value = event.sequenceId
     }
 
     /**

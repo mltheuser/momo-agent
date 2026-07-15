@@ -149,7 +149,8 @@ out of scope for v1.
 A session is one agent conversation over a harness and an execution
 environment. Its source of truth is on disk under the data directory —
 `sessions/<session-id>/session.json` (for a root: harness path, model,
-environment spec; for a subagent: its parent's session ID) plus
+environment spec, and the favorite flag; for a subagent: its parent's
+session ID) plus
 `sessions/<session-id>/events.jsonl` (the event log, one
 serialized `AgentEvent` per line, appended live) — so every session
 survives a server restart: on startup the data directory is indexed and
@@ -163,9 +164,11 @@ the host and is removed) and keeps the stored log.
 | Method & path                 | Effect |
 | ----------------------------- | ------ |
 | `POST /v1/sessions`           | Create a session (request body below) → `201` with the session info. |
-| `GET /v1/sessions`            | List the root sessions (ID, parent, title, model, harness path, environment, status, created-at, last run's budget consumption). Subagent sessions are omitted — fetch them by ID. |
+| `GET /v1/sessions`            | List the root sessions (ID, parent, title, model, harness path, environment, status, favorite, created-at, updated-at, last run's budget consumption). Subagent sessions are omitted — fetch them by ID. |
 | `GET /v1/sessions/{id}`       | One session's info. |
 | `POST /v1/sessions/{id}/prompt` | Send the next user message; the run starts in the background → `202` with a snapshot of the session info. |
+| `POST /v1/sessions/{id}/rename` | Set the session's title (request body below) → `200` with the updated session info. |
+| `POST /v1/sessions/{id}/favorite` | Set the session's favorite flag (request body below) → `200` with the updated session info. |
 | `GET /v1/sessions/{id}/events`| The session's event log as an SSE stream: stored history, then live events. |
 | `POST /v1/sessions/{id}/close`| Close the session's whole subagent tree; aborts in-flight work, tears the environment down, keeps the stored logs. Idempotent. |
 | `DELETE /v1/sessions/{id}`    | Close the tree if needed, then remove the session and its descendants with their stored artifacts → `204`. |
@@ -178,9 +181,25 @@ an optional title:
 {"harnessPath": "<dir>", "environment": {"type": "container", "image": "<img>", "workspace": "<dir>"}}
 ```
 
+Rename and favorite each take a one-field body:
+
+```json
+{"title": "..."}
+{"favorite": true}
+```
+
 Session `status` is derived, never stored: `running` (a run is in
 flight), `idle` (live, nothing running), `closed` (no runtime attached;
 resumable).
+
+Session info also carries `updatedAtMillis` — the last logged event's
+timestamp, for ordering by recency — and `favorite`, stored as root
+metadata (see Sessions): toggling it logs nothing (so `updatedAtMillis`
+stays put) and never attaches a runtime, and through a child's ID it sets
+the root's flag — the one every tree member reports. A rename, by
+contrast, is conversation history: its `session_renamed` event lands in
+the log — appended directly for a `closed` session, which stays closed. A
+blank title is a `400 invalid_request`.
 
 Errors are structured JSON — `{"code": "...", "message": "..."}` — with
 `400` for invalid harness/environment/request, `404` for an unknown

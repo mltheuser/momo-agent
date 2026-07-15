@@ -22,6 +22,7 @@ import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import kotlin.io.path.createDirectories
 import kotlin.io.path.isDirectory
@@ -33,9 +34,10 @@ import kotlin.io.path.writeText
 
 /**
  * What the event log deliberately omits about a session: everything needed
- * to rebuild its runtime. Stored once per fact — a root owns the tree-wide
- * facts, a child only its place in the tree; a child's harness, model, and
- * environment resolve through its root.
+ * to rebuild its runtime, plus [Root.favorite] — the one stored fact that
+ * is user metadata rather than a rebuild input. Stored once per fact — a
+ * root owns the tree-wide facts, a child only its place in the tree; a
+ * child's harness, model, and environment resolve through its root.
  */
 @Serializable
 internal sealed interface SessionMetadata {
@@ -47,6 +49,7 @@ internal sealed interface SessionMetadata {
         /** The harness's model string when the session was created. */
         val model: String,
         val environment: EnvironmentSpec,
+        val favorite: Boolean = false,
     ) : SessionMetadata
 
     @Serializable
@@ -83,8 +86,12 @@ internal class SessionStore(dataDir: Path) {
         }
 
     fun writeMetadata(id: String, metadata: SessionMetadata) {
-        directory(id).createDirectories()
-        directory(id).resolve(METADATA_FILE).writeText(Json.encodeToString(metadata))
+        // Written via atomic replace: concurrent readers hold no lock, so
+        // they must only ever see a complete file — old or new.
+        val directory = directory(id).createDirectories()
+        val staging = Files.createTempFile(directory, METADATA_FILE, ".tmp")
+        staging.writeText(Json.encodeToString(metadata))
+        Files.move(staging, directory.resolve(METADATA_FILE), StandardCopyOption.ATOMIC_MOVE)
     }
 
     fun readMetadata(id: String): SessionMetadata = try {

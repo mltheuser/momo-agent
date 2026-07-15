@@ -147,6 +147,32 @@ internal suspend fun HttpClient.promptResponse(sessionId: String, prompt: String
         setBody(PromptRequest(prompt))
     }
 
+/** POSTs a rename, asserting 200, and returns the updated session info. */
+internal suspend fun HttpClient.renameSession(sessionId: String, title: String): SessionInfo {
+    val response = renameResponse(sessionId, title)
+    assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+    return response.body()
+}
+
+internal suspend fun HttpClient.renameResponse(sessionId: String, title: String): HttpResponse =
+    post("/v1/sessions/$sessionId/rename") {
+        contentType(ContentType.Application.Json)
+        setBody(RenameRequest(title))
+    }
+
+/** POSTs a favorite flag, asserting 200, and returns the updated session info. */
+internal suspend fun HttpClient.setFavorite(sessionId: String, favorite: Boolean): SessionInfo {
+    val response = favoriteResponse(sessionId, favorite)
+    assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+    return response.body()
+}
+
+internal suspend fun HttpClient.favoriteResponse(sessionId: String, favorite: Boolean): HttpResponse =
+    post("/v1/sessions/$sessionId/favorite") {
+        contentType(ContentType.Application.Json)
+        setBody(FavoriteRequest(favorite))
+    }
+
 /** Waits until [id]'s active run ends, however it ends. */
 internal suspend fun SessionRegistry.awaitRunEnd(id: String) {
     withTimeout(STREAM_TIMEOUT_MILLIS) {

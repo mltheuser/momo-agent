@@ -7,8 +7,8 @@ import kotlin.time.Duration
 
 /**
  * One session as the inspection endpoints report it — derived, never
- * stored. A subagent session's [model], [harnessPath], and [environment]
- * are its root's.
+ * stored. A subagent session's [model], [harnessPath], [environment], and
+ * [favorite] are its root's.
  */
 @Serializable
 internal data class SessionInfo(
@@ -20,7 +20,10 @@ internal data class SessionInfo(
     val harnessPath: String,
     val environment: EnvironmentSpec,
     val status: SessionStatus,
+    val favorite: Boolean,
     val createdAtMillis: Long,
+    /** The last logged event's timestamp — recency for client-side ordering. */
+    val updatedAtMillis: Long,
     /** Consumption of the current (or last) run; null before the first run. */
     val lastRun: RunStats?,
 )
@@ -54,6 +57,8 @@ internal data class RunStats(
 
 internal fun List<AgentEvent>.sessionCreatedAtMillis(): Long =
     (first() as AgentEvent.SessionStarted).timestampMillis
+
+internal fun List<AgentEvent>.sessionUpdatedAtMillis(): Long = last().timestampMillis
 
 internal fun List<AgentEvent>.sessionTitle(): String =
     filterIsInstance<AgentEvent.SessionRenamed>().lastOrNull()?.title

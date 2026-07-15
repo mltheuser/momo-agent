@@ -24,6 +24,7 @@ import kotlin.io.path.writeText
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class RestartSurvivalTest {
 
@@ -89,6 +90,38 @@ class RestartSurvivalTest {
                     }
                 }
             }
+    }
+
+    @Test
+    @DisplayName("A session's renamed title and favorite flag survive a restart on a dormant session")
+    fun titleAndFavoriteSurviveARestart() {
+        val dataDir = tempDir.resolve("data")
+        val harness = writeHarness(tempDir.resolve("harness")).toString()
+        val workspace = localWorkspace(tempDir)
+
+        // First server process: rename and favorite, then die without closing.
+        val id = unusedAiRouterClient().use { client ->
+            val registry = SessionRegistry(dataDir, client)
+            runBlocking {
+                val created = registry.create(harness, workspace)
+                registry.rename(created.id, "Kept title")
+                registry.setFavorite(created.id, true)
+                created.id
+            }
+            // The registry is deliberately abandoned unclosed: a process death, not a clean stop.
+        }
+
+        // Second server process over the same data directory.
+        unusedAiRouterClient().use { client ->
+            SessionRegistry(dataDir, client).use { registry ->
+                withServer(registry) { http ->
+                    val info = http.get("/v1/sessions/$id").body<SessionInfo>()
+                    assertEquals("Kept title", info.title)
+                    assertTrue(info.favorite)
+                    assertEquals(SessionStatus.CLOSED, info.status)
+                }
+            }
+        }
     }
 
     @Test
