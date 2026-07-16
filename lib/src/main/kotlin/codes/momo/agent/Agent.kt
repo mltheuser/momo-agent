@@ -113,7 +113,10 @@ public class Agent internal constructor(
      * [RunResult], never thrown.
      *
      * Runs accumulate: each continues the previous conversation with
-     * fresh budget counters. After every outcome — cancellation included —
+     * fresh budget counters. [override] adjusts this run's model settings
+     * (see [RunOverride]).
+     *
+     * After every outcome — cancellation included —
      * the stored conversation stays well-formed for the next call: tool
      * calls the run never finished are answered with synthesized aborted
      * results.
@@ -121,23 +124,25 @@ public class Agent internal constructor(
      * @throws IllegalArgumentException when [text] is blank.
      * @throws IllegalStateException when a send is already running.
      */
-    public suspend fun send(text: String): RunResult {
+    public suspend fun send(text: String, override: RunOverride = RunOverride()): RunResult {
         require(text.isNotBlank()) { "A user message must not be blank." }
         check(running.compareAndSet(false, true)) {
             "send() is already running on this agent — await the active call before sending another."
         }
         try {
-            return executeRun(text)
+            return executeRun(text, override)
         } finally {
             running.set(false)
         }
     }
 
-    private suspend fun executeRun(text: String): RunResult {
-        val run = RunState()
+    private suspend fun executeRun(text: String, override: RunOverride): RunResult {
+        val run = RunState(override)
         currentRun = run
         history += userMessage(text)
-        emitter.emit { id, at -> AgentEvent.RunStarted(id, at, text) }
+        emitter.emit { id, at ->
+            AgentEvent.RunStarted(id, at, text, model = run.model, reasoningEffort = run.override.reasoningEffort)
+        }
         val status = try {
             runLoop(run)
         } catch (cancellation: CancellationException) {
@@ -219,7 +224,12 @@ public class Agent internal constructor(
 
     /** One turn: one successful LLM call — retries cost wall-clock, not turns. */
     private suspend fun takeTurn(run: RunState): ChatResponse {
-        val request = ChatRequest(model = harness.model, messages = history.toList(), tools = toolDefinitions)
+        val request = ChatRequest(
+            model = run.model,
+            messages = history.toList(),
+            reasoningEffort = run.override.reasoningEffort,
+            tools = toolDefinitions,
+        )
         emitter.emit { id, at -> AgentEvent.LlmCallStarted(id, at, turn = run.turnsUsed + 1) }
         val response = retryTransientFailures(
             onRetry = { cause, attempt, backoff ->
@@ -314,20 +324,24 @@ public class Agent internal constructor(
     /**
      * Runs [block] — the wait on a child's run — with its duration excluded
      * from the current run's wall clock: blocked time is the child's to
-     * account for, not this agent's.
+     * account for, not this agent's. [block] receives the active run's
+     * [RunOverride].
      */
-    internal suspend fun <T> awaitingChildRun(block: suspend () -> T): T {
+    internal suspend fun <T> awaitingChildRun(block: suspend (RunOverride) -> T): T {
         val active = checkNotNull(currentRun) { "a child can only be awaited from within a run." }
         val blockedSince = TimeSource.Monotonic.markNow()
         try {
-            return block()
+            return block(active.override)
         } finally {
             active.blocked += blockedSince.elapsedNow()
         }
     }
 
     /** Mutable accounting for one [send] run. */
-    private inner class RunState {
+    private inner class RunState(val override: RunOverride) {
+
+        /** The model this run's LLM calls go to. */
+        val model: String = override.model ?: harness.model
 
         val start = TimeSource.Monotonic.markNow()
 

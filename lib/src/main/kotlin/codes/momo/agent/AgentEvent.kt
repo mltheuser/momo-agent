@@ -2,6 +2,7 @@ package codes.momo.agent
 
 import ai.router.sdk.models.ChatMessage
 import ai.router.sdk.models.ChatUsage
+import ai.router.sdk.models.ReasoningEffort
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -11,8 +12,9 @@ import kotlin.time.Duration
  * One entry in a session's event log — the session's single source of
  * truth. Conversation-bearing events carry their payloads verbatim, so a
  * stored log is enough both to replay a UI and to reconstruct the session
- * (see [Agent.load]). Harness and model details are deliberately absent:
- * they come from the harness a log is loaded into.
+ * (see [Agent.load]). Each run records the model and reasoning effort it
+ * used on its [RunStarted]; harness details beyond that come from the
+ * harness a log is loaded into.
  */
 @Serializable
 public sealed interface AgentEvent {
@@ -51,6 +53,10 @@ public sealed interface AgentEvent {
         override val sequenceId: Long,
         override val timestampMillis: Long,
         val userMessage: String,
+        /** The model the run calls the LLM with; null for logs predating the field. */
+        val model: String? = null,
+        /** The run's [RunOverride.reasoningEffort]; null when unset. */
+        val reasoningEffort: ReasoningEffort? = null,
     ) : AgentEvent
 
     /**

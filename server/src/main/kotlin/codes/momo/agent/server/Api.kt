@@ -1,7 +1,12 @@
 package codes.momo.agent.server
 
+import ai.router.sdk.AiRouterClient
+import ai.router.sdk.models.Capability
+import ai.router.sdk.models.ReasoningEffort
+import codes.momo.agent.RunOverride
 import codes.momo.agent.environment.EnvironmentStartupException
 import codes.momo.agent.harness.HarnessValidationException
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.ContentConvertException
 import io.ktor.serialization.kotlinx.json.json
@@ -15,6 +20,7 @@ import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.header
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
@@ -25,6 +31,8 @@ import io.ktor.server.sse.SSE
 import io.ktor.server.sse.heartbeat
 import io.ktor.server.sse.sse
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 /** Body of a create-session request. */
 @Serializable
@@ -36,9 +44,13 @@ internal data class CreateSessionRequest(
     val title: String? = null,
 )
 
-/** Body of a prompt request: the user message text the next run answers. */
+/** Body of a prompt request: the user message text the next run answers, plus the [RunOverride] fields. */
 @Serializable
-internal data class PromptRequest(val prompt: String)
+internal data class PromptRequest(
+    val prompt: String,
+    val model: String? = null,
+    val reasoningEffort: ReasoningEffort? = null,
+)
 
 /** Body of a rename request: the session's new title. */
 @Serializable
@@ -52,8 +64,8 @@ internal data class FavoriteRequest(val favorite: Boolean)
 @Serializable
 internal data class ApiError(val code: String, val message: String)
 
-/** The agent server's HTTP surface over [registry]. */
-internal fun Application.agentServer(registry: SessionRegistry) {
+/** The agent server's HTTP surface over [registry]; [client] backs the model-catalog proxy. */
+internal fun Application.agentServer(registry: SessionRegistry, client: AiRouterClient) {
     install(ContentNegotiation) {
         json()
     }
@@ -89,6 +101,27 @@ internal fun Application.agentServer(registry: SessionRegistry) {
     }
     routing {
         sessionRoutes(registry)
+        modelRoutes(client)
+    }
+}
+
+/** Mirrors ai-router's own field omission: defaulted and null catalog fields stay off the wire. */
+private val catalogJson = Json {
+    encodeDefaults = false
+    explicitNulls = false
+}
+
+/**
+ * `GET /v1/models`: ai-router's catalog in its own response shape,
+ * filtered to the models an agent run can use — capabilities including
+ * both chat and tools. ai-router's server-side capability filter takes a
+ * single capability, so tools is filtered here.
+ */
+private fun Route.modelRoutes(client: AiRouterClient) {
+    get("/v1/models") {
+        val catalog = client.listModels(capability = Capability.CHAT)
+        val usable = catalog.copy(data = catalog.data.filter { it.hasCapability(Capability.TOOLS) })
+        call.respondText(catalogJson.encodeToString(usable), ContentType.Application.Json)
     }
 }
 
@@ -107,12 +140,9 @@ private fun Route.sessionRoutes(registry: SessionRegistry) {
                 call.respond(registry.info(call.sessionId()))
             }
             post("/prompt") {
-                val request = call.receive<PromptRequest>()
-                if (request.prompt.isBlank()) {
-                    throw BadRequestException("A prompt must not be blank.")
-                }
+                val request = call.receive<PromptRequest>().validated()
                 val id = call.sessionId()
-                registry.startRun(id, request.prompt)
+                registry.startRun(id, request.prompt, RunOverride(request.model, request.reasoningEffort))
                 call.respond(HttpStatusCode.Accepted, registry.info(id))
             }
             post("/rename") {
@@ -163,6 +193,17 @@ private fun Route.eventStreamRoute(registry: SessionRegistry) {
             }
         }
     }
+}
+
+/** @throws BadRequestException when the prompt, or a present model override, is blank. */
+private fun PromptRequest.validated(): PromptRequest {
+    if (prompt.isBlank()) {
+        throw BadRequestException("A prompt must not be blank.")
+    }
+    if (model != null && model.isBlank()) {
+        throw BadRequestException("A model override must not be blank.")
+    }
+    return this
 }
 
 private fun ApplicationCall.sessionId(): String = checkNotNull(parameters["id"]) { "route without {id}" }

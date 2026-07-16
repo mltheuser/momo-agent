@@ -273,7 +273,7 @@ class SubagentSessionTest {
         ).use { llm ->
             AiRouterClient(llm.baseUrl).use { client ->
                 SessionRegistry(dataDir, client).use { registry ->
-                    withServer(registry) { http ->
+                    withServer(registry, client) { http ->
                         // The whole tree restarted closed, histories intact, child fetchable by ID.
                         assertEquals(
                             SessionStatus.CLOSED,

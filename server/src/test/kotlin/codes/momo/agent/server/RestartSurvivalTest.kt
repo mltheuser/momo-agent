@@ -59,7 +59,7 @@ class RestartSurvivalTest {
             .use { llm ->
                 AiRouterClient(llm.baseUrl).use { client ->
                     SessionRegistry(dataDir, client).use { registry ->
-                        withServer(registry) { http ->
+                        withServer(registry, client) { http ->
                             val info = http.get("/v1/sessions/$id").body<SessionInfo>()
                             assertEquals(SessionStatus.CLOSED, info.status)
                             assertEquals(1, info.lastRun?.turnsUsed)
@@ -114,7 +114,7 @@ class RestartSurvivalTest {
         // Second server process over the same data directory.
         unusedAiRouterClient().use { client ->
             SessionRegistry(dataDir, client).use { registry ->
-                withServer(registry) { http ->
+                withServer(registry, client) { http ->
                     val info = http.get("/v1/sessions/$id").body<SessionInfo>()
                     assertEquals("Kept title", info.title)
                     assertTrue(info.favorite)

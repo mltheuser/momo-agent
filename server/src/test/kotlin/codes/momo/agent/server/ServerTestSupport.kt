@@ -3,6 +3,7 @@ package codes.momo.agent.server
 import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ChatRequest
 import ai.router.sdk.models.ChatResponse
+import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.ScriptedReply
 import codes.momo.agent.asReply
@@ -63,7 +64,7 @@ internal fun withSessionServer(tempDir: Path, block: suspend (HttpClient) -> Uni
 /** Runs [block] against a full server over a registry on [tempDir]'s data dir, backed by [client]'s LLM. */
 internal fun withSessionServer(tempDir: Path, client: AiRouterClient, block: suspend (HttpClient) -> Unit) {
     SessionRegistry(tempDir.resolve("data"), client).use { registry ->
-        withServer(registry, block)
+        withServer(registry, client, block)
     }
 }
 
@@ -103,10 +104,10 @@ internal fun withScriptedSessionServer(
     }
 }
 
-/** Runs [block] against the real routing and serialization over [registry]. */
-internal fun withServer(registry: SessionRegistry, block: suspend (HttpClient) -> Unit) {
+/** Runs [block] against the real routing and serialization over [registry], with [client] backing `/v1/models`. */
+internal fun withServer(registry: SessionRegistry, client: AiRouterClient, block: suspend (HttpClient) -> Unit) {
     testApplication {
-        application { agentServer(registry) }
+        application { agentServer(registry, client) }
         val http = createClient {
             install(ContentNegotiation) {
                 json()
@@ -135,16 +136,26 @@ internal suspend fun HttpClient.createSessionResponse(request: CreateSessionRequ
     }
 
 /** POSTs a prompt, asserting 202, and returns the accepted session info. */
-internal suspend fun HttpClient.prompt(sessionId: String, prompt: String): SessionInfo {
-    val response = promptResponse(sessionId, prompt)
+internal suspend fun HttpClient.prompt(
+    sessionId: String,
+    prompt: String,
+    model: String? = null,
+    reasoningEffort: ReasoningEffort? = null,
+): SessionInfo {
+    val response = promptResponse(sessionId, prompt, model, reasoningEffort)
     assertEquals(HttpStatusCode.Accepted, response.status, response.bodyAsText())
     return response.body()
 }
 
-internal suspend fun HttpClient.promptResponse(sessionId: String, prompt: String): HttpResponse =
+internal suspend fun HttpClient.promptResponse(
+    sessionId: String,
+    prompt: String,
+    model: String? = null,
+    reasoningEffort: ReasoningEffort? = null,
+): HttpResponse =
     post("/v1/sessions/$sessionId/prompt") {
         contentType(ContentType.Application.Json)
-        setBody(PromptRequest(prompt))
+        setBody(PromptRequest(prompt, model, reasoningEffort))
     }
 
 /** POSTs a rename, asserting 200, and returns the updated session info. */

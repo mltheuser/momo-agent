@@ -2,6 +2,7 @@ package codes.momo.agent
 
 import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ChatRequest
+import ai.router.sdk.models.ReasoningEffort
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -18,6 +19,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -96,6 +98,67 @@ class SubagentTest {
         assertEquals("vanilla cake baked", toolTexts[2])
         // The child's two runs form one continuous conversation in one clean log.
         assertTwoCleanRuns(assertNotNull(tree.children["helper"]).events, secondUserMessage = "vanilla")
+    }
+
+    // ─── Run overrides ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("A parent run's model override is inherited by the subagent runs it drives")
+    fun drivenChildRunsInheritTheParentRunsOverride() {
+        val requests = CopyOnWriteArrayList<ChatRequest>()
+        scriptedServer(
+            requests,
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "compute the answer"),
+            ).asReply(),
+            assistantResponse(finishReason = "stop", text = "the answer is 42").asReply(),
+            assistantResponse(finishReason = "stop", text = "done").asReply(),
+        ).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                val override = RunOverride(model = "bigger-model", reasoningEffort = ReasoningEffort.HIGH)
+
+                val result = runBlocking { workspace.agent(client).send("go", override) }
+
+                assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+                // Parent turn, driven child turn, parent turn: all under the override.
+                assertEquals(3, requests.size)
+                assertEquals(List(3) { "bigger-model" }, requests.map { it.model })
+                assertEquals(List(3) { ReasoningEffort.HIGH }, requests.map { it.reasoningEffort })
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("A child prompted directly through its own send does not inherit the parent's earlier override")
+    fun directlyPromptedChildUsesOnlyItsOwnCallsOverride() {
+        val requests = CopyOnWriteArrayList<ChatRequest>()
+        scriptedServer(
+            requests,
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "compute the answer"),
+            ).asReply(),
+            assistantResponse(finishReason = "stop", text = "the answer is 42").asReply(),
+            assistantResponse(finishReason = "stop", text = "done").asReply(),
+            assistantResponse(finishReason = "stop", text = "direct answer").asReply(),
+        ).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                val parent = workspace.agent(client)
+                val override = RunOverride(model = "bigger-model", reasoningEffort = ReasoningEffort.HIGH)
+                runBlocking {
+                    assertEquals(RunResult.Status.COMPLETED, parent.send("go", override).status)
+                    val child = assertNotNull(parent.subagents["helper"])
+
+                    val result = child.send("follow up")
+
+                    assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+                    val direct = requests.last()
+                    assertEquals(SUBAGENT_HARNESS.model, direct.model)
+                    assertNull(direct.reasoningEffort)
+                }
+            }
+        }
     }
 
     // ─── Recursion ────────────────────────────────────────────────────

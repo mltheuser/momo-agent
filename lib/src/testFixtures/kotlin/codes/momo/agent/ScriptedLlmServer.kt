@@ -81,6 +81,9 @@ private fun Socket.respond(reply: ScriptedReply) {
                 ),
             )
 
+        is ScriptedReply.Raw ->
+            respondWith(reply.statusCode, reply.body)
+
         is ScriptedReply.Held ->
             respondWith(200, Json.encodeToString(ChatResponse.serializer(), reply.awaitRelease()))
     }

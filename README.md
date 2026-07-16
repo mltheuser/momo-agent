@@ -172,6 +172,7 @@ the host and is removed) and keeps the stored log.
 | `GET /v1/sessions/{id}/events`| The session's event log as an SSE stream: stored history, then live events. |
 | `POST /v1/sessions/{id}/close`| Close the session's whole subagent tree; aborts in-flight work, tears the environment down, keeps the stored logs. Idempotent. |
 | `DELETE /v1/sessions/{id}`    | Close the tree if needed, then remove the session and its descendants with their stored artifacts → `204`. |
+| `GET /v1/models`              | ai-router's model catalog in its own response shape, filtered to the models an agent can run (capabilities include both `chat` and `tools`). |
 
 The create body names a server-local harness folder, an environment, and
 an optional title:
@@ -209,12 +210,21 @@ otherwise.
 ### Prompting
 
 ```json
-{"prompt": "..."}
+{"prompt": "...", "model": "...", "reasoningEffort": "high"}
 ```
 
-The body carries the next user message. Prompting a `closed` session
-rebuilds its tree's runtime first — that is the resume path (see Subagent
-sessions). No endpoint returns the run's outcome: its `run_finished`
+The body carries the next user message, plus optional per-run overrides:
+`model` replaces the harness model for this run, `reasoningEffort` (one of
+`none`, `low`, `medium`, `high`) sets its LLM calls' reasoning effort, and
+omitting either means the harness default. The run's `run_started` event
+records the model and effort it used, while session info's `model` stays
+the harness default. A blank `model` or an unknown `reasoningEffort` value
+is a `400 invalid_request`; an unknown model id is accepted and surfaces
+as a failed run. The overrides also cover subagent runs this run drives;
+a directly prompted child uses only its own prompt's overrides.
+
+Prompting a `closed` session rebuilds its tree's runtime first — that is
+the resume path (see Subagent sessions). No endpoint returns the run's outcome: its `run_finished`
 event (status, final message verbatim, usage, turns used, elapsed) is the
 record, observed via the event stream. The one run without that record is
 one aborted by closing the session — the log ends mid-run and the session's

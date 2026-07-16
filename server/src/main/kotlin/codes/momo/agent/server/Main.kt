@@ -20,6 +20,6 @@ public fun main(args: Array<String>) {
             client.close()
         },
     )
-    embeddedServer(CIO, host = "127.0.0.1", port = config.port) { agentServer(registry) }
+    embeddedServer(CIO, host = "127.0.0.1", port = config.port) { agentServer(registry, client) }
         .start(wait = true)
 }

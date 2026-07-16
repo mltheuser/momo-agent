@@ -3,12 +3,15 @@ package codes.momo.agent
 import ai.router.sdk.models.ChatResponse
 import java.util.concurrent.CountDownLatch
 
-/** One [scriptedServer] turn: a chat completion, or a failing HTTP status with an API error body. */
+/** One [scriptedServer] turn: a chat completion, a failing HTTP status with an API error body, or a raw body. */
 public sealed interface ScriptedReply {
 
     public data class Success(val response: ChatResponse) : ScriptedReply
 
     public data class Failure(val statusCode: Int, val message: String) : ScriptedReply
+
+    /** A verbatim JSON body served with [statusCode], for scripting endpoints beyond chat completions. */
+    public data class Raw(val statusCode: Int, val body: String) : ScriptedReply
 
     /** A completion withheld until [release]: its request stays in flight, keeping the run active. */
     public class Held(private val response: ChatResponse) : ScriptedReply {
