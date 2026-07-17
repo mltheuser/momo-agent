@@ -61,7 +61,7 @@ class HarnessTest {
         // Test working directory is the Gradle project dir.
         val harness = Harness.load(Path.of("examples/coder"))
 
-        assertEquals("qwen3.5:9b:local@ollama", harness.model)
+        assertEquals("gemma4:31b-it-qat:local@ollama", harness.model)
         assertEquals(
             listOf("bash", "read_file", "write_file", "edit_file", "spawn_subagent", "prompt_subagent"),
             harness.tools,

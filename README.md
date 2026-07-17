@@ -19,16 +19,12 @@ local checkout of the ai-router repository is **required** — even for a plain
 elsewhere, edit the path there.
 
 The checkout must be current: momo-agent relies on SDK changes made
-alongside it (kotlinx-serialization-json exported at `api` scope; a public
-`SchemaGenerator.generate(descriptor)` overload). A checkout without them
-fails compilation.
+alongside it, and a stale checkout fails compilation — update both
+together.
 
-If the directory does not exist (or contains no build file), the build fails
-immediately during settings evaluation with:
-
-```
-ai-router SDK checkout not found at: <path> — clone https://github.com/mltheuser/ai-router there or edit the path in settings.gradle.kts.
-```
+If the directory does not exist (or contains no build file), the build
+fails immediately during settings evaluation with an error naming the
+expected path.
 
 ## Building
 
@@ -71,10 +67,10 @@ additionally needs Docker (see the platform section below).
 Configuration (Gradle property takes precedence over the environment
 variable, which takes precedence over the default):
 
-| Setting  | Gradle property     | Environment variable   | Default                     |
-| -------- | ------------------- | ---------------------- | --------------------------- |
-| Base URL | `aiRouterBaseUrl`   | `AI_ROUTER_BASE_URL`   | `http://localhost:8787`     |
-| Model    | `aiRouterChatModel` | `AI_ROUTER_CHAT_MODEL` | `qwen3.5:9b:local@ollama`   |
+| Setting  | Gradle property     | Environment variable   | Default                          |
+| -------- | ------------------- | ---------------------- | -------------------------------- |
+| Base URL | `aiRouterBaseUrl`   | `AI_ROUTER_BASE_URL`   | `http://localhost:8787`          |
+| Model    | `aiRouterChatModel` | `AI_ROUTER_CHAT_MODEL` | `gemma4:31b-it-qat:local@ollama` |
 
 Example with overrides:
 
@@ -172,7 +168,7 @@ the host and is removed) and keeps the stored log.
 | `GET /v1/sessions/{id}/events`| The session's event log as an SSE stream: stored history, then live events. |
 | `POST /v1/sessions/{id}/close`| Close the session's whole subagent tree; aborts in-flight work, tears the environment down, keeps the stored logs. Idempotent. |
 | `DELETE /v1/sessions/{id}`    | Close the tree if needed, then remove the session and its descendants with their stored artifacts → `204`. |
-| `GET /v1/models`              | ai-router's model catalog in its own response shape, filtered to the models an agent can run (capabilities include both `chat` and `tools`). |
+| `GET /v1/models`              | ai-router's model catalog in its own response shape, filtered to the models an agent can run (capabilities include both `chat` and `tools`). Each entry's `model` field is the fully-qualified string to send as a prompt's `model` override. |
 
 The create body names a server-local harness folder, an environment, and
 an optional title:

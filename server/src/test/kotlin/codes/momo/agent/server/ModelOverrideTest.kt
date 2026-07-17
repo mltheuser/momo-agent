@@ -121,18 +121,21 @@ class ModelOverrideTest {
             data = listOf(
                 ModelInfo(
                     id = "qwen3.5:27b",
+                    model = "qwen3.5:27b:local@ollama",
                     provider = "ollama",
                     providerType = ProviderType.LOCAL,
                     capabilities = listOf(Capability.CHAT, Capability.TOOLS, Capability.REASONING),
                 ),
                 ModelInfo(
                     id = "chat-only",
+                    model = "chat-only:local@ollama",
                     provider = "ollama",
                     providerType = ProviderType.LOCAL,
                     capabilities = listOf(Capability.CHAT),
                 ),
                 ModelInfo(
                     id = "cloud-coder",
+                    model = "cloud-coder:cloud@anthropic",
                     provider = "anthropic",
                     providerType = ProviderType.CLOUD,
                     capabilities = listOf(Capability.CHAT, Capability.TOOLS),
@@ -149,6 +152,11 @@ class ModelOverrideTest {
             val served = response.body<ModelList>()
             assertEquals("list", served.`object`)
             assertEquals(listOf("qwen3.5:27b", "cloud-coder"), served.data.map { it.id })
+            // The catalog's fully-qualified request strings survive the proxy.
+            assertEquals(
+                listOf("qwen3.5:27b:local@ollama", "cloud-coder:cloud@anthropic"),
+                served.data.map { it.model },
+            )
             assertEquals(ProviderType.CLOUD, served.data.last().providerType)
         }
     }

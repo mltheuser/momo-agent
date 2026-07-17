@@ -53,7 +53,7 @@ val liveTestBaseUrl: String =
     resolveLiveTestSetting("aiRouterBaseUrl", "AI_ROUTER_BASE_URL", "http://localhost:8787")
 
 val liveTestChatModel: String =
-    resolveLiveTestSetting("aiRouterChatModel", "AI_ROUTER_CHAT_MODEL", "qwen3.5:9b:local@ollama")
+    resolveLiveTestSetting("aiRouterChatModel", "AI_ROUTER_CHAT_MODEL", "gemma4:31b-it-qat:local@ollama")
 
 testing {
     suites {
