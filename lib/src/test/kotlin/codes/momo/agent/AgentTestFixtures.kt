@@ -12,7 +12,6 @@ import java.nio.file.Path
 
 /** The harness the agent-level unit tests run under. */
 internal val TEST_HARNESS = Harness(
-    model = "test-model",
     tools = listOf("bash", "read_file", "write_file", "edit_file"),
     instructions = "Unit-test instructions.",
 )

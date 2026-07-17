@@ -6,6 +6,7 @@ import ai.router.sdk.models.ChatResponse
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.ScriptedReply
+import codes.momo.agent.TEST_RUN_SETTINGS
 import codes.momo.agent.asReply
 import codes.momo.agent.baseUrl
 import codes.momo.agent.scriptedServer
@@ -39,9 +40,9 @@ import kotlin.io.path.writeText
 import kotlin.test.assertEquals
 
 /** Writes a valid harness folder at [folder] and returns it. */
-internal fun writeHarness(folder: Path, model: String = "test-model", tools: List<String> = listOf("bash")): Path {
+internal fun writeHarness(folder: Path, tools: List<String> = listOf("bash")): Path {
     folder.createDirectories()
-    folder.resolve("harness.yaml").writeText("model: $model\ntools:\n" + tools.joinToString("") { "  - $it\n" })
+    folder.resolve("harness.yaml").writeText("tools:\n" + tools.joinToString("") { "  - $it\n" })
     folder.resolve("instructions.md").writeText("Server-test instructions.\n")
     return folder
 }
@@ -139,7 +140,7 @@ internal suspend fun HttpClient.createSessionResponse(request: CreateSessionRequ
 internal suspend fun HttpClient.prompt(
     sessionId: String,
     prompt: String,
-    model: String? = null,
+    model: String = TEST_RUN_SETTINGS.model,
     reasoningEffort: ReasoningEffort? = null,
 ): SessionInfo {
     val response = promptResponse(sessionId, prompt, model, reasoningEffort)
@@ -150,7 +151,7 @@ internal suspend fun HttpClient.prompt(
 internal suspend fun HttpClient.promptResponse(
     sessionId: String,
     prompt: String,
-    model: String? = null,
+    model: String = TEST_RUN_SETTINGS.model,
     reasoningEffort: ReasoningEffort? = null,
 ): HttpResponse =
     post("/v1/sessions/$sessionId/prompt") {

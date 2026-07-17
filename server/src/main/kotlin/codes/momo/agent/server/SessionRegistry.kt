@@ -4,7 +4,7 @@ import ai.router.sdk.AiRouterClient
 import codes.momo.agent.Agent
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.AgentEventListener
-import codes.momo.agent.RunOverride
+import codes.momo.agent.RunSettings
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.liveSubagentBySessionId
@@ -89,7 +89,7 @@ internal class SessionRegistry(
             }
             logs[agent.sessionId] = eventLog
             try {
-                store.writeMetadata(agent.sessionId, SessionMetadata.Root(harnessPath, harness.model, spec))
+                store.writeMetadata(agent.sessionId, SessionMetadata.Root(harnessPath, spec))
             } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
                 // Without metadata the session can never be rebuilt: discard
                 // every artifact instead of leaking the live environment.
@@ -134,7 +134,6 @@ internal class SessionRegistry(
             id = id,
             parent = position.path.dropLast(1).lastOrNull(),
             title = events.sessionTitle(),
-            model = position.root.model,
             harnessPath = position.root.harnessPath,
             environment = position.root.environment,
             status = when {
@@ -259,7 +258,7 @@ internal class SessionRegistry(
     }
 
     /**
-     * Starts a run over [prompt] on [id] under [override], rebuilding its
+     * Starts a run over [prompt] on [id] under [settings], rebuilding its
      * tree's runtime when dormant and reviving just the chain from the
      * root down to [id].
      * Attach, navigation, and start happen under the root entry's mutex, so
@@ -270,14 +269,14 @@ internal class SessionRegistry(
      * @throws SessionConflictException when the session already has a run
      *   in flight — its own, or a parent-driven one.
      */
-    suspend fun startRun(id: String, prompt: String, override: RunOverride = RunOverride()) {
+    suspend fun startRun(id: String, prompt: String, settings: RunSettings) {
         val (path, root) = treeOf(entries, store, id)
         root.mutex.withLock {
             val attached = root.runtime
             val runtime = attached ?: rebuild(root, path.first()).also { root.runtime = it }
             try {
                 val agent = runtime.agentAt(path) ?: throw UnknownSessionException(id)
-                runtime.startRun(agent, prompt, override)
+                runtime.startRun(agent, prompt, settings)
             } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
                 // A failed prompt must not leave behind the runtime it
                 // attached — a member unreachable from its parent's log (a
@@ -514,10 +513,10 @@ private class TreeRuntime(
      * returns as soon as it is started. The run's outcome is never
      * returned; its [AgentEvent.RunFinished] log entry is the record.
      */
-    fun startRun(agent: Agent, prompt: String, override: RunOverride) {
+    fun startRun(agent: Agent, prompt: String, settings: RunSettings) {
         logs[agent.sessionId]?.failure?.let { throw EventLogFailedException(it) }
         claimRun(agent)
-        scope.launch { agent.send(prompt, override) }.invokeOnCompletion { activeRuns.remove(agent.sessionId) }
+        scope.launch { agent.send(prompt, settings) }.invokeOnCompletion { activeRuns.remove(agent.sessionId) }
     }
 
     /** Cancels every in-flight run in the tree and waits for the aborts; the runtime takes no further runs. */

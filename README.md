@@ -144,7 +144,7 @@ out of scope for v1.
 
 A session is one agent conversation over a harness and an execution
 environment. Its source of truth is on disk under the data directory —
-`sessions/<session-id>/session.json` (for a root: harness path, model,
+`sessions/<session-id>/session.json` (for a root: harness path,
 environment spec, and the favorite flag; for a subagent: its parent's
 session ID) plus
 `sessions/<session-id>/events.jsonl` (the event log, one
@@ -160,7 +160,7 @@ the host and is removed) and keeps the stored log.
 | Method & path                 | Effect |
 | ----------------------------- | ------ |
 | `POST /v1/sessions`           | Create a session (request body below) → `201` with the session info. |
-| `GET /v1/sessions`            | List the root sessions (ID, parent, title, model, harness path, environment, status, favorite, created-at, updated-at, last run's budget consumption). Subagent sessions are omitted — fetch them by ID. |
+| `GET /v1/sessions`            | List the root sessions (ID, parent, title, harness path, environment, status, favorite, created-at, updated-at, last run's budget consumption). Subagent sessions are omitted — fetch them by ID. |
 | `GET /v1/sessions/{id}`       | One session's info. |
 | `POST /v1/sessions/{id}/prompt` | Send the next user message; the run starts in the background → `202` with a snapshot of the session info. |
 | `POST /v1/sessions/{id}/rename` | Set the session's title (request body below) → `200` with the updated session info. |
@@ -168,7 +168,7 @@ the host and is removed) and keeps the stored log.
 | `GET /v1/sessions/{id}/events`| The session's event log as an SSE stream: stored history, then live events. |
 | `POST /v1/sessions/{id}/close`| Close the session's whole subagent tree; aborts in-flight work, tears the environment down, keeps the stored logs. Idempotent. |
 | `DELETE /v1/sessions/{id}`    | Close the tree if needed, then remove the session and its descendants with their stored artifacts → `204`. |
-| `GET /v1/models`              | ai-router's model catalog in its own response shape, filtered to the models an agent can run (capabilities include both `chat` and `tools`). Each entry's `model` field is the fully-qualified string to send as a prompt's `model` override. |
+| `GET /v1/models`              | ai-router's model catalog in its own response shape, filtered to the models an agent can run (capabilities include both `chat` and `tools`). Each entry's `model` field is the fully-qualified string to send as a prompt's `model`. |
 
 The create body names a server-local harness folder, an environment, and
 an optional title:
@@ -209,15 +209,15 @@ otherwise.
 {"prompt": "...", "model": "...", "reasoningEffort": "high"}
 ```
 
-The body carries the next user message, plus optional per-run overrides:
-`model` replaces the harness model for this run, `reasoningEffort` (one of
-`none`, `low`, `medium`, `high`) sets its LLM calls' reasoning effort, and
-omitting either means the harness default. The run's `run_started` event
-records the model and effort it used, while session info's `model` stays
-the harness default. A blank `model` or an unknown `reasoningEffort` value
-is a `400 invalid_request`; an unknown model id is accepted and surfaces
-as a failed run. The overrides also cover subagent runs this run drives;
-a directly prompted child uses only its own prompt's overrides.
+The body carries the next user message plus the run's model settings:
+`model` (required) names the model the run's LLM calls go to, and an
+optional `reasoningEffort` (one of `none`, `low`, `medium`, `high`) sets
+those calls' reasoning effort. The run's `run_started` event records the
+model and effort it used. A missing or blank `model` and an unknown
+`reasoningEffort` value are a `400 invalid_request`; an unknown model id
+is accepted and surfaces as a failed run. The settings also cover subagent
+runs this run drives; a directly prompted child uses only its own prompt's
+settings.
 
 Prompting a `closed` session rebuilds its tree's runtime first — that is
 the resume path (see Subagent sessions). No endpoint returns the run's outcome: its `run_finished`
@@ -249,7 +249,7 @@ directory, created the moment its spawn is announced. Clients discover
 children through the parent's `subagent_spawned` event, which carries the
 child's session ID: `GET /{id}`, the event stream, and `POST /{id}/prompt`
 all work on children, while the listing stays roots-only. A child's info
-carries `parent` (`null` on a root); its `model`, `harnessPath`, and
+carries `parent` (`null` on a root); its `harnessPath` and
 `environment` are resolved through its root — children execute in the
 root's environment and own none themselves.
 

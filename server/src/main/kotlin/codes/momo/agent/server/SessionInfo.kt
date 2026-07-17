@@ -7,7 +7,7 @@ import kotlin.time.Duration
 
 /**
  * One session as the inspection endpoints report it — derived, never
- * stored. A subagent session's [model], [harnessPath], [environment], and
+ * stored. A subagent session's [harnessPath], [environment], and
  * [favorite] are its root's.
  */
 @Serializable
@@ -16,7 +16,6 @@ internal data class SessionInfo(
     /** Session ID of the immediate parent; null for a root session. */
     val parent: String?,
     val title: String,
-    val model: String,
     val harnessPath: String,
     val environment: EnvironmentSpec,
     val status: SessionStatus,

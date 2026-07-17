@@ -30,7 +30,7 @@ class AgentEventStreamTest {
     ): RunResult =
         scriptedServer(*replies).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
-                runBlocking { agent(client, listener, budgets).send("go") }
+                runBlocking { agent(client, listener, budgets).send("go", TEST_RUN_SETTINGS) }
             }
         }
 
@@ -131,9 +131,9 @@ class AgentEventStreamTest {
             AiRouterClient(server.baseUrl).use { client ->
                 val agent = agent(client, listener)
                 runBlocking {
-                    val asked = agent.send("go")
+                    val asked = agent.send("go", TEST_RUN_SETTINGS)
                     assertEquals(RunResult.Status.COMPLETED, asked.status, "error: ${asked.error}")
-                    val answered = agent.send("print hello")
+                    val answered = agent.send("print hello", TEST_RUN_SETTINGS)
                     assertEquals(RunResult.Status.COMPLETED, answered.status, "error: ${answered.error}")
                 }
             }

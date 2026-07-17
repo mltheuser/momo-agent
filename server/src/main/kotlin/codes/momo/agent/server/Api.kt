@@ -3,7 +3,7 @@ package codes.momo.agent.server
 import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.Capability
 import ai.router.sdk.models.ReasoningEffort
-import codes.momo.agent.RunOverride
+import codes.momo.agent.RunSettings
 import codes.momo.agent.environment.EnvironmentStartupException
 import codes.momo.agent.harness.HarnessValidationException
 import io.ktor.http.ContentType
@@ -44,11 +44,11 @@ internal data class CreateSessionRequest(
     val title: String? = null,
 )
 
-/** Body of a prompt request: the user message text the next run answers, plus the [RunOverride] fields. */
+/** Body of a prompt request: the user message text the next run answers, plus the run's [RunSettings] fields. */
 @Serializable
 internal data class PromptRequest(
     val prompt: String,
-    val model: String? = null,
+    val model: String,
     val reasoningEffort: ReasoningEffort? = null,
 )
 
@@ -142,7 +142,7 @@ private fun Route.sessionRoutes(registry: SessionRegistry) {
             post("/prompt") {
                 val request = call.receive<PromptRequest>().validated()
                 val id = call.sessionId()
-                registry.startRun(id, request.prompt, RunOverride(request.model, request.reasoningEffort))
+                registry.startRun(id, request.prompt, RunSettings(request.model, request.reasoningEffort))
                 call.respond(HttpStatusCode.Accepted, registry.info(id))
             }
             post("/rename") {
@@ -195,13 +195,15 @@ private fun Route.eventStreamRoute(registry: SessionRegistry) {
     }
 }
 
-/** @throws BadRequestException when the prompt, or a present model override, is blank. */
+/** @throws BadRequestException when the prompt or the model is blank. */
 private fun PromptRequest.validated(): PromptRequest {
     if (prompt.isBlank()) {
         throw BadRequestException("A prompt must not be blank.")
     }
-    if (model != null && model.isBlank()) {
-        throw BadRequestException("A model override must not be blank.")
+    // Pre-empts RunSettings' own blank-model require: the rule must read
+    // as a 400 here, not a 500 from the failed construction.
+    if (model.isBlank()) {
+        throw BadRequestException("A model must not be blank.")
     }
     return this
 }

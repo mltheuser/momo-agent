@@ -89,9 +89,14 @@ private fun Socket.respond(reply: ScriptedReply) {
     }
 }
 
+private const val TEST_MODEL = "test-model"
+
+/** The [RunSettings] scripted-LLM tests run under, matching the model the scripted responses report. */
+public val TEST_RUN_SETTINGS: RunSettings = RunSettings(model = TEST_MODEL)
+
 /** A chat response with no tool calls, as a scripted server serves it. */
 public fun assistantResponse(finishReason: String, text: String = ""): ChatResponse = ChatResponse(
-    model = "test-model",
+    model = TEST_MODEL,
     message = ChatMessage(
         role = "assistant",
         content = listOf(ContentPart(type = ContentPartType.TEXT, text = text)),
@@ -102,7 +107,7 @@ public fun assistantResponse(finishReason: String, text: String = ""): ChatRespo
 
 /** A chat response asking for [calls], as a scripted server serves it. */
 public fun toolCallResponse(vararg calls: ToolCall): ChatResponse = ChatResponse(
-    model = "test-model",
+    model = TEST_MODEL,
     message = ChatMessage(role = "assistant", content = emptyList(), toolCalls = calls.toList()),
     finishReason = "tool_calls",
     usage = RESPONSE_USAGE,

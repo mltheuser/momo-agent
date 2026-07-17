@@ -24,11 +24,9 @@ class HarnessTest {
 
     /** Renders a harness.yaml; all string scalars quoted so blanks survive. */
     private fun manifestYaml(
-        model: String = "qwen3.5:9b:local@ollama",
         tools: List<String> = listOf("bash", "read_file"),
         extraTopLevelLine: String? = null,
     ): String = buildString {
-        appendLine("model: \"$model\"")
         appendLine("tools:")
         tools.forEach { appendLine("  - \"$it\"") }
         extraTopLevelLine?.let { appendLine(it) }
@@ -61,7 +59,6 @@ class HarnessTest {
         // Test working directory is the Gradle project dir.
         val harness = Harness.load(Path.of("examples/coder"))
 
-        assertEquals("gemma4:31b-it-qat:local@ollama", harness.model)
         assertEquals(
             listOf("bash", "read_file", "write_file", "edit_file", "spawn_subagent", "prompt_subagent"),
             harness.tools,
@@ -125,7 +122,7 @@ class HarnessTest {
     @Test
     @DisplayName("Malformed YAML fails with the file path, not a raw parser stack trace")
     fun malformedYamlFails() {
-        val folder = harnessFolder(manifest = "model: [unclosed")
+        val folder = harnessFolder(manifest = "tools: [unclosed")
         assertLoadFails(folder, "harness.yaml", "not a valid harness manifest")
     }
 
@@ -139,7 +136,7 @@ class HarnessTest {
     @Test
     @DisplayName("A manifest missing a required key is rejected, naming the property")
     fun missingRequiredKeyFails() {
-        val folder = harnessFolder(manifest = "model: \"qwen3.5:9b:local@ollama\"\n")
+        val folder = harnessFolder(manifest = "{}\n")
         assertLoadFails(folder, "harness.yaml", "not a valid harness manifest", "'tools'", "missing")
     }
 
@@ -153,31 +150,30 @@ class HarnessTest {
     @Test
     @DisplayName("A scalar tools value (not a list) is rejected")
     fun scalarToolsFails() {
-        val manifest = """
-            model: "qwen3.5:9b:local@ollama"
-            tools: bash
-        """.trimIndent()
-        val folder = harnessFolder(manifest = manifest)
+        val folder = harnessFolder(manifest = "tools: bash\n")
         assertLoadFails(folder, "harness.yaml", "not a valid harness manifest", "'tools'", "list")
+    }
+
+    @Test
+    @DisplayName("A manifest still carrying a model key is rejected with the retirement guidance")
+    fun modelKeyFails() {
+        val folder = harnessFolder(manifest = manifestYaml(extraTopLevelLine = "model: \"qwen3.5:9b:local@ollama\""))
+        assertLoadFails(folder, "harness.yaml", "'model' key", "no longer part of harness.yaml", "each prompt")
+    }
+
+    @Test
+    @DisplayName("A manifest carrying a model key with a null value is rejected with the retirement guidance")
+    fun nullModelKeyFails() {
+        val folder = harnessFolder(manifest = manifestYaml(extraTopLevelLine = "model:"))
+        assertLoadFails(folder, "harness.yaml", "'model' key", "no longer part of harness.yaml", "each prompt")
     }
 
     // ─── Field validation ─────────────────────────────────────────────
 
     @Test
-    @DisplayName("A blank model string is rejected")
-    fun blankModelFails() {
-        val folder = harnessFolder(manifest = manifestYaml(model = "   "))
-        assertLoadFails(folder, "harness.yaml", "model", "blank")
-    }
-
-    @Test
     @DisplayName("An empty tool list is rejected")
     fun emptyToolListFails() {
-        val manifest = """
-            model: "qwen3.5:9b:local@ollama"
-            tools: []
-        """.trimIndent()
-        val folder = harnessFolder(manifest = manifest)
+        val folder = harnessFolder(manifest = "tools: []\n")
         assertLoadFails(folder, "harness.yaml", "tools", "at least one")
     }
 
@@ -206,7 +202,6 @@ class HarnessTest {
 
     /** A valid Harness built directly, bypassing the loader. */
     private fun directHarness(): Harness = Harness(
-        model = "qwen3.5:9b:local@ollama",
         tools = listOf("bash", "read_file"),
         instructions = "Understand the task, explore, then edit.",
     )
@@ -215,10 +210,10 @@ class HarnessTest {
     @DisplayName("copy() re-runs validation, so no invalid Harness can be built")
     fun copyRevalidates() {
         val exception = assertFailsWith<HarnessValidationException> {
-            directHarness().copy(model = "   ")
+            directHarness().copy(tools = emptyList())
         }
-        assertContains(exception.message.orEmpty(), "model")
-        assertContains(exception.message.orEmpty(), "blank")
+        assertContains(exception.message.orEmpty(), "tools")
+        assertContains(exception.message.orEmpty(), "at least one")
     }
 
     // ─── Tool registry seam ───────────────────────────────────────────

@@ -4,6 +4,7 @@ import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ChatRequest
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.ScriptedReply
+import codes.momo.agent.TEST_RUN_SETTINGS
 import codes.momo.agent.asReply
 import codes.momo.agent.assertTwoCleanRuns
 import codes.momo.agent.assistantResponse
@@ -130,7 +131,6 @@ class SubagentSessionTest {
             val child = http.get("/v1/sessions/${spawned.sessionId}").body<SessionInfo>()
             assertEquals(root.id, child.parent)
             assertEquals("helper", child.title)
-            assertEquals(root.model, child.model)
             assertEquals(root.harnessPath, child.harnessPath)
             assertEquals(root.environment, child.environment)
             assertEquals(SessionStatus.IDLE, child.status)
@@ -203,7 +203,6 @@ class SubagentSessionTest {
             val grand = http.get("/v1/sessions/$grandId").body<SessionInfo>()
             assertEquals(root.id, child.parent)
             assertEquals(childId, grand.parent)
-            assertEquals(root.model, grand.model)
             assertEquals("deep", grand.title)
             assertEquals(2, assertIs<AgentEvent.SessionStarted>(http.streamEvents(grandId).first().event).depth)
             assertEquals(listOf(root.id), http.get("/v1/sessions").body<List<SessionInfo>>().map { it.id })
@@ -254,7 +253,7 @@ class SubagentSessionTest {
                 val registry = SessionRegistry(dataDir, client)
                 runBlocking {
                     rootId = registry.create(harness, environment).id
-                    registry.startRun(rootId, "delegate the cake")
+                    registry.startRun(rootId, "delegate the cake", TEST_RUN_SETTINGS)
                     registry.awaitRunEnd(rootId)
                 }
                 // The registry is deliberately abandoned unclosed: a process death, not a clean stop.
@@ -329,7 +328,7 @@ class SubagentSessionTest {
                 val registry = SessionRegistry(dataDir, client)
                 runBlocking {
                     rootId = registry.create(subagentHarness(), localWorkspace(tempDir)).id
-                    registry.startRun(rootId, "go")
+                    registry.startRun(rootId, "go", TEST_RUN_SETTINGS)
                     registry.awaitRunEnd(rootId)
                 }
             }

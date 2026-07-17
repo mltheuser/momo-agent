@@ -1,5 +1,6 @@
 package codes.momo.agent.harness
 
+import com.charleskorn.kaml.UnknownPropertyException
 import com.charleskorn.kaml.Yaml
 import com.charleskorn.kaml.YamlException
 import kotlinx.serialization.Serializable
@@ -15,7 +16,6 @@ import kotlin.io.path.readText
  */
 @Serializable
 internal data class HarnessManifest(
-    val model: String,
     val tools: List<String>,
 )
 
@@ -45,7 +45,6 @@ internal object HarnessLoader {
         val instructions = readFileText(instructionsFile)
         return try {
             Harness(
-                model = manifest.model,
                 tools = manifest.tools,
                 instructions = instructions,
             )
@@ -57,13 +56,27 @@ internal object HarnessLoader {
 
     private fun parseManifest(manifestFile: Path): HarnessManifest = try {
         Yaml.default.decodeFromString(HarnessManifest.serializer(), readFileText(manifestFile))
+    } catch (exception: UnknownPropertyException) {
+        // Matched on the key itself, so every value form — including null —
+        // draws the retirement message.
+        if (exception.propertyName == "model") {
+            fail(
+                "$manifestFile: the 'model' key is no longer part of harness.yaml — a harness is " +
+                    "instructions plus tools, and a run's model comes with each prompt.",
+                exception,
+            )
+        } else {
+            failInvalidManifest(manifestFile, exception)
+        }
     } catch (exception: YamlException) {
-        fail(
-            "$manifestFile is not a valid harness manifest " +
-                "(line ${exception.line}, column ${exception.column}): ${exception.message}",
-            exception,
-        )
+        failInvalidManifest(manifestFile, exception)
     }
+
+    private fun failInvalidManifest(manifestFile: Path, exception: YamlException): Nothing = fail(
+        "$manifestFile is not a valid harness manifest " +
+            "(line ${exception.line}, column ${exception.column}): ${exception.message}",
+        exception,
+    )
 
     private fun readFileText(file: Path): String = try {
         file.readText()

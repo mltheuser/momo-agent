@@ -53,7 +53,7 @@ class AgentLoadTest {
                     budgets,
                     SessionState.Fresh("Recorded session"),
                 )
-                runBlocking { prompts.forEach { agent.send(it) } }
+                runBlocking { prompts.forEach { agent.send(it, TEST_RUN_SETTINGS) } }
                 after(agent)
             }
         }
@@ -76,7 +76,7 @@ class AgentLoadTest {
                 assertEquals("Recorded session", agent.title)
                 assertTrue(listener.events.isEmpty(), "loading must emit nothing")
 
-                val result = runBlocking { agent.send("second question") }
+                val result = runBlocking { agent.send("second question", TEST_RUN_SETTINGS) }
 
                 assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                 assertEquals("second answer", result.finalMessage)
@@ -144,7 +144,7 @@ class AgentLoadTest {
             AiRouterClient(server.baseUrl).use { client ->
                 val agent = Agent.load(cut, TEST_HARNESS, client, environment())
 
-                val result = runBlocking { agent.send("continue") }
+                val result = runBlocking { agent.send("continue", TEST_RUN_SETTINGS) }
 
                 assertEquals(
                     listOf("system", "user", "assistant", "tool", "user", "assistant"),
@@ -173,7 +173,7 @@ class AgentLoadTest {
             AiRouterClient(server.baseUrl).use { client ->
                 val agent = Agent.load(logged, TEST_HARNESS, client, environment())
 
-                val result = runBlocking { agent.send("third question") }
+                val result = runBlocking { agent.send("third question", TEST_RUN_SETTINGS) }
 
                 assertEquals(
                     listOf("system", "user", "assistant", "tool", "user", "assistant", "user", "assistant"),
@@ -201,7 +201,7 @@ class AgentLoadTest {
             AiRouterClient(server.baseUrl).use { client ->
                 val agent = Agent.load(logged, TEST_HARNESS, client, environment())
 
-                val result = runBlocking { agent.send("third question") }
+                val result = runBlocking { agent.send("third question", TEST_RUN_SETTINGS) }
 
                 assertEquals(
                     listOf("system", "user", "assistant", "tool", "user", "assistant", "tool", "user", "assistant"),

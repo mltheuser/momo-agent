@@ -97,7 +97,7 @@ internal class Subagents(private val parent: Agent, spawned: Map<String, String>
      * parent can react to.
      */
     private suspend fun promptChild(child: Agent, name: String, message: String): ToolResult = try {
-        parent.awaitingChildRun { override -> child.send(message, override) }.asToolResult(name)
+        parent.awaitingChildRun { settings -> child.send(message, settings) }.asToolResult(name)
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (_: IllegalStateException) {

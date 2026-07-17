@@ -3,16 +3,14 @@ package codes.momo.agent.harness
 import java.nio.file.Path
 
 /**
- * Validated, immutable in-memory representation of a harness folder. The
- * constructor enforces the invariants, so every instance — built directly,
- * via [copy], or via [load] — is valid.
+ * Validated, immutable in-memory representation of a harness folder: its
+ * tools and instructions. The constructor enforces the invariants, so
+ * every instance — built directly, via [copy], or via [load] — is valid.
  *
  * [instructions] is exposed raw; prompt composition is owned by the agent
  * loop. Execution budgets are library-fixed — see [codes.momo.agent.Budgets].
  */
 public data class Harness(
-    /** ai-router model string, passed through opaquely. */
-    val model: String,
     /** Tool names in manifest order. */
     val tools: List<String>,
     /** Raw content of `instructions.md`. */
@@ -20,9 +18,6 @@ public data class Harness(
 ) {
 
     init {
-        if (model.isBlank()) {
-            fail("'model' must not be blank.")
-        }
         validateTools()
     }
 

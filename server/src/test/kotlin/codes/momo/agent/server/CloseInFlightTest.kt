@@ -1,6 +1,7 @@
 package codes.momo.agent.server
 
 import ai.router.sdk.AiRouterClient
+import codes.momo.agent.TEST_RUN_SETTINGS
 import codes.momo.agent.baseUrl
 import codes.momo.agent.scriptedServer
 import kotlinx.coroutines.runBlocking
@@ -28,7 +29,7 @@ class CloseInFlightTest {
                 SessionRegistry(dataDir, client).use { registry ->
                     runBlocking {
                         val id = registry.create(harness, workspace).id
-                        registry.startRun(id, "hang forever")
+                        registry.startRun(id, "hang forever", TEST_RUN_SETTINGS)
                         assertEquals(SessionStatus.RUNNING, registry.info(id).status)
 
                         registry.close(id)
@@ -36,7 +37,7 @@ class CloseInFlightTest {
                         assertEquals(SessionStatus.CLOSED, registry.info(id).status)
 
                         // The aborted run's log reloads into a usable session.
-                        registry.startRun(id, "resume")
+                        registry.startRun(id, "resume", TEST_RUN_SETTINGS)
                         assertEquals(SessionStatus.RUNNING, registry.info(id).status)
                     }
                 }

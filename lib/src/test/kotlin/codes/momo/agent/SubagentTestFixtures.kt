@@ -34,7 +34,7 @@ internal fun Path.runScripted(
 ): RunResult =
     scriptedServer(*replies).use { server ->
         AiRouterClient(server.baseUrl).use { client ->
-            runBlocking { agent(client, listener, budgets).send("go") }
+            runBlocking { agent(client, listener, budgets).send("go", TEST_RUN_SETTINGS) }
         }
     }
 

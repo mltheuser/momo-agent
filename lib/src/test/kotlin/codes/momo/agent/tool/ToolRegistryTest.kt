@@ -108,10 +108,10 @@ class ToolRegistryTest {
     fun harnessValidationRunsAgainstRegistryNames() {
         val registry = registryOf(EchoTool())
 
-        Harness(model = "m", tools = listOf("echo"), instructions = "i")
+        Harness(tools = listOf("echo"), instructions = "i")
             .requireToolsKnown(registry.names)
         val exception = assertFailsWith<HarnessValidationException> {
-            Harness(model = "m", tools = listOf("echo", "teleport"), instructions = "i")
+            Harness(tools = listOf("echo", "teleport"), instructions = "i")
                 .requireToolsKnown(registry.names)
         }
 

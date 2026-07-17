@@ -29,7 +29,6 @@ class AgentLiveTest {
     // ─── Fixture helpers ──────────────────────────────────────────────
 
     private fun harness(): Harness = Harness(
-        model = liveChatModel,
         tools = listOf("bash", "read_file", "write_file", "edit_file"),
         instructions = "You are a careful coding agent working in a project workspace. " +
             "Use your tools to inspect files when a question concerns them, and keep final answers short.",
@@ -48,6 +47,7 @@ class AgentLiveTest {
             val result = agent.send(
                 "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
                     "and reply with the token it contains.",
+                liveRunSettings,
             )
 
             assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
@@ -95,6 +95,7 @@ class AgentLiveTest {
             val result = agent.send(
                 "You must inspect the workspace files with your tools before answering. " +
                     "What is the content of data.txt?",
+                liveRunSettings,
             )
 
             // A model answering without any tool call is legal behaviour that
@@ -124,11 +125,13 @@ class AgentLiveTest {
             val first = agent.send(
                 "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
                     "and reply with the token it contains.",
+                liveRunSettings,
             )
             assertEquals(RunResult.Status.COMPLETED, first.status, "error: ${first.error}")
 
             val second = agent.send(
                 "Repeat the exact token you found before. Answer from the conversation, without using any tool.",
+                liveRunSettings,
             )
 
             assertEquals(RunResult.Status.COMPLETED, second.status, "error: ${second.error}")

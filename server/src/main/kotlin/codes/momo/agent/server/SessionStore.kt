@@ -37,7 +37,7 @@ import kotlin.io.path.writeText
  * to rebuild its runtime, plus [Root.favorite] — the one stored fact that
  * is user metadata rather than a rebuild input. Stored once per fact — a
  * root owns the tree-wide facts, a child only its place in the tree; a
- * child's harness, model, and environment resolve through its root.
+ * child's harness and environment resolve through its root.
  */
 @Serializable
 internal sealed interface SessionMetadata {
@@ -46,8 +46,6 @@ internal sealed interface SessionMetadata {
     @SerialName("root")
     data class Root(
         val harnessPath: String,
-        /** The harness's model string when the session was created. */
-        val model: String,
         val environment: EnvironmentSpec,
         val favorite: Boolean = false,
     ) : SessionMetadata

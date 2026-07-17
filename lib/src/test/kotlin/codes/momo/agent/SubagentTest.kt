@@ -47,7 +47,7 @@ class SubagentTest {
             assistantResponse(finishReason = "stop", text = "done").asReply(),
         ).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
-                val result = runBlocking { workspace.agent(client, tree).send("go") }
+                val result = runBlocking { workspace.agent(client, tree).send("go", TEST_RUN_SETTINGS) }
 
                 assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                 assertEquals("done", result.finalMessage)
@@ -100,11 +100,11 @@ class SubagentTest {
         assertTwoCleanRuns(assertNotNull(tree.children["helper"]).events, secondUserMessage = "vanilla")
     }
 
-    // ─── Run overrides ────────────────────────────────────────────────
+    // ─── Run settings ─────────────────────────────────────────────────
 
     @Test
-    @DisplayName("A parent run's model override is inherited by the subagent runs it drives")
-    fun drivenChildRunsInheritTheParentRunsOverride() {
+    @DisplayName("A parent run's settings are inherited by the subagent runs it drives")
+    fun drivenChildRunsInheritTheParentRunsSettings() {
         val requests = CopyOnWriteArrayList<ChatRequest>()
         scriptedServer(
             requests,
@@ -116,12 +116,12 @@ class SubagentTest {
             assistantResponse(finishReason = "stop", text = "done").asReply(),
         ).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
-                val override = RunOverride(model = "bigger-model", reasoningEffort = ReasoningEffort.HIGH)
+                val settings = RunSettings(model = "bigger-model", reasoningEffort = ReasoningEffort.HIGH)
 
-                val result = runBlocking { workspace.agent(client).send("go", override) }
+                val result = runBlocking { workspace.agent(client).send("go", settings) }
 
                 assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
-                // Parent turn, driven child turn, parent turn: all under the override.
+                // Parent turn, driven child turn, parent turn: all under the parent run's settings.
                 assertEquals(3, requests.size)
                 assertEquals(List(3) { "bigger-model" }, requests.map { it.model })
                 assertEquals(List(3) { ReasoningEffort.HIGH }, requests.map { it.reasoningEffort })
@@ -130,8 +130,8 @@ class SubagentTest {
     }
 
     @Test
-    @DisplayName("A child prompted directly through its own send does not inherit the parent's earlier override")
-    fun directlyPromptedChildUsesOnlyItsOwnCallsOverride() {
+    @DisplayName("A child prompted directly through its own send does not inherit the parent's earlier settings")
+    fun directlyPromptedChildUsesOnlyItsOwnCallsSettings() {
         val requests = CopyOnWriteArrayList<ChatRequest>()
         scriptedServer(
             requests,
@@ -145,16 +145,16 @@ class SubagentTest {
         ).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
                 val parent = workspace.agent(client)
-                val override = RunOverride(model = "bigger-model", reasoningEffort = ReasoningEffort.HIGH)
+                val settings = RunSettings(model = "bigger-model", reasoningEffort = ReasoningEffort.HIGH)
                 runBlocking {
-                    assertEquals(RunResult.Status.COMPLETED, parent.send("go", override).status)
+                    assertEquals(RunResult.Status.COMPLETED, parent.send("go", settings).status)
                     val child = assertNotNull(parent.subagents["helper"])
 
-                    val result = child.send("follow up")
+                    val result = child.send("follow up", TEST_RUN_SETTINGS)
 
                     assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                     val direct = requests.last()
-                    assertEquals(SUBAGENT_HARNESS.model, direct.model)
+                    assertEquals(TEST_RUN_SETTINGS.model, direct.model)
                     assertNull(direct.reasoningEffort)
                 }
             }
@@ -206,7 +206,7 @@ class SubagentTest {
         ).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
                 val capped = workspace.agent(client, depth = Budgets.MAX_SUBAGENT_DEPTH)
-                val result = runBlocking { capped.send("go") }
+                val result = runBlocking { capped.send("go", TEST_RUN_SETTINGS) }
 
                 assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                 assertEquals(TEST_HARNESS.tools, requests.first().tools.orEmpty().map { it.name })
@@ -227,7 +227,7 @@ class SubagentTest {
         ).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
                 val nearCap = workspace.agent(client, depth = Budgets.MAX_SUBAGENT_DEPTH - 1)
-                val result = runBlocking { nearCap.send("go") }
+                val result = runBlocking { nearCap.send("go", TEST_RUN_SETTINGS) }
 
                 assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                 assertEquals(SUBAGENT_HARNESS.tools, requests.single().tools.orEmpty().map { it.name })
@@ -317,19 +317,19 @@ class SubagentTest {
             AiRouterClient(server.baseUrl).use { client ->
                 val parent = workspace.agent(client)
                 runBlocking {
-                    assertEquals(RunResult.Status.COMPLETED, parent.send("spawn a worker").status)
+                    assertEquals(RunResult.Status.COMPLETED, parent.send("spawn a worker", TEST_RUN_SETTINGS).status)
                     // Occupy the child directly, the way the server API will
                     // allow; its slow tool call keeps its run active while
                     // freeing the scripted LLM for the parent's turns.
                     val child = assertNotNull(parent.subagents["worker"])
-                    val busy = launch { child.send("keep busy") }
+                    val busy = launch { child.send("keep busy", TEST_RUN_SETTINGS) }
                     withTimeout(5.seconds) {
                         while (marker.notExists()) {
                             delay(10.milliseconds)
                         }
                     }
 
-                    val result = parent.send("check on the worker")
+                    val result = parent.send("check on the worker", TEST_RUN_SETTINGS)
 
                     assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                     assertContains(
@@ -367,7 +367,7 @@ class SubagentTest {
                     }
                     val startMark = TimeSource.Monotonic.markNow()
 
-                    val result = parent.send("go")
+                    val result = parent.send("go", TEST_RUN_SETTINGS)
 
                     val total = startMark.elapsedNow()
                     assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")

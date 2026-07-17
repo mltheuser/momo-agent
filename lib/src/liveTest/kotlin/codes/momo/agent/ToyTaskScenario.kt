@@ -37,17 +37,17 @@ private const val CANNED_ANSWER: String = "The script must print exactly this me
  * caller checks host-side via [assertToyTaskWorkspace].
  */
 internal fun runToyTaskScenario(environment: ExecutionEnvironment) {
-    val harness = Harness.load(Path.of(examplesDir, "coder")).copy(model = liveChatModel)
+    val harness = Harness.load(Path.of(examplesDir, "coder"))
     val listener = CollectingEventListener()
     runBlocking {
         AiRouterClient(liveBaseUrl).use { client ->
             val agent = Agent(harness, client, environment, "E2E acceptance session", listener)
 
-            val asked = agent.send(TASK_PROMPT)
+            val asked = agent.send(TASK_PROMPT, liveRunSettings)
             assertEquals(RunResult.Status.COMPLETED, asked.status, "error: ${asked.error}")
             assertGreetingUnknown(environment)
 
-            val finished = agent.send(CANNED_ANSWER)
+            val finished = agent.send(CANNED_ANSWER, liveRunSettings)
             assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
             assertToolCallsAnswered(finished.transcript)
             val last = finished.transcript.last()

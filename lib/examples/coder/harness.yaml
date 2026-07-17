@@ -1,4 +1,3 @@
-model: gemma4:31b-it-qat:local@ollama
 tools:
   - bash
   - read_file

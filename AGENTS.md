@@ -9,8 +9,9 @@ Shared build conventions live in the root build script.
 
 - `./gradlew build` — compile + detekt + unit tests of both modules (needs
   the ai-router checkout on disk — see README). The server's SSE tests run
-  real-time 30 s timeouts and can flake when the machine is loaded —
-  re-run under normal load before suspecting a change.
+  real-time 30 s timeouts and are known to flake — reproduced on an
+  unmodified `main` (A/B-verified 2026-07-17), worst when the machine is
+  loaded — re-run before suspecting a change.
 - `./lint.sh` / `./fmt.sh` — detekt check / auto-fix formatting.
 - `./gradlew liveTest` — live tests against a running local ai-router
   server; the e2e container variant also needs Docker (not in

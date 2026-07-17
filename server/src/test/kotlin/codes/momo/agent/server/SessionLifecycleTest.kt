@@ -40,7 +40,6 @@ class SessionLifecycleTest {
 
             assertTrue(created.id.isNotBlank())
             assertEquals("harness", created.title)
-            assertEquals("test-model", created.model)
             assertEquals(harness, created.harnessPath)
             assertEquals(localWorkspace(tempDir), created.environment)
             assertEquals(SessionStatus.IDLE, created.status)

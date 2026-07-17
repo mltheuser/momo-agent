@@ -8,6 +8,10 @@ internal val liveBaseUrl: String
 internal val liveChatModel: String
     get() = requiredSystemProperty("aiRouter.chatModel")
 
+/** The [RunSettings] the live tests prompt runs with. */
+internal val liveRunSettings: RunSettings
+    get() = RunSettings(model = liveChatModel)
+
 /** Absolute path of the module's `examples/` folder holding the reference harnesses. */
 internal val examplesDir: String
     get() = requiredSystemProperty("momo.examplesDir")

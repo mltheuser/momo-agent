@@ -4,6 +4,7 @@ import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ChatRequest
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
+import codes.momo.agent.TEST_RUN_SETTINGS
 import codes.momo.agent.asReply
 import codes.momo.agent.assistantResponse
 import codes.momo.agent.baseUrl
@@ -45,7 +46,7 @@ class RestartSurvivalTest {
                     val registry = SessionRegistry(dataDir, client)
                     runBlocking {
                         val created = registry.create(harness, workspace)
-                        registry.startRun(created.id, "Ask the user which color to use.")
+                        registry.startRun(created.id, "Ask the user which color to use.", TEST_RUN_SETTINGS)
                         registry.awaitRunEnd(created.id)
                         created.id
                     }
@@ -128,7 +129,7 @@ class RestartSurvivalTest {
     @DisplayName("A stored session whose metadata no longer parses is unreadable but still deletable")
     fun unreadableMetadataSessionCanBeDeleted() {
         val folder = tempDir.resolve("data/sessions/broken-session").createDirectories()
-        folder.resolve("session.json").writeText("""{"harnessPath":"/h","model":"m"}""")
+        folder.resolve("session.json").writeText("""{"harnessPath":"/h"}""")
         folder.resolve("events.jsonl").writeText(
             """{"type":"session_started","sequenceId":0,"timestampMillis":0,""" +
                 """"sessionId":"broken-session","title":"b"}""" + "\n",

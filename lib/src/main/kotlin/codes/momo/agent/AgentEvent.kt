@@ -55,7 +55,7 @@ public sealed interface AgentEvent {
         val userMessage: String,
         /** The model the run calls the LLM with; null for logs predating the field. */
         val model: String? = null,
-        /** The run's [RunOverride.reasoningEffort]; null when unset. */
+        /** The run's [RunSettings.reasoningEffort]; null when unset. */
         val reasoningEffort: ReasoningEffort? = null,
     ) : AgentEvent
 

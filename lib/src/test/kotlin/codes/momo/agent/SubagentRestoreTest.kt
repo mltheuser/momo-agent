@@ -42,7 +42,7 @@ class SubagentRestoreTest {
         ).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
                 runBlocking {
-                    val run = launch { workspace.agent(client, tree).send("go") }
+                    val run = launch { workspace.agent(client, tree).send("go", TEST_RUN_SETTINGS) }
                     withTimeout(5.seconds) {
                         while (tree.children["helper"]?.events.orEmpty().none { it is AgentEvent.LlmCallStarted }) {
                             delay(10.milliseconds)
@@ -63,7 +63,7 @@ class SubagentRestoreTest {
         scriptedServer(assistantResponse(finishReason = "stop", text = "recovered")).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
                 val parent = Agent.load(tree.events, SUBAGENT_HARNESS, client, LocalExecutionEnvironment(workspace))
-                val result = runBlocking { parent.send("continue") }
+                val result = runBlocking { parent.send("continue", TEST_RUN_SETTINGS) }
 
                 assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                 val aborted = result.transcript.filter { it.role == "tool" }.last()
@@ -101,7 +101,7 @@ class SubagentRestoreTest {
             .use { server ->
                 AiRouterClient(server.baseUrl).use { client ->
                     val child = Agent.load(childEvents, SUBAGENT_HARNESS, client, LocalExecutionEnvironment(workspace))
-                    val result = runBlocking { child.send("carry on") }
+                    val result = runBlocking { child.send("carry on", TEST_RUN_SETTINGS) }
 
                     assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                     assertContains(requests.single().messages.first().text, "spawned you")
@@ -115,7 +115,8 @@ class SubagentRestoreTest {
         val listener = CollectingEventListener()
         scriptedServer(assistantResponse(finishReason = "stop", text = "capped")).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
-                runBlocking { workspace.agent(client, listener, depth = Budgets.MAX_SUBAGENT_DEPTH).send("go") }
+                val capped = workspace.agent(client, listener, depth = Budgets.MAX_SUBAGENT_DEPTH)
+                runBlocking { capped.send("go", TEST_RUN_SETTINGS) }
             }
         }
         var events = listener.events.toList()
@@ -133,7 +134,7 @@ class SubagentRestoreTest {
                             LocalExecutionEnvironment(workspace),
                             continuation,
                         )
-                        runBlocking { restored.send("again") }
+                        runBlocking { restored.send("again", TEST_RUN_SETTINGS) }
 
                         assertEquals(TEST_HARNESS.tools, requests.single().tools.orEmpty().map { it.name })
                     }
@@ -179,7 +180,7 @@ class SubagentRestoreTest {
                     LocalExecutionEnvironment(workspace),
                     restoredTree,
                 )
-                val result = runBlocking { parent.send("make it vanilla") }
+                val result = runBlocking { parent.send("make it vanilla", TEST_RUN_SETTINGS) }
 
                 assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                 assertEquals("vanilla cake baked", result.transcript.toolTexts().last())
@@ -219,7 +220,7 @@ class SubagentRestoreTest {
         ).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
                 val parent = Agent.load(tree.events, SUBAGENT_HARNESS, client, LocalExecutionEnvironment(workspace))
-                val result = runBlocking { parent.send("check on the helper") }
+                val result = runBlocking { parent.send("check on the helper", TEST_RUN_SETTINGS) }
 
                 assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                 val newToolTexts = result.transcript.toolTexts().takeLast(2)
@@ -262,7 +263,7 @@ class SubagentRestoreTest {
                     LocalExecutionEnvironment(workspace),
                     failingLookup,
                 )
-                val result = runBlocking { parent.send("check on the helper") }
+                val result = runBlocking { parent.send("check on the helper", TEST_RUN_SETTINGS) }
 
                 assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                 val newToolTexts = result.transcript.toolTexts().takeLast(2)
