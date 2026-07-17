@@ -118,9 +118,21 @@ public fun bashCall(id: String, command: String): ToolCall = ToolCall(
     function = ToolCallFunction(name = "bash", arguments = buildJsonObject { put("command", command) }),
 )
 
-public fun spawnSubagentCall(id: String, name: String): ToolCall = ToolCall(
+public fun spawnSubagentCall(
+    id: String,
+    name: String,
+    type: String = "self",
+    modelId: String? = null,
+): ToolCall = ToolCall(
     id = id,
-    function = ToolCallFunction(name = "spawn_subagent", arguments = buildJsonObject { put("name", name) }),
+    function = ToolCallFunction(
+        name = "spawn_subagent",
+        arguments = buildJsonObject {
+            put("name", name)
+            put("type", type)
+            modelId?.let { put("model_id", it) }
+        },
+    ),
 )
 
 public fun promptSubagentCall(id: String, name: String, message: String): ToolCall = ToolCall(

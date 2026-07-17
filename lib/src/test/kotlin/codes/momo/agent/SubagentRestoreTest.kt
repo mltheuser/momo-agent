@@ -3,6 +3,7 @@ package codes.momo.agent
 import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ChatRequest
 import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.harness.Harness
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -25,6 +26,64 @@ class SubagentRestoreTest {
 
     @TempDir
     lateinit var workspace: Path
+
+    // ─── Fixture helpers ──────────────────────────────────────────────
+
+    /** A restore listener whose stored-log lookup for dormant children is [storedEvents]. */
+    private fun restoreListener(storedEvents: suspend (sessionId: String) -> List<AgentEvent>?): TreeEventListener =
+        object : TreeEventListener() {
+            override suspend fun storedEventsFor(sessionId: String): List<AgentEvent>? = storedEvents(sessionId)
+        }
+
+    /** A restore listener serving [childEvents] as the stored log of the child session that recorded them. */
+    private fun restoreListener(childEvents: List<AgentEvent>): TreeEventListener {
+        val childId = assertIs<AgentEvent.SessionStarted>(childEvents.first()).sessionId
+        return restoreListener { sessionId -> childEvents.takeIf { sessionId == childId } }
+    }
+
+    /**
+     * Spawns a stored child named `helper`, restores the parent under [restoredHarness] from
+     * [editLog]'s view of the recorded log, and prompts the child again; asserts the revival
+     * failure surfaced loudly and returns the failed prompt's tool text.
+     */
+    private fun assertRevivalFailsLoudly(
+        restoredHarness: Harness,
+        editLog: (List<AgentEvent>) -> List<AgentEvent> = { it },
+    ): String {
+        val tree = TreeEventListener()
+        workspace.runScripted(
+            tree,
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "get ready"),
+            ).asReply(),
+            assistantResponse(finishReason = "stop", text = "ready").asReply(),
+            assistantResponse(finishReason = "stop", text = "spawned").asReply(),
+        )
+        val childEvents = assertNotNull(tree.children["helper"]).events
+
+        scriptedServer(
+            toolCallResponse(promptSubagentCall(id = "call-3", name = "helper", message = "continue")).asReply(),
+            assistantResponse(finishReason = "stop", text = "gave up").asReply(),
+        ).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                val parent = Agent.load(
+                    editLog(tree.events),
+                    restoredHarness,
+                    client,
+                    LocalExecutionEnvironment(workspace),
+                    restoreListener(childEvents),
+                )
+                val result = runBlocking { parent.send("check on the helper", TEST_RUN_SETTINGS) }
+
+                assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+                val toolText = result.transcript.toolTexts().last()
+                assertContains(toolText, "failed unexpectedly")
+                assertContains(toolText, SubagentRevivalException::class.simpleName!!)
+                return toolText
+            }
+        }
+    }
 
     // ─── Cancellation ─────────────────────────────────────────────────
 
@@ -159,13 +218,9 @@ class SubagentRestoreTest {
             assistantResponse(finishReason = "stop", text = "helper needs a flavor").asReply(),
         )
         val childEvents = assertNotNull(tree.children["helper"]).events
-        val childId = assertIs<AgentEvent.SessionStarted>(childEvents.first()).sessionId
 
         val requests = CopyOnWriteArrayList<ChatRequest>()
-        val restoredTree = object : TreeEventListener() {
-            override suspend fun storedEventsFor(sessionId: String): List<AgentEvent>? =
-                childEvents.takeIf { sessionId == childId }
-        }
+        val restoredTree = restoreListener(childEvents)
         scriptedServer(
             requests,
             toolCallResponse(promptSubagentCall(id = "call-3", name = "helper", message = "vanilla")).asReply(),
@@ -196,6 +251,79 @@ class SubagentRestoreTest {
                 )
             }
         }
+    }
+
+    @Test
+    @DisplayName("A restored parent revives a typed child under its type's harness, keeping the model override")
+    fun restoredParentRevivesTypedChildWithItsHarnessAndModel() {
+        val child = Harness(tools = listOf("bash"), instructions = "Child harness instructions.")
+        val parent = typedHarness("Parent harness instructions.", "worker" to child)
+        val tree = TreeEventListener()
+        scriptedServer(
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper", type = "worker", modelId = "pinned-model"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "start"),
+            ).asReply(),
+            assistantResponse(finishReason = "stop", text = "started").asReply(),
+            assistantResponse(finishReason = "stop", text = "spawned").asReply(),
+        ).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                runBlocking { workspace.agent(client, tree, harness = parent).send("go", TEST_RUN_SETTINGS) }
+            }
+        }
+        val childEvents = assertNotNull(tree.children["helper"]).events
+
+        val requests = CopyOnWriteArrayList<ChatRequest>()
+        val restoredTree = restoreListener(childEvents)
+        scriptedServer(
+            requests,
+            toolCallResponse(promptSubagentCall(id = "call-3", name = "helper", message = "carry on")).asReply(),
+            assistantResponse(finishReason = "stop", text = "carried on").asReply(),
+            assistantResponse(finishReason = "stop", text = "done").asReply(),
+        ).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                val restored = Agent.load(
+                    tree.events,
+                    parent,
+                    client,
+                    LocalExecutionEnvironment(workspace),
+                    restoredTree,
+                )
+                val result = runBlocking { restored.send("continue", TEST_RUN_SETTINGS) }
+
+                assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+                // The revived child runs its type's harness under its spawn-time model.
+                val childRequest = requests[1]
+                assertContains(childRequest.messages.first().text, "Child harness instructions.")
+                assertEquals(child.tools, childRequest.tools.orEmpty().map { it.name })
+                assertEquals("pinned-model", childRequest.model)
+                assertEquals(TEST_RUN_SETTINGS.model, requests.first().model)
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Reviving a child whose type the harness no longer declares fails loudly, keeping the name")
+    fun removedTypeFailsRevival() {
+        // The parent's log restores into a harness that renamed the type away.
+        val narrowed = typedHarness("Unit-test instructions.", "other" to TEST_HARNESS)
+
+        val toolText = assertRevivalFailsLoudly(narrowed)
+
+        assertContains(toolText, "which the harness no longer declares")
+        assertContains(toolText, "Declared types: other.")
+    }
+
+    @Test
+    @DisplayName("A stored spawn without a type — a log predating typed spawning — fails revival loudly")
+    fun untypedStoredSpawnFailsRevival() {
+        val toolText = assertRevivalFailsLoudly(SUBAGENT_HARNESS) { log ->
+            log.map { event ->
+                if (event is AgentEvent.SubagentSpawned) event.copy(type = null, modelId = null) else event
+            }
+        }
+
+        assertContains(toolText, "predating typed spawning")
     }
 
     @Test
@@ -246,10 +374,7 @@ class SubagentRestoreTest {
 
         // Corruption must not read as deletion: the failing lookup errors
         // the tool call, and the name stays taken.
-        val failingLookup = object : TreeEventListener() {
-            override suspend fun storedEventsFor(sessionId: String): List<AgentEvent>? =
-                error("the stored log for $sessionId is unreadable")
-        }
+        val failingLookup = restoreListener { sessionId -> error("the stored log for $sessionId is unreadable") }
         scriptedServer(
             toolCallResponse(promptSubagentCall(id = "call-3", name = "helper", message = "continue")).asReply(),
             toolCallResponse(spawnSubagentCall(id = "call-4", name = "helper")).asReply(),

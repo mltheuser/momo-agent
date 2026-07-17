@@ -4,6 +4,7 @@ import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.Capability
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.RunSettings
+import codes.momo.agent.SubagentRevivalException
 import codes.momo.agent.environment.EnvironmentStartupException
 import codes.momo.agent.harness.HarnessValidationException
 import io.ktor.http.ContentType
@@ -88,6 +89,9 @@ internal fun Application.agentServer(registry: SessionRegistry, client: AiRouter
         }
         exception<SessionConflictException> { call, failure ->
             call.respondError(HttpStatusCode.Conflict, "conflict", failure)
+        }
+        exception<SubagentRevivalException> { call, failure ->
+            call.respondError(HttpStatusCode.Conflict, "unrevivable_subagent", failure)
         }
         exception<CorruptSessionException> { call, failure ->
             call.respondError(HttpStatusCode.InternalServerError, "corrupt_session", failure)

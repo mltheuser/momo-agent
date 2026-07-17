@@ -200,8 +200,8 @@ blank title is a `400 invalid_request`.
 
 Errors are structured JSON — `{"code": "...", "message": "..."}` — with
 `400` for invalid harness/environment/request, `404` for an unknown
-session, `409` for operations conflicting with an active run, and `500`
-otherwise.
+session, `409` for operations conflicting with an active run or with the
+current harness configuration, and `500` otherwise.
 
 ### Prompting
 
@@ -216,8 +216,9 @@ those calls' reasoning effort. The run's `run_started` event records the
 model and effort it used. A missing or blank `model` and an unknown
 `reasoningEffort` value are a `400 invalid_request`; an unknown model id
 is accepted and surfaces as a failed run. The settings also cover subagent
-runs this run drives; a directly prompted child uses only its own prompt's
-settings.
+runs this run drives — unless the child was spawned with a `model_id`,
+which pins its model (see Subagent sessions); a directly prompted child
+uses only its own prompt's settings.
 
 Prompting a `closed` session rebuilds its tree's runtime first — that is
 the resume path (see Subagent sessions). No endpoint returns the run's outcome: its `run_finished`
@@ -243,15 +244,50 @@ Deleting the session ends its streams.
 
 ### Subagent sessions
 
-Agents can spawn subagents (the library's `spawn_subagent` /
-`prompt_subagent` tools); each child is a full session under the same data
-directory, created the moment its spawn is announced. Clients discover
-children through the parent's `subagent_spawned` event, which carries the
-child's session ID: `GET /{id}`, the event stream, and `POST /{id}/prompt`
-all work on children, while the listing stays roots-only. A child's info
-carries `parent` (`null` on a root); its `harnessPath` and
-`environment` are resolved through its root — children execute in the
-root's environment and own none themselves.
+Agents spawn subagents through the library's `spawn_subagent` /
+`prompt_subagent` tools. The tools are offered only to a harness whose
+`harness.yaml` declares a `subagents` map — each entry names a subagent
+type the harness may spawn:
+
+```yaml
+tools:
+  - bash
+subagents:
+  reviewer:
+    path: ../reviewer
+    description: Reviews a change and reports findings.
+  self:
+    path: .
+    description: An agent like this one, for delegating subtasks.
+```
+
+`path` names another harness folder by a relative path, resolved against
+the declaring folder — absolute paths are rejected — so a composition
+stays one copyable artifact. Loading a harness loads and validates every
+referenced folder recursively — each folder once, so self-references and
+reference cycles terminate — and a broken referenced harness fails the
+load naming the reference. The subagent tools are never listed under
+`tools` (doing so is a load error); a declared map implies them, withheld
+again from agents at the library-fixed nesting-depth cap.
+
+`spawn_subagent(name, type, model_id?)` spawns a child of a declared
+`type`, running that type's harness. The optional `model_id` pins the
+model of the runs the parent drives through `prompt_subagent` — without it
+they inherit the driving run's model (reasoning effort is inherited either
+way) — and survives dormancy: a revived child keeps its pin. A directly
+prompted child always uses its own prompt's settings.
+
+Each child is a full session under the same data directory, created the
+moment its spawn is announced. Clients discover children through the
+parent's `subagent_spawned` event, which carries the child's session ID
+plus the spawn's `subagentType` and `modelId` (both `null` in logs
+predating typed spawning): `GET /{id}`, the event stream, and
+`POST /{id}/prompt` all work on children, while the listing stays
+roots-only. A child's info carries `parent` (`null` on a root); its
+`harnessPath` and `environment` are resolved through its root — children
+execute in the root's environment and own none themselves, and
+`harnessPath` names the tree root's harness folder even for a typed child
+running a referenced harness.
 
 The runtime attachment belongs to the whole tree and is dropped only by an
 explicit close or server shutdown — close is how a tree's memory is
@@ -264,7 +300,11 @@ result, and the name is free to spawn anew. Prompting any dormant member —
 root or child — rebuilds the tree's runtime and revives just the chain
 from the root to the prompted session from the stored logs, so a
 re-prompted parent can still converse with children spawned before a
-restart. A human may prompt an idle child at any time; a running child
+restart. Revival can fail by configuration: a stored spawn without a type
+(a log predating typed spawning), or one whose type the harness no longer
+declares, is a `409 unrevivable_subagent` when prompted or renamed
+directly, and a parent's `prompt_subagent` to it draws an error result. A
+human may prompt an idle child at any time; a running child
 answers `409`, and a parent's `prompt_subagent` to a human-busy child gets
 an error result in its own log.
 

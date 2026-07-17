@@ -48,7 +48,7 @@ class SubagentSessionTest {
     // ─── Fixture helpers ──────────────────────────────────────────────
 
     private fun subagentHarness(): String =
-        writeHarness(tempDir.resolve("harness"), tools = listOf("bash", "spawn_subagent", "prompt_subagent"))
+        writeHarness(tempDir.resolve("harness"), tools = listOf("bash"), subagents = mapOf("self" to "."))
             .toString()
 
     /** Waits for the spawn to appear on the parent's stream and returns the child's session ID. */
@@ -239,11 +239,11 @@ class SubagentSessionTest {
         val harness = subagentHarness()
         val environment = localWorkspace(tempDir)
 
-        // First server process: the root spawns a child whose answer is a question.
+        // First server process: the root spawns a typed, model-pinned child whose answer is a question.
         var rootId = ""
         scriptedServer(
             toolCallResponse(
-                spawnSubagentCall(id = "call-1", name = "helper"),
+                spawnSubagentCall(id = "call-1", name = "helper", type = "self", modelId = "pinned-model"),
                 promptSubagentCall(id = "call-2", name = "helper", message = "bake a cake"),
             ).asReply(),
             assistantResponse(finishReason = "stop", text = "Which flavor should it be?").asReply(),
@@ -295,7 +295,8 @@ class SubagentSessionTest {
                         http.prompt(rootId, "make it vanilla")
                         http.awaitRunEnd(rootId)
 
-                        // ...and the revived child continues its prior conversation, still a subagent.
+                        // ...and the revived child continues its prior conversation, still a
+                        // subagent, still under its spawn-time model override.
                         val childTurn = requests[1]
                         assertContains(childTurn.messages.first().text, "subagent")
                         assertEquals(
@@ -303,6 +304,8 @@ class SubagentSessionTest {
                             childTurn.messages.map { it.role },
                         )
                         assertEquals("vanilla", childTurn.messages.last().text)
+                        assertEquals("pinned-model", childTurn.model)
+                        assertEquals(TEST_RUN_SETTINGS.model, requests[0].model)
                         val childLog = http.streamEvents(childId, until = runsFinished(2))
                         assertTwoCleanRuns(childLog.map { it.event }, secondUserMessage = "vanilla")
                     }
@@ -345,6 +348,25 @@ class SubagentSessionTest {
         withSessionServer(tempDir) { http ->
             val response = http.promptResponse(childId, "hello?")
             assertEquals(HttpStatusCode.NotFound, response.status)
+            // The failed prompt tore down the runtime it attached.
+            assertEquals(SessionStatus.CLOSED, http.get("/v1/sessions/$rootId").body<SessionInfo>().status)
+        }
+    }
+
+    @Test
+    @DisplayName("Prompting a dormant child whose type the harness no longer declares is a 409 unrevivable_subagent")
+    fun undeclaredTypeAnswersConflictOnDirectPrompt() {
+        withSpawnedChild { http, rootId, childId ->
+            http.post("/v1/sessions/$rootId/close")
+            // The harness folder on disk renames the child's type away before the tree is rebuilt.
+            writeHarness(tempDir.resolve("harness"), tools = listOf("bash"), subagents = mapOf("other" to "."))
+
+            val response = http.promptResponse(childId, "hello?")
+
+            assertEquals(HttpStatusCode.Conflict, response.status)
+            val error = response.body<ApiError>()
+            assertEquals("unrevivable_subagent", error.code)
+            assertContains(error.message, "which the harness no longer declares")
             // The failed prompt tore down the runtime it attached.
             assertEquals(SessionStatus.CLOSED, http.get("/v1/sessions/$rootId").body<SessionInfo>().status)
         }

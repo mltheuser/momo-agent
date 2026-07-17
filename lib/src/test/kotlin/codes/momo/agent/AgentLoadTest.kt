@@ -4,6 +4,7 @@ import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ToolCall
 import ai.router.sdk.models.ToolCallFunction
 import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
@@ -105,7 +106,7 @@ class AgentLoadTest {
     @DisplayName("Loading into a harness missing a used tool fails, naming the tool")
     fun loadIntoHarnessMissingUsedToolFails() {
         val logged = recordedSession()
-        val slim = TEST_HARNESS.copy(tools = listOf("read_file"))
+        val slim = Harness(tools = listOf("read_file"), instructions = TEST_HARNESS.instructions)
 
         withUnusedClient { client ->
             val failure = assertFailsWith<HarnessValidationException> {
@@ -266,7 +267,14 @@ class AgentLoadTest {
                 duration = 5.seconds,
                 truncated = true,
             ),
-            AgentEvent.SubagentSpawned(8, 9, name = "helper", sessionId = "child-session-1"),
+            AgentEvent.SubagentSpawned(
+                sequenceId = 8,
+                timestampMillis = 9,
+                name = "helper",
+                sessionId = "child-session-1",
+                type = "self",
+                modelId = "pinned-model",
+            ),
             AgentEvent.BudgetUpdated(9, 10, turnsUsed = 1, turnsRemaining = 39, elapsed = 2.seconds),
             AgentEvent.RunFinished(
                 sequenceId = 10,
@@ -287,7 +295,24 @@ class AgentLoadTest {
         // rename that changes them must fail here, not corrupt stored logs.
         assertContains(json, "\"type\":\"run_finished\"")
         assertContains(json, "\"type\":\"subagent_spawned\"")
+        assertContains(json, "\"subagentType\":\"self\"")
+        assertContains(json, "\"modelId\":\"pinned-model\"")
         assertContains(json, "\"status\":\"timeout\"")
         assertContains(json, "\"outcome\":\"timed_out\"")
+    }
+
+    @Test
+    @DisplayName("A stored subagent_spawned predating typed spawning still deserializes, with a null type")
+    fun subagentSpawnedWithoutTypeStillDeserializes() {
+        val stored = """
+            {"type":"subagent_spawned","sequenceId":8,"timestampMillis":9,"name":"helper","sessionId":"child-1"}
+        """.trimIndent()
+
+        val decoded = Json.decodeFromString<AgentEvent>(stored)
+
+        assertEquals(
+            AgentEvent.SubagentSpawned(8, 9, name = "helper", sessionId = "child-1", type = null, modelId = null),
+            decoded,
+        )
     }
 }

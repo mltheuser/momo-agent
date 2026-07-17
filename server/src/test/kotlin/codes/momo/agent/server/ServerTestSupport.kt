@@ -39,10 +39,27 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.writeText
 import kotlin.test.assertEquals
 
-/** Writes a valid harness folder at [folder] and returns it. */
-internal fun writeHarness(folder: Path, tools: List<String> = listOf("bash")): Path {
+/** Writes a valid harness folder at [folder] and returns it; [subagents] maps type names to referenced paths. */
+internal fun writeHarness(
+    folder: Path,
+    tools: List<String> = listOf("bash"),
+    subagents: Map<String, String> = emptyMap(),
+): Path {
     folder.createDirectories()
-    folder.resolve("harness.yaml").writeText("tools:\n" + tools.joinToString("") { "  - $it\n" })
+    folder.resolve("harness.yaml").writeText(
+        buildString {
+            appendLine("tools:")
+            tools.forEach { appendLine("  - $it") }
+            if (subagents.isNotEmpty()) {
+                appendLine("subagents:")
+                subagents.forEach { (type, path) ->
+                    appendLine("  $type:")
+                    appendLine("    path: $path")
+                    appendLine("    description: The $type harness.")
+                }
+            }
+        },
+    )
     folder.resolve("instructions.md").writeText("Server-test instructions.\n")
     return folder
 }

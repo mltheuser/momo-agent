@@ -3,6 +3,7 @@ package codes.momo.agent
 import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ChatRequest
 import ai.router.sdk.models.ReasoningEffort
+import codes.momo.agent.harness.Harness
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -67,10 +68,10 @@ class SubagentTest {
                     childEvents.filterIsInstance<AgentEvent.RunStarted>().single().userMessage,
                 )
 
-                // The child's LLM turn shows the subagent prompt and the inherited toolset.
+                // The child's LLM turn shows the subagent prompt and the child harness's toolset.
                 val childRequest = requests[1]
                 assertContains(childRequest.messages.first().text, "subagent")
-                assertEquals(SUBAGENT_HARNESS.tools, childRequest.tools.orEmpty().map { it.name })
+                assertEquals(SUBAGENT_OFFERED_TOOLS, childRequest.tools.orEmpty().map { it.name })
             }
         }
     }
@@ -230,12 +231,164 @@ class SubagentTest {
                 val result = runBlocking { nearCap.send("go", TEST_RUN_SETTINGS) }
 
                 assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
-                assertEquals(SUBAGENT_HARNESS.tools, requests.single().tools.orEmpty().map { it.name })
+                assertEquals(SUBAGENT_OFFERED_TOOLS, requests.single().tools.orEmpty().map { it.name })
+            }
+        }
+    }
+
+    // ─── Typed spawning ───────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Without a subagents map the subagent tools are never offered and a hallucinated call is unknown")
+    fun noSubagentsMapMeansNoSubagentTools() {
+        val requests = CopyOnWriteArrayList<ChatRequest>()
+        scriptedServer(
+            requests,
+            toolCallResponse(spawnSubagentCall(id = "call-1", name = "helper")).asReply(),
+            assistantResponse(finishReason = "stop", text = "understood").asReply(),
+        ).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                val plain = workspace.agent(client, harness = TEST_HARNESS)
+                val result = runBlocking { plain.send("go", TEST_RUN_SETTINGS) }
+
+                assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+                assertEquals(TEST_HARNESS.tools, requests.first().tools.orEmpty().map { it.name })
+                val toolText = result.transcript.toolTexts().single()
+                assertContains(toolText, "unknown tool 'spawn_subagent'")
+                assertContains(toolText, "available tools: bash, edit_file, read_file, write_file.")
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("A spawned child runs the referenced harness of its type, one level deeper")
+    fun spawnedChildRunsItsTypesHarness() {
+        val child = Harness(tools = listOf("bash"), instructions = "Child harness instructions.")
+        val parent = typedHarness("Parent harness instructions.", "worker" to child)
+        val tree = TreeEventListener()
+        val requests = CopyOnWriteArrayList<ChatRequest>()
+        scriptedServer(
+            requests,
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper", type = "worker"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "do the work"),
+            ).asReply(),
+            assistantResponse(finishReason = "stop", text = "work done").asReply(),
+            assistantResponse(finishReason = "stop", text = "done").asReply(),
+        ).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                val result = runBlocking {
+                    workspace.agent(client, tree, harness = parent).send("go", TEST_RUN_SETTINGS)
+                }
+
+                assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+                // The spawn tool's generated description enumerates the declared types.
+                val spawnDefinition = requests[0].tools.orEmpty().single { it.name == "spawn_subagent" }
+                assertContains(spawnDefinition.description.orEmpty(), "worker: The worker harness.")
+                // The child's system prompt and toolset come from the child harness.
+                val childRequest = requests[1]
+                assertContains(childRequest.messages.first().text, "Child harness instructions.")
+                assertContains(childRequest.messages.first().text, "spawned you")
+                assertEquals(child.tools, childRequest.tools.orEmpty().map { it.name })
+                // The spawn is recorded with its type, at one level deeper.
+                val spawned = tree.events.filterIsInstance<AgentEvent.SubagentSpawned>().single()
+                assertEquals("worker", spawned.type)
+                assertNull(spawned.modelId)
+                val childEvents = assertNotNull(tree.children["helper"]).events
+                assertEquals(1, assertIs<AgentEvent.SessionStarted>(childEvents.first()).depth)
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("A spawn-time model_id pins the driven child's model while the effort stays inherited")
+    fun spawnTimeModelIdPinsTheChildsModel() {
+        val requests = CopyOnWriteArrayList<ChatRequest>()
+        scriptedServer(
+            requests,
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper", modelId = "pinned-model"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "compute the answer"),
+            ).asReply(),
+            assistantResponse(finishReason = "stop", text = "the answer is 42").asReply(),
+            assistantResponse(finishReason = "stop", text = "done").asReply(),
+        ).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                val tree = TreeEventListener()
+                val settings = RunSettings(model = "parent-model", reasoningEffort = ReasoningEffort.HIGH)
+
+                val result = runBlocking { workspace.agent(client, tree).send("go", settings) }
+
+                assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+                // Parent turn, driven child turn, parent turn: only the child's carries the pin.
+                assertEquals(listOf("parent-model", "pinned-model", "parent-model"), requests.map { it.model })
+                assertEquals(List(3) { ReasoningEffort.HIGH }, requests.map { it.reasoningEffort })
+                assertEquals(
+                    "pinned-model",
+                    tree.events.filterIsInstance<AgentEvent.SubagentSpawned>().single().modelId,
+                )
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("A directly prompted child uses its own call's model even when spawned with a pin")
+    fun directlyPromptedChildIgnoresItsSpawnTimePin() {
+        val requests = CopyOnWriteArrayList<ChatRequest>()
+        scriptedServer(
+            requests,
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper", modelId = "pinned-model"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "compute the answer"),
+            ).asReply(),
+            assistantResponse(finishReason = "stop", text = "the answer is 42").asReply(),
+            assistantResponse(finishReason = "stop", text = "done").asReply(),
+            assistantResponse(finishReason = "stop", text = "direct answer").asReply(),
+        ).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                val parent = workspace.agent(client)
+                runBlocking {
+                    assertEquals(RunResult.Status.COMPLETED, parent.send("go", TEST_RUN_SETTINGS).status)
+                    val child = assertNotNull(parent.subagents["helper"])
+
+                    val result = child.send("follow up", RunSettings(model = "direct-model"))
+
+                    assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+                    assertEquals("direct-model", requests.last().model)
+                }
             }
         }
     }
 
     // ─── Error results ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("A blank model_id is an error result")
+    fun blankModelIdIsAnErrorResult() {
+        val result = workspace.runScripted(
+            NoOpAgentEventListener,
+            toolCallResponse(spawnSubagentCall(id = "call-1", name = "helper", modelId = "  ")).asReply(),
+            assistantResponse(finishReason = "stop", text = "noted").asReply(),
+        )
+
+        assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+        assertContains(result.transcript.toolTexts().single(), "Error: model_id must not be blank when given.")
+    }
+
+    @Test
+    @DisplayName("An unknown type is an error result listing the declared types")
+    fun unknownTypeIsAnErrorResultListingDeclaredTypes() {
+        val result = workspace.runScripted(
+            NoOpAgentEventListener,
+            toolCallResponse(spawnSubagentCall(id = "call-1", name = "helper", type = "ghost")).asReply(),
+            assistantResponse(finishReason = "stop", text = "noted").asReply(),
+        )
+
+        assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+        val toolText = result.transcript.toolTexts().single()
+        assertContains(toolText, "Error: unknown subagent type 'ghost'")
+        assertContains(toolText, "declared types: self.")
+    }
 
     @Test
     @DisplayName("Duplicate and unknown names are error results, not failures")

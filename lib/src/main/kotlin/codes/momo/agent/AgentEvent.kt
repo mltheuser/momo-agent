@@ -161,6 +161,11 @@ public sealed interface AgentEvent {
         override val timestampMillis: Long,
         val name: String,
         val sessionId: String,
+        /** The declared subagent type spawned; null for logs predating typed spawning. */
+        @SerialName("subagentType")
+        val type: String? = null,
+        /** Model the parent's driven runs of this child use; null to inherit each driving run's. */
+        val modelId: String? = null,
     ) : AgentEvent
 
     /** Budget accounting at a turn boundary. */

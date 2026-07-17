@@ -51,7 +51,7 @@ public class Agent internal constructor(
         eventListener: AgentEventListener = NoOpAgentEventListener,
     ) : this(harness, client, environment, eventListener, RunBudgets(), SessionState.Fresh(title))
 
-    internal val subagents: Subagents = Subagents(this, session.spawned)
+    internal val subagents: Subagents = Subagents(this, harness.subagents.keys, session.spawned)
 
     private val depth: Int = session.depth
 
@@ -60,12 +60,12 @@ public class Agent internal constructor(
     private val toolDefinitions: List<ToolDefinition>
 
     init {
-        val coreRegistry = coreToolRegistry(subagents)
+        val coreRegistry = coreToolRegistry(subagents, harness.subagents)
         harness.requireToolsKnown(coreRegistry.names)
-        // The depth cap withholds rather than fails: a hallucinated call at
-        // the cap draws the standard unknown-tool error.
-        val offered = if (depth >= Budgets.MAX_SUBAGENT_DEPTH) {
-            harness.tools.filterNot { it in SUBAGENT_TOOL_NAMES }
+        // The depth cap withholds rather than fails: a hallucinated call
+        // outside the offered set draws the standard unknown-tool error.
+        val offered = if (harness.subagents.isNotEmpty() && depth < Budgets.MAX_SUBAGENT_DEPTH) {
+            harness.tools + SUBAGENT_TOOL_NAMES
         } else {
             harness.tools
         }
@@ -285,19 +285,20 @@ public class Agent internal constructor(
 
     /**
      * Constructs the child agent [Subagents] registers as [name]: a fresh
-     * session titled [name] at one level deeper, sharing this agent's
-     * harness, collaborators, and budget values — announced in this
-     * session's log as [AgentEvent.SubagentSpawned] before the child emits
-     * its first event.
+     * session titled [name] at one level deeper, running the harness this
+     * agent's harness declares as [type] and sharing this agent's
+     * collaborators and budget values — announced in this session's log as
+     * [AgentEvent.SubagentSpawned] before the child emits its first event.
      */
-    internal fun spawnChild(name: String): Agent {
+    internal fun spawnChild(name: String, type: String, modelId: String?): Agent {
+        val childHarness = harness.subagents.getValue(type).harness
         val session = SessionState.Fresh(title = name, depth = depth + 1)
         // The listener is asked first, so an embedder tracking children has
         // registered the session by the time the spawn event is observable.
         val listener = eventListener.subagentListener(name, session.id)
-        emitter.emit { id, at -> AgentEvent.SubagentSpawned(id, at, name, session.id) }
+        emitter.emit { id, at -> AgentEvent.SubagentSpawned(id, at, name, session.id, type, modelId) }
         return Agent(
-            harness = harness,
+            harness = childHarness,
             client = client,
             environment = environment,
             eventListener = listener,
@@ -309,16 +310,30 @@ public class Agent internal constructor(
     /**
      * Reconstructs the dormant child registered as [name] from the stored
      * log this session's listener serves for [sessionId], wired like a
-     * fresh spawn; null when the listener does not know the session.
+     * fresh spawn under the harness this agent's harness declares as
+     * [type]; null when the listener does not know the session.
+     *
+     * @throws SubagentRevivalException on the conditions it documents — a
+     *   configuration error, never read as a lost log.
      */
-    internal suspend fun reviveChild(name: String, sessionId: String): Agent? {
+    internal suspend fun reviveChild(name: String, sessionId: String, type: String?): Agent? {
         val events = eventListener.storedEventsFor(sessionId) ?: return null
-        val session = restoredSession(events, harness)
+        if (type == null) {
+            throw SubagentRevivalException(
+                "subagent '$name' was spawned without a type (a log predating typed spawning) " +
+                    "and cannot be revived — spawn a fresh subagent instead.",
+            )
+        }
+        val childHarness = harness.subagents[type]?.harness ?: throw SubagentRevivalException(
+            "subagent '$name' was spawned as type '$type', which the harness no longer declares. " +
+                "Declared types: ${harness.subagents.keys.ifEmpty { setOf("(none)") }.joinToString(", ")}.",
+        )
+        val session = restoredSession(events, childHarness)
         check(session.depth == depth + 1) {
             "the stored log for subagent '$name' records depth ${session.depth}, expected ${depth + 1}."
         }
         return Agent(
-            harness = harness,
+            harness = childHarness,
             client = client,
             environment = environment,
             eventListener = eventListener.subagentListener(name, sessionId),
@@ -372,8 +387,10 @@ public class Agent internal constructor(
          * are answered with synthesized aborted results, and new events
          * continue the log's sequence IDs. Loading emits nothing. The
          * session's subagent-tree position is restored with it: its depth,
-         * and its spawned children as dormant names revived on use through
-         * [eventListener]'s [AgentEventListener.storedEventsFor].
+         * and its spawned children as dormant entries — each with its
+         * recorded type and model override — revived on use through
+         * [eventListener]'s [AgentEventListener.storedEventsFor], under
+         * the harness [harness] declares for that type.
          *
          * @throws IllegalArgumentException when [events] is not a stored
          *   session log (its first event must be

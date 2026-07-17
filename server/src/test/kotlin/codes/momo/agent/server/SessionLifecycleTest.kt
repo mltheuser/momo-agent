@@ -101,6 +101,24 @@ class SessionLifecycleTest {
     }
 
     @Test
+    @DisplayName("A harness referencing a broken subagent harness is a 400 naming the reference")
+    fun brokenSubagentReferenceIsRejected() {
+        withSessionServer(tempDir) { http ->
+            val harness = writeHarness(
+                tempDir.resolve("harness"),
+                subagents = mapOf("helper" to "../nowhere"),
+            ).toString()
+
+            val response = http.createSessionResponse(CreateSessionRequest(harness, localWorkspace(tempDir)))
+
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+            val error = response.body<ApiError>()
+            assertEquals("invalid_harness", error.code)
+            assertContains(error.message, "'helper'")
+        }
+    }
+
+    @Test
     @DisplayName("An unknown environment type is a 400 invalid_request")
     fun invalidEnvironmentSpecIsRejected() {
         withSessionServer(tempDir) { http ->

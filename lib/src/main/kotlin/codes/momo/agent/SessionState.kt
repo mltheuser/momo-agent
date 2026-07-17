@@ -3,6 +3,7 @@ package codes.momo.agent
 import ai.router.sdk.models.ChatMessage
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
+import codes.momo.agent.tool.SUBAGENT_TOOL_NAMES
 import java.util.UUID
 
 /** What [Agent] construction starts a session from: freshly created, or restored from a stored event log. */
@@ -23,8 +24,8 @@ internal sealed interface SessionState {
     /** Conversation following the system message; empty for a fresh session. */
     val conversation: List<ChatMessage>
 
-    /** The session's already-spawned subagents, name to child session ID; dormant until revived. */
-    val spawned: Map<String, String>
+    /** The session's already-spawned subagents by name; dormant until revived. */
+    val spawned: Map<String, SpawnedChild>
 
     class Fresh(override val title: String, override val depth: Int = 0) : SessionState {
 
@@ -36,7 +37,7 @@ internal sealed interface SessionState {
         override val conversation: List<ChatMessage>
             get() = emptyList()
 
-        override val spawned: Map<String, String>
+        override val spawned: Map<String, SpawnedChild>
             get() = emptyMap()
     }
 
@@ -46,9 +47,12 @@ internal sealed interface SessionState {
         override val depth: Int,
         override val nextSequenceId: Long,
         override val conversation: List<ChatMessage>,
-        override val spawned: Map<String, String>,
+        override val spawned: Map<String, SpawnedChild>,
     ) : SessionState
 }
+
+/** One already-spawned child as its [AgentEvent.SubagentSpawned] recorded it. */
+internal class SpawnedChild(val sessionId: String, val type: String?, val modelId: String?)
 
 /**
  * The [SessionState.Restored] a stored [events] log describes, validated
@@ -68,15 +72,17 @@ internal fun restoredSession(events: List<AgentEvent>, harness: Harness): Sessio
         conversation = conversationFrom(events),
         // Last spawn per name wins: a name freed by a lost child log may
         // have been reused by a later spawn.
-        spawned = events.filterIsInstance<AgentEvent.SubagentSpawned>().associate { it.name to it.sessionId },
+        spawned = events.filterIsInstance<AgentEvent.SubagentSpawned>()
+            .associate { it.name to SpawnedChild(it.sessionId, it.type, it.modelId) },
     )
 }
 
 /**
  * Every tool the log shows the session honoring — a call answered with a
- * non-error result — must be in the harness's tool list. Calls that only
- * ever drew error results (hallucinated and unlisted names among them)
- * never block loading: the log stays loadable into the harness that
+ * non-error result — must be in the harness's tool list, the implied
+ * subagent tools of a harness declaring subagent types included. Calls
+ * that only ever drew error results (hallucinated and unlisted names among
+ * them) never block loading: the log stays loadable into the harness that
  * produced it.
  */
 private fun requireToolCallsSupported(events: List<AgentEvent>, harness: Harness) {
@@ -91,7 +97,9 @@ private fun requireToolCallsSupported(events: List<AgentEvent>, harness: Harness
             else -> null
         }
     }
-    val unsupported = honored - harness.tools.toSet()
+    val supported = harness.tools.toSet() +
+        (if (harness.subagents.isEmpty()) emptySet() else SUBAGENT_TOOL_NAMES)
+    val unsupported = honored - supported
     if (unsupported.isNotEmpty()) {
         throw HarnessValidationException(
             "The session log calls tools the harness does not include: ${unsupported.joinToString(", ")}. " +

@@ -13,6 +13,7 @@ import kotlin.io.path.writeText
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class HarnessTest {
@@ -22,22 +23,36 @@ class HarnessTest {
 
     // ─── Fixture helpers ──────────────────────────────────────────────
 
+    /** Renders a subagents entry line block for [manifestYaml]. */
+    private fun subagentEntry(type: String, path: String? = ".", description: String? = "A helper agent."): String =
+        buildString {
+            appendLine("  \"$type\":")
+            path?.let { appendLine("    path: \"$it\"") }
+            description?.let { appendLine("    description: \"$it\"") }
+        }.trimEnd('\n')
+
     /** Renders a harness.yaml; all string scalars quoted so blanks survive. */
     private fun manifestYaml(
         tools: List<String> = listOf("bash", "read_file"),
         extraTopLevelLine: String? = null,
+        subagentEntries: List<String>? = null,
     ): String = buildString {
         appendLine("tools:")
         tools.forEach { appendLine("  - \"$it\"") }
+        subagentEntries?.let { entries ->
+            appendLine("subagents:")
+            entries.forEach { appendLine(it) }
+        }
         extraTopLevelLine?.let { appendLine(it) }
     }
 
-    /** Writes a harness folder into the temp dir; pass null to omit a file. */
+    /** Writes a harness folder named [name] into the temp dir; pass null to omit a file. */
     private fun harnessFolder(
         manifest: String? = manifestYaml(),
         instructions: String? = "Understand the task, explore, then edit.",
+        name: String = "my-harness",
     ): Path {
-        val folder = tempDir.resolve("my-harness").createDirectories()
+        val folder = tempDir.resolve(name).createDirectories()
         manifest?.let { folder.resolve("harness.yaml").writeText(it) }
         instructions?.let { folder.resolve("instructions.md").writeText(it) }
         return folder
@@ -59,11 +74,12 @@ class HarnessTest {
         // Test working directory is the Gradle project dir.
         val harness = Harness.load(Path.of("examples/coder"))
 
-        assertEquals(
-            listOf("bash", "read_file", "write_file", "edit_file", "spawn_subagent", "prompt_subagent"),
-            harness.tools,
-        )
+        assertEquals(listOf("bash", "read_file", "write_file", "edit_file"), harness.tools)
         assertTrue(harness.instructions.contains("Understand the task"), "instructions.md content is exposed raw")
+        // Its one subagent type is itself: `self: .` resolves to the same loaded instance.
+        val self = harness.subagents.getValue("self")
+        assertTrue(self.description.isNotBlank())
+        assertSame(harness, self.harness)
     }
 
     // ─── Missing folder / files ───────────────────────────────────────
@@ -168,6 +184,31 @@ class HarnessTest {
         assertLoadFails(folder, "harness.yaml", "'model' key", "no longer part of harness.yaml", "each prompt")
     }
 
+    @Test
+    @DisplayName("A manifest still listing a subagent tool in tools is rejected with the retirement guidance")
+    fun subagentToolInToolsFails() {
+        val folder = harnessFolder(manifest = manifestYaml(tools = listOf("bash", "spawn_subagent")))
+        assertLoadFails(folder, "harness.yaml", "'spawn_subagent'", "no longer listed in 'tools'", "'subagents' map")
+    }
+
+    @Test
+    @DisplayName("Both retired subagent tools in tools are named in the retirement guidance")
+    fun bothSubagentToolsInToolsFail() {
+        val folder = harnessFolder(
+            manifest = manifestYaml(tools = listOf("bash", "spawn_subagent", "prompt_subagent")),
+        )
+        assertLoadFails(folder, "harness.yaml", "'spawn_subagent'", "'prompt_subagent'", "'subagents' map")
+    }
+
+    @Test
+    @DisplayName("Direct construction with a subagent tool in tools is rejected with the same guidance")
+    fun directConstructionWithSubagentToolFails() {
+        val exception = assertFailsWith<HarnessValidationException> {
+            Harness(tools = listOf("bash", "prompt_subagent"), instructions = "Test.")
+        }
+        assertContains(exception.message.orEmpty(), "no longer listed in 'tools'")
+    }
+
     // ─── Field validation ─────────────────────────────────────────────
 
     @Test
@@ -198,19 +239,146 @@ class HarnessTest {
         assertLoadFails(folder, "harness.yaml", "duplicate", "bash")
     }
 
-    // ─── Direct construction ──────────────────────────────────────────
-
-    /** A valid Harness built directly, bypassing the loader. */
-    private fun directHarness(): Harness = Harness(
-        tools = listOf("bash", "read_file"),
-        instructions = "Understand the task, explore, then edit.",
-    )
+    // ─── Subagents map validation ─────────────────────────────────────
 
     @Test
-    @DisplayName("copy() re-runs validation, so no invalid Harness can be built")
-    fun copyRevalidates() {
+    @DisplayName("A subagents entry without a path is rejected")
+    fun subagentEntryWithoutPathFails() {
+        val folder = harnessFolder(
+            manifest = manifestYaml(subagentEntries = listOf(subagentEntry("helper", path = null))),
+        )
+        assertLoadFails(folder, "harness.yaml", "not a valid harness manifest", "'path'")
+    }
+
+    @Test
+    @DisplayName("A subagents entry without a description is rejected")
+    fun subagentEntryWithoutDescriptionFails() {
+        val folder = harnessFolder(
+            manifest = manifestYaml(subagentEntries = listOf(subagentEntry("helper", description = null))),
+        )
+        assertLoadFails(folder, "harness.yaml", "not a valid harness manifest", "'description'")
+    }
+
+    @Test
+    @DisplayName("A blank subagent description is rejected, naming the type")
+    fun blankSubagentDescriptionFails() {
+        val folder = harnessFolder(
+            manifest = manifestYaml(subagentEntries = listOf(subagentEntry("helper", description = "  "))),
+        )
+        assertLoadFails(folder, "harness.yaml", "'helper'", "non-blank description")
+    }
+
+    @Test
+    @DisplayName("A blank subagent type name is rejected")
+    fun blankSubagentTypeNameFails() {
+        val folder = harnessFolder(manifest = manifestYaml(subagentEntries = listOf(subagentEntry("  "))))
+        assertLoadFails(folder, "harness.yaml", "subagents", "blank")
+    }
+
+    @Test
+    @DisplayName("A subagent type name with whitespace is rejected, quoting the offender")
+    fun whitespaceSubagentTypeNameFails() {
+        val folder = harnessFolder(manifest = manifestYaml(subagentEntries = listOf(subagentEntry("my helper"))))
+        assertLoadFails(folder, "harness.yaml", "subagents", "whitespace", "'my helper'")
+    }
+
+    // ─── Recursive loading ────────────────────────────────────────────
+
+    @Test
+    @DisplayName("A referenced harness loads relative to the declaring folder and resolves at spawn time")
+    fun referencedHarnessLoadsRelativeToTheDeclaringFolder() {
+        val child = harnessFolder(
+            manifest = manifestYaml(tools = listOf("bash")),
+            instructions = "Child instructions.",
+            name = "child",
+        )
+        val parent = harnessFolder(
+            manifest = manifestYaml(subagentEntries = listOf(subagentEntry("helper", path = "../${child.fileName}"))),
+            name = "parent",
+        )
+
+        val harness = Harness.load(parent)
+
+        val helper = harness.subagents.getValue("helper")
+        assertEquals("A helper agent.", helper.description)
+        assertEquals("Child instructions.", helper.harness.instructions)
+        assertEquals(listOf("bash"), helper.harness.tools)
+    }
+
+    @Test
+    @DisplayName("A subagents entry with an absolute path is rejected, naming the type and path")
+    fun absoluteSubagentPathFails() {
+        val child = harnessFolder(manifest = manifestYaml(tools = listOf("bash")), name = "child")
+        val folder = harnessFolder(
+            manifest = manifestYaml(subagentEntries = listOf(subagentEntry("helper", path = child.toString()))),
+        )
+        assertLoadFails(folder, "harness.yaml", "'helper'", "absolute path", "relative to the declaring harness folder")
+    }
+
+    @Test
+    @DisplayName("A subagents entry referencing a missing folder fails, naming the type and folder")
+    fun missingReferencedFolderFails() {
+        val folder = harnessFolder(
+            manifest = manifestYaml(subagentEntries = listOf(subagentEntry("helper", path = "../nowhere"))),
+        )
+        assertLoadFails(folder, "harness.yaml", "'helper'", "does not exist", "nowhere")
+    }
+
+    @Test
+    @DisplayName("A broken referenced harness fails the parent's load, naming the reference chain")
+    fun brokenReferencedHarnessFailsPathQualified() {
+        val child = harnessFolder(
+            manifest = "tools: []\n",
+            name = "broken-child",
+        )
+        val parent = harnessFolder(
+            manifest = manifestYaml(subagentEntries = listOf(subagentEntry("helper", path = "../${child.fileName}"))),
+            name = "parent",
+        )
+
+        assertLoadFails(
+            parent,
+            parent.resolve("harness.yaml").toString(),
+            "referenced as subagent type 'helper'",
+            child.resolve("harness.yaml").toString(),
+            "at least one",
+        )
+    }
+
+    @Test
+    @DisplayName("A self-referencing harness loads once, its type resolving to the same instance")
+    fun selfReferenceLoadsOnce() {
+        val folder = harnessFolder(manifest = manifestYaml(subagentEntries = listOf(subagentEntry("self"))))
+
+        val harness = Harness.load(folder)
+
+        assertSame(harness, harness.subagents.getValue("self").harness)
+    }
+
+    @Test
+    @DisplayName("A mutual reference cycle loads each folder once and terminates")
+    fun mutualCycleLoadsOnceAndTerminates() {
+        val a = tempDir.resolve("a").createDirectories()
+        val b = tempDir.resolve("b").createDirectories()
+        a.resolve("harness.yaml").writeText(manifestYaml(subagentEntries = listOf(subagentEntry("b", path = "../b"))))
+        a.resolve("instructions.md").writeText("Instructions for a.")
+        b.resolve("harness.yaml").writeText(manifestYaml(subagentEntries = listOf(subagentEntry("a", path = "../a"))))
+        b.resolve("instructions.md").writeText("Instructions for b.")
+
+        val loadedA = Harness.load(a)
+
+        val loadedB = loadedA.subagents.getValue("b").harness
+        assertEquals("Instructions for b.", loadedB.instructions)
+        assertSame(loadedA, loadedB.subagents.getValue("a").harness)
+    }
+
+    // ─── Direct construction ──────────────────────────────────────────
+
+    @Test
+    @DisplayName("The constructor runs validation, so no invalid Harness can be built directly")
+    fun directConstructionValidates() {
         val exception = assertFailsWith<HarnessValidationException> {
-            directHarness().copy(tools = emptyList())
+            Harness(tools = emptyList(), instructions = "Understand the task, explore, then edit.")
         }
         assertContains(exception.message.orEmpty(), "tools")
         assertContains(exception.message.orEmpty(), "at least one")

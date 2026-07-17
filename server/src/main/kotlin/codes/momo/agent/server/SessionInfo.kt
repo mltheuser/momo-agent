@@ -8,7 +8,8 @@ import kotlin.time.Duration
 /**
  * One session as the inspection endpoints report it — derived, never
  * stored. A subagent session's [harnessPath], [environment], and
- * [favorite] are its root's.
+ * [favorite] are its root's — [harnessPath] names the tree root's harness
+ * folder even for a typed child running a referenced harness.
  */
 @Serializable
 internal data class SessionInfo(

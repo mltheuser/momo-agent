@@ -3,5 +3,7 @@ tools:
   - read_file
   - write_file
   - edit_file
-  - spawn_subagent
-  - prompt_subagent
+subagents:
+  self:
+    path: .
+    description: A coding agent just like you, for delegating self-contained subtasks.
