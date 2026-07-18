@@ -24,6 +24,8 @@ public class Harness internal constructor(
      * available without filesystem access at spawn time.
      */
     public val subagents: Map<String, SubagentType>,
+    /** Canonical folder this harness was loaded from; null when constructed programmatically. */
+    public val folder: Path? = null,
 ) {
 
     /** A harness declaring no subagent types. */

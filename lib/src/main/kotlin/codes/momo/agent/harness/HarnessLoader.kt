@@ -67,7 +67,8 @@ internal object HarnessLoader {
             if (!folder.isDirectory()) {
                 fail("Harness folder not found (or not a directory): $folder")
             }
-            loaded[canonical(folder)]?.let { return it }
+            val canonicalFolder = canonical(folder)
+            loaded[canonicalFolder]?.let { return it }
             val manifestFile = folder.resolve(MANIFEST_NAME)
             if (!manifestFile.isRegularFile()) {
                 fail("Harness at $folder is missing its manifest file: $manifestFile")
@@ -76,10 +77,15 @@ internal object HarnessLoader {
             if (!instructionsFile.isRegularFile()) {
                 fail("Harness at $folder is missing its instructions file: $instructionsFile")
             }
-            return loadFiles(folder, manifestFile, instructionsFile)
+            return loadFiles(folder, canonicalFolder, manifestFile, instructionsFile)
         }
 
-        private fun loadFiles(folder: Path, manifestFile: Path, instructionsFile: Path): Harness {
+        private fun loadFiles(
+            folder: Path,
+            canonicalFolder: Path,
+            manifestFile: Path,
+            instructionsFile: Path,
+        ): Harness {
             val manifest = parseManifest(manifestFile)
             val instructions = readFileText(instructionsFile)
             // Child folders are canonicalized before the children load: the
@@ -99,12 +105,17 @@ internal object HarnessLoader {
                 SubagentType(entry.description).also { pending += it to childFolders.getValue(type) }
             }
             val harness = try {
-                Harness(tools = manifest.tools, instructions = instructions, subagents = subagents)
+                Harness(
+                    tools = manifest.tools,
+                    instructions = instructions,
+                    subagents = subagents,
+                    folder = canonicalFolder,
+                )
             } catch (exception: HarnessValidationException) {
                 // Invariant errors from Harness's init lack the file context.
                 fail("$manifestFile: ${exception.message}", exception)
             }
-            loaded[canonical(folder)] = harness
+            loaded[canonicalFolder] = harness
             childFolders.forEach { (type, childFolder) -> loadReferenced(manifestFile, type, childFolder) }
             return harness
         }

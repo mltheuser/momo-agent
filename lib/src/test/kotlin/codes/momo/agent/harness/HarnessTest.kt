@@ -13,6 +13,7 @@ import kotlin.io.path.writeText
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -80,6 +81,11 @@ class HarnessTest {
         val self = harness.subagents.getValue("self")
         assertTrue(self.description.isNotBlank())
         assertSame(harness, self.harness)
+        // Its explorer type references the sibling example folder.
+        val explorer = harness.subagents.getValue("explorer")
+        assertTrue(explorer.description.isNotBlank())
+        assertEquals(listOf("bash", "read_file"), explorer.harness.tools)
+        assertEquals(Path.of("examples/explorer").toRealPath(), explorer.harness.folder)
     }
 
     // ─── Missing folder / files ───────────────────────────────────────
@@ -303,6 +309,8 @@ class HarnessTest {
         assertEquals("A helper agent.", helper.description)
         assertEquals("Child instructions.", helper.harness.instructions)
         assertEquals(listOf("bash"), helper.harness.tools)
+        assertEquals(parent.toRealPath(), harness.folder)
+        assertEquals(child.toRealPath(), helper.harness.folder)
     }
 
     @Test
@@ -382,6 +390,16 @@ class HarnessTest {
         }
         assertContains(exception.message.orEmpty(), "tools")
         assertContains(exception.message.orEmpty(), "at least one")
+    }
+
+    @Test
+    @DisplayName("A loaded harness exposes its canonical folder; a directly constructed one has none")
+    fun folderComesOnlyFromLoading() {
+        assertNull(Harness(tools = listOf("bash"), instructions = "Explore.").folder)
+
+        val folder = harnessFolder()
+
+        assertEquals(folder.toRealPath(), Harness.load(folder).folder)
     }
 
     // ─── Tool registry seam ───────────────────────────────────────────

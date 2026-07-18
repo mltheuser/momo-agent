@@ -284,10 +284,12 @@ plus the spawn's `subagentType` and `modelId` (both `null` in logs
 predating typed spawning): `GET /{id}`, the event stream, and
 `POST /{id}/prompt` all work on children, while the listing stays
 roots-only. A child's info carries `parent` (`null` on a root); its
-`harnessPath` and `environment` are resolved through its root — children
-execute in the root's environment and own none themselves, and
-`harnessPath` names the tree root's harness folder even for a typed child
-running a referenced harness.
+`environment` is its root's — children execute in the root's environment
+and own none themselves — while its `harnessPath` names the harness
+folder the child itself runs, resolved by following each stored spawn's
+type from the root's harness down; when the chain cannot be resolved,
+the info degrades to the root's stored harness folder rather than
+erroring.
 
 The runtime attachment belongs to the whole tree and is dropped only by an
 explicit close or server shutdown — close is how a tree's memory is

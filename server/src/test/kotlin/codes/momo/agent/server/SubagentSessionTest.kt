@@ -26,15 +26,18 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.io.path.deleteExisting
 import kotlin.io.path.readLines
 import kotlin.io.path.writeText
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
@@ -61,6 +64,28 @@ class SubagentSessionTest {
     private fun runsFinished(count: Int): (AgentEvent) -> Boolean {
         var finished = 0
         return { it is AgentEvent.RunFinished && ++finished == count }
+    }
+
+    /**
+     * Runs one scripted spawn on [harness] against a throwaway registry —
+     * abandoned unclosed, a process death rather than a clean stop — and
+     * returns the stored root and child session IDs.
+     */
+    private fun spawnStoredByADeadProcess(harness: String, vararg replies: ScriptedReply): Pair<String, String> {
+        var rootId = ""
+        scriptedServer(*replies).use { llm ->
+            AiRouterClient(llm.baseUrl).use { client ->
+                val registry = SessionRegistry(tempDir.resolve("data"), client)
+                runBlocking {
+                    rootId = registry.create(harness, localWorkspace(tempDir)).id
+                    registry.startRun(rootId, "go", TEST_RUN_SETTINGS)
+                    registry.awaitRunEnd(rootId)
+                }
+            }
+        }
+        val childId = SessionStore(tempDir.resolve("data")).readEvents(rootId)
+            .filterIsInstance<AgentEvent.SubagentSpawned>().single().sessionId
+        return rootId to childId
     }
 
     /** Runs [block] after a scripted run in which the root spawned the child "helper" and went idle. */
@@ -131,7 +156,8 @@ class SubagentSessionTest {
             val child = http.get("/v1/sessions/${spawned.sessionId}").body<SessionInfo>()
             assertEquals(root.id, child.parent)
             assertEquals("helper", child.title)
-            assertEquals(root.harnessPath, child.harnessPath)
+            // A `self: .` child runs the root's folder — reported canonically.
+            assertEquals(Path.of(root.harnessPath).toRealPath().toString(), child.harnessPath)
             assertEquals(root.environment, child.environment)
             assertEquals(SessionStatus.IDLE, child.status)
         }
@@ -230,117 +256,229 @@ class SubagentSessionTest {
         }
     }
 
-    // ─── Restart & revival ────────────────────────────────────────────
-
     @Test
-    @DisplayName("A restarted tree is closed, histories intact; re-prompting the parent revives the child by name")
-    fun treeSurvivesARestart() {
-        val dataDir = tempDir.resolve("data")
-        val harness = subagentHarness()
-        val environment = localWorkspace(tempDir)
-
-        // First server process: the root spawns a typed, model-pinned child whose answer is a question.
-        var rootId = ""
-        scriptedServer(
+    @DisplayName("A typed child's info names the referenced harness folder it runs, resolved hop by hop")
+    fun typedChildrenReportTheirOwnHarness() {
+        val leaf = writeHarness(tempDir.resolve("leaf"))
+        val mid = writeHarness(tempDir.resolve("mid"), subagents = mapOf("leaf" to "../leaf"))
+        val rootFolder = writeHarness(tempDir.resolve("harness"), subagents = mapOf("mid" to "../mid"))
+        withScriptedSessionServer(
+            tempDir,
             toolCallResponse(
-                spawnSubagentCall(id = "call-1", name = "helper", type = "self", modelId = "pinned-model"),
-                promptSubagentCall(id = "call-2", name = "helper", message = "bake a cake"),
+                spawnSubagentCall(id = "call-1", name = "helper", type = "mid"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "dig deeper"),
             ).asReply(),
-            assistantResponse(finishReason = "stop", text = "Which flavor should it be?").asReply(),
-            assistantResponse(finishReason = "stop", text = "helper needs a flavor").asReply(),
-        ).use { llm ->
-            AiRouterClient(llm.baseUrl).use { client ->
-                val registry = SessionRegistry(dataDir, client)
-                runBlocking {
-                    rootId = registry.create(harness, environment).id
-                    registry.startRun(rootId, "delegate the cake", TEST_RUN_SETTINGS)
-                    registry.awaitRunEnd(rootId)
-                }
-                // The registry is deliberately abandoned unclosed: a process death, not a clean stop.
-            }
-        }
-        val childId = SessionStore(dataDir).readEvents(rootId)
-            .filterIsInstance<AgentEvent.SubagentSpawned>().single().sessionId
+            toolCallResponse(
+                spawnSubagentCall(id = "call-3", name = "deep", type = "leaf"),
+                promptSubagentCall(id = "call-4", name = "deep", message = "dig"),
+            ).asReply(),
+            assistantResponse(finishReason = "stop", text = "bedrock reached").asReply(),
+            assistantResponse(finishReason = "stop", text = "deep says: bedrock").asReply(),
+            assistantResponse(finishReason = "stop", text = "done").asReply(),
+        ) { http ->
+            val root = http.createSession(rootFolder.toString(), localWorkspace(tempDir))
+            http.prompt(root.id, "go")
+            val childId = spawnedChildId(http, root.id)
+            val grandId = spawnedChildId(http, childId)
+            http.awaitRunEnd(root.id)
 
-        // Second server process over the same data directory.
-        val requests = CopyOnWriteArrayList<ChatRequest>()
-        scriptedServer(
-            requests,
-            toolCallResponse(promptSubagentCall(id = "call-3", name = "helper", message = "vanilla")).asReply(),
-            assistantResponse(finishReason = "stop", text = "vanilla cake baked").asReply(),
-            assistantResponse(finishReason = "stop", text = "cake delivered").asReply(),
-        ).use { llm ->
-            AiRouterClient(llm.baseUrl).use { client ->
-                SessionRegistry(dataDir, client).use { registry ->
-                    withServer(registry, client) { http ->
-                        // The whole tree restarted closed, histories intact, child fetchable by ID.
-                        assertEquals(
-                            SessionStatus.CLOSED,
-                            http.get("/v1/sessions/$rootId").body<SessionInfo>().status,
-                        )
-                        val child = http.get("/v1/sessions/$childId").body<SessionInfo>()
-                        assertEquals(SessionStatus.CLOSED, child.status)
-                        assertEquals(rootId, child.parent)
-                        assertEquals(
-                            listOf(rootId),
-                            http.get("/v1/sessions").body<List<SessionInfo>>().map { it.id },
-                        )
-                        val history = http.streamEvents(childId)
-                        assertEquals(
-                            "Which flavor should it be?",
-                            assertIs<AgentEvent.RunFinished>(history.last().event).finalMessage,
-                        )
-
-                        // Re-prompting the parent revives the pre-restart child by name...
-                        http.prompt(rootId, "make it vanilla")
-                        http.awaitRunEnd(rootId)
-
-                        // ...and the revived child continues its prior conversation, still a
-                        // subagent, still under its spawn-time model override.
-                        val childTurn = requests[1]
-                        assertContains(childTurn.messages.first().text, "subagent")
-                        assertEquals(
-                            listOf("system", "user", "assistant", "user"),
-                            childTurn.messages.map { it.role },
-                        )
-                        assertEquals("vanilla", childTurn.messages.last().text)
-                        assertEquals("pinned-model", childTurn.model)
-                        assertEquals(TEST_RUN_SETTINGS.model, requests[0].model)
-                        val childLog = http.streamEvents(childId, until = runsFinished(2))
-                        assertTwoCleanRuns(childLog.map { it.event }, secondUserMessage = "vanilla")
-                    }
-                }
-            }
+            val child = http.get("/v1/sessions/$childId").body<SessionInfo>()
+            val grand = http.get("/v1/sessions/$grandId").body<SessionInfo>()
+            assertNotEquals(root.harnessPath, child.harnessPath)
+            assertEquals(mid.toRealPath().toString(), child.harnessPath)
+            assertEquals(leaf.toRealPath().toString(), grand.harnessPath)
+            // The environment stays the root's at every level.
+            assertEquals(root.environment, child.environment)
+            assertEquals(root.environment, grand.environment)
         }
     }
 
     @Test
-    @DisplayName("A stored child missing from its parent's log is a 404 on prompt that leaves no runtime behind")
-    fun tornSpawnRecordLeavesNoAttachment() {
-        val dataDir = tempDir.resolve("data")
-        var rootId = ""
-        scriptedServer(
+    @DisplayName("A child whose stored type the harness no longer declares reports the root's harness folder")
+    fun unresolvableChildFallsBackToTheRootHarness() {
+        withSpawnedChild { http, rootId, childId ->
+            // The harness folder on disk renames the child's type away after the spawn.
+            writeHarness(tempDir.resolve("harness"), tools = listOf("bash"), subagents = mapOf("other" to "."))
+
+            val response = http.get("/v1/sessions/$childId")
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            val rootPath = http.get("/v1/sessions/$rootId").body<SessionInfo>().harnessPath
+            assertEquals(rootPath, response.body<SessionInfo>().harnessPath)
+        }
+    }
+
+    @Test
+    @DisplayName("A child whose root harness no longer loads reports the root's stored harness folder")
+    fun unloadableRootHarnessFallsBackToTheStoredPath() {
+        val mid = writeHarness(tempDir.resolve("mid"))
+        val rootFolder = writeHarness(tempDir.resolve("harness"), subagents = mapOf("mid" to "../mid"))
+        withScriptedSessionServer(
+            tempDir,
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper", type = "mid"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "get ready"),
+            ).asReply(),
+            assistantResponse(finishReason = "stop", text = "ready").asReply(),
+            assistantResponse(finishReason = "stop", text = "spawned").asReply(),
+        ) { http ->
+            val root = http.createSession(rootFolder.toString(), localWorkspace(tempDir))
+            http.prompt(root.id, "go")
+            val childId = spawnedChildId(http, root.id)
+            http.awaitRunEnd(root.id)
+            val resolved = http.get("/v1/sessions/$childId").body<SessionInfo>().harnessPath
+            assertEquals(mid.toRealPath().toString(), resolved, "the type resolves while the root harness loads")
+
+            // The root harness folder loses its manifest after the spawn: Harness.load fails outright.
+            rootFolder.resolve("harness.yaml").deleteExisting()
+
+            val response = http.get("/v1/sessions/$childId")
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(root.harnessPath, response.body<SessionInfo>().harnessPath)
+        }
+    }
+
+    @Test
+    @DisplayName("A stored spawn without a type — a log predating typed spawning — reports the root's harness folder")
+    fun untypedStoredSpawnFallsBackToTheRootHarness() {
+        val (rootId, childId) = spawnStoredByADeadProcess(
+            subagentHarness(),
             toolCallResponse(
                 spawnSubagentCall(id = "call-1", name = "helper"),
                 promptSubagentCall(id = "call-2", name = "helper", message = "get ready"),
             ).asReply(),
             assistantResponse(finishReason = "stop", text = "ready").asReply(),
             assistantResponse(finishReason = "stop", text = "spawned").asReply(),
-        ).use { llm ->
-            AiRouterClient(llm.baseUrl).use { client ->
-                val registry = SessionRegistry(dataDir, client)
-                runBlocking {
-                    rootId = registry.create(subagentHarness(), localWorkspace(tempDir)).id
-                    registry.startRun(rootId, "go", TEST_RUN_SETTINGS)
-                    registry.awaitRunEnd(rootId)
-                }
-            }
+        )
+        // The stored parent log is rewritten in the pre-typed-spawning format: its spawn carries no type.
+        val store = SessionStore(tempDir.resolve("data"))
+        tempDir.resolve("data/sessions/$rootId/events.jsonl").writeText(
+            store.readEvents(rootId).joinToString("\n", postfix = "\n") { event ->
+                Json.encodeToString(
+                    if (event is AgentEvent.SubagentSpawned) event.copy(type = null, modelId = null) else event,
+                )
+            },
+        )
+        assertNull(store.readEvents(rootId).filterIsInstance<AgentEvent.SubagentSpawned>().single().type)
+
+        withSessionServer(tempDir) { http ->
+            val response = http.get("/v1/sessions/$childId")
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            val rootPath = http.get("/v1/sessions/$rootId").body<SessionInfo>().harnessPath
+            assertEquals(rootPath, response.body<SessionInfo>().harnessPath)
         }
-        val childId = SessionStore(dataDir).readEvents(rootId)
-            .filterIsInstance<AgentEvent.SubagentSpawned>().single().sessionId
+    }
+
+    @Test
+    @DisplayName("A child whose parent's stored log is corrupt reports the root's stored harness folder")
+    fun corruptParentLogFallsBackToTheRootHarness() {
+        val harness = subagentHarness()
+        val (rootId, childId) = spawnStoredByADeadProcess(
+            harness,
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "get ready"),
+            ).asReply(),
+            assistantResponse(finishReason = "stop", text = "ready").asReply(),
+            assistantResponse(finishReason = "stop", text = "spawned").asReply(),
+        )
+        // Garbage above the log's tail corrupts the whole stored log — reading it throws.
+        val parentLog = tempDir.resolve("data/sessions/$rootId/events.jsonl")
+        parentLog.writeText(
+            parentLog.readLines().joinToString("\n", postfix = "\n") { line ->
+                if ("subagent_spawned" in line) "garbage" else line
+            },
+        )
+        assertFailsWith<CorruptSessionException> { SessionStore(tempDir.resolve("data")).readEvents(rootId) }
+
+        withSessionServer(tempDir) { http ->
+            val response = http.get("/v1/sessions/$childId")
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(harness, response.body<SessionInfo>().harnessPath)
+        }
+    }
+
+    // ─── Restart & revival ────────────────────────────────────────────
+
+    @Test
+    @DisplayName("A restarted tree is closed, histories intact; re-prompting the parent revives the child by name")
+    fun treeSurvivesARestart() {
+        // First server process: the root spawns a typed, model-pinned child whose answer is a question.
+        val (rootId, childId) = spawnStoredByADeadProcess(
+            subagentHarness(),
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper", type = "self", modelId = "pinned-model"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "bake a cake"),
+            ).asReply(),
+            assistantResponse(finishReason = "stop", text = "Which flavor should it be?").asReply(),
+            assistantResponse(finishReason = "stop", text = "helper needs a flavor").asReply(),
+        )
+
+        // Second server process over the same data directory.
+        val requests = CopyOnWriteArrayList<ChatRequest>()
+        withScriptedSessionServer(
+            tempDir,
+            requests,
+            toolCallResponse(promptSubagentCall(id = "call-3", name = "helper", message = "vanilla")).asReply(),
+            assistantResponse(finishReason = "stop", text = "vanilla cake baked").asReply(),
+            assistantResponse(finishReason = "stop", text = "cake delivered").asReply(),
+        ) { http ->
+            // The whole tree restarted closed, histories intact, child fetchable by ID.
+            assertEquals(
+                SessionStatus.CLOSED,
+                http.get("/v1/sessions/$rootId").body<SessionInfo>().status,
+            )
+            val child = http.get("/v1/sessions/$childId").body<SessionInfo>()
+            assertEquals(SessionStatus.CLOSED, child.status)
+            assertEquals(rootId, child.parent)
+            assertEquals(
+                listOf(rootId),
+                http.get("/v1/sessions").body<List<SessionInfo>>().map { it.id },
+            )
+            val history = http.streamEvents(childId)
+            assertEquals(
+                "Which flavor should it be?",
+                assertIs<AgentEvent.RunFinished>(history.last().event).finalMessage,
+            )
+
+            // Re-prompting the parent revives the pre-restart child by name...
+            http.prompt(rootId, "make it vanilla")
+            http.awaitRunEnd(rootId)
+
+            // ...and the revived child continues its prior conversation, still a
+            // subagent, still under its spawn-time model override.
+            val childTurn = requests[1]
+            assertContains(childTurn.messages.first().text, "subagent")
+            assertEquals(
+                listOf("system", "user", "assistant", "user"),
+                childTurn.messages.map { it.role },
+            )
+            assertEquals("vanilla", childTurn.messages.last().text)
+            assertEquals("pinned-model", childTurn.model)
+            assertEquals(TEST_RUN_SETTINGS.model, requests[0].model)
+            val childLog = http.streamEvents(childId, until = runsFinished(2))
+            assertTwoCleanRuns(childLog.map { it.event }, secondUserMessage = "vanilla")
+        }
+    }
+
+    @Test
+    @DisplayName("A stored child missing from its parent's log is a 404 on prompt that leaves no runtime behind")
+    fun tornSpawnRecordLeavesNoAttachment() {
+        val (rootId, childId) = spawnStoredByADeadProcess(
+            subagentHarness(),
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "get ready"),
+            ).asReply(),
+            assistantResponse(finishReason = "stop", text = "ready").asReply(),
+            assistantResponse(finishReason = "stop", text = "spawned").asReply(),
+        )
         // A process death can tear the spawn line off the parent's log
         // after the child's folder exists; the child becomes unreachable.
-        val parentLog = dataDir.resolve("sessions/$rootId/events.jsonl")
+        val parentLog = tempDir.resolve("data/sessions/$rootId/events.jsonl")
         parentLog.writeText(
             parentLog.readLines().filterNot { "subagent_spawned" in it }.joinToString("\n", postfix = "\n"),
         )

@@ -1,0 +1,3 @@
+tools:
+  - bash
+  - read_file

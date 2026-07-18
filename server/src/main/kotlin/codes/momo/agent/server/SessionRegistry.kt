@@ -7,6 +7,7 @@ import codes.momo.agent.AgentEventListener
 import codes.momo.agent.RunSettings
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
+import codes.momo.agent.harness.HarnessValidationException
 import codes.momo.agent.liveSubagentBySessionId
 import codes.momo.agent.subagentBySessionId
 import kotlinx.coroutines.CoroutineScope
@@ -134,7 +135,7 @@ internal class SessionRegistry(
             id = id,
             parent = position.path.dropLast(1).lastOrNull(),
             title = events.sessionTitle(),
-            harnessPath = position.root.harnessPath,
+            harnessPath = resolvedHarnessPath(position),
             environment = position.root.environment,
             status = when {
                 runtime == null -> SessionStatus.CLOSED
@@ -146,6 +147,47 @@ internal class SessionRegistry(
             updatedAtMillis = events.sessionUpdatedAtMillis(),
             lastRun = events.lastRunStats(),
         )
+    }
+
+    /**
+     * The folder of the harness [position]'s session actually runs: for a
+     * child, the root's loaded harness followed hop by hop through each
+     * stored spawn's declared type. Any unresolvable hop — a root harness
+     * that no longer loads, an untyped stored spawn, a type the harness no
+     * longer declares, an unreadable ancestor log — degrades to the root's
+     * stored harness path, so inspection never fails on configuration drift.
+     */
+    private fun resolvedHarnessPath(position: TreePosition): String {
+        if (position.path.size == 1) {
+            return position.root.harnessPath
+        }
+        val resolved = position.path.zipWithNext().fold(rootHarnessOrNull(position.root)) { harness, hop ->
+            val (parentId, childId) = hop
+            if (harness == null) {
+                null
+            } else {
+                storedSpawnType(parentId, childId)?.let { type -> harness.subagents[type]?.harness }
+            }
+        }
+        return resolved?.folder?.toString() ?: position.root.harnessPath
+    }
+
+    private fun rootHarnessOrNull(root: SessionMetadata.Root): Harness? = try {
+        Harness.load(Path.of(root.harnessPath))
+    } catch (_: HarnessValidationException) {
+        null
+    }
+
+    /** The stored type of [childId]'s spawn in [parentId]'s log; a session ID is spawned at most once. */
+    private fun storedSpawnType(parentId: String, childId: String): String? = try {
+        store.readEvents(parentId)
+            .filterIsInstance<AgentEvent.SubagentSpawned>()
+            .lastOrNull { it.sessionId == childId }
+            ?.type
+    } catch (_: IOException) {
+        null
+    } catch (_: CorruptSessionException) {
+        null
     }
 
     /**
