@@ -4,9 +4,6 @@ tools:
   - write_file
   - edit_file
 subagents:
-  explorer:
-    path: ../explorer
-    description: A read-only exploration agent that maps a workspace and answers questions about it without changing anything.
   self:
     path: .
-    description: A coding agent just like you, for delegating self-contained subtasks.
+    description: A general coding agent just like you, for delegating self-contained subtasks.
