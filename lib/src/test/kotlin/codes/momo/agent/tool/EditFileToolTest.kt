@@ -7,10 +7,17 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermissions
+import kotlin.io.path.createDirectories
+import kotlin.io.path.getPosixFilePermissions
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.setPosixFilePermissions
 import kotlin.io.path.writeText
 import kotlin.test.assertContains
 import kotlin.test.assertContentEquals
@@ -125,6 +132,19 @@ class EditFileToolTest {
         assertEquals("émoji 🚀 前文\n" + new + "\nünïcødé 🎯 後文, no trailing newline", catBack(tempDir, name))
     }
 
+    @Test
+    @DisplayName("A successful edit keeps the target's permission bits and leaves no temp file behind")
+    fun editKeepsPermissionsAndLeavesNoTemp() {
+        val executable = PosixFilePermissions.fromString("rwxr-xr-x")
+        val path = writeFile("run.sh", "#!/bin/sh\necho old\n").apply { setPosixFilePermissions(executable) }
+
+        val result = edit("run.sh", "old", "new")
+
+        assertIs<ToolResult.Success>(result, "edit failed: ${result.text}")
+        assertEquals(executable, path.getPosixFilePermissions())
+        assertEquals(listOf(path), tempDir.listDirectoryEntries())
+    }
+
     // ─── Match errors ─────────────────────────────────────────────────
 
     @Test
@@ -218,6 +238,24 @@ class EditFileToolTest {
         val error = assertIs<ToolResult.Error>(result)
         assertContains(error.message, "cannot write '/file.txt'")
         assertContains(error.message, "disk full")
+    }
+
+    @Test
+    @DisplayName("A write-back that cannot create its temp file fails and leaves the file unchanged")
+    fun unwritableDirectoryLeavesFileUnchanged() {
+        val locked = tempDir.resolve("locked").createDirectories()
+        locked.resolve("notes.txt").writeText("alpha\n")
+        locked.setPosixFilePermissions(PosixFilePermissions.fromString("r-xr-xr-x"))
+        try {
+            assumeFalse(Files.isWritable(locked), "running as root — permission checks do not apply")
+
+            val result = edit("locked/notes.txt", "alpha", "beta")
+
+            assertContains(assertIs<ToolResult.Error>(result).message, "cannot write")
+            assertEquals("alpha\n", catBack(tempDir, "locked/notes.txt"))
+        } finally {
+            locked.setPosixFilePermissions(PosixFilePermissions.fromString("rwxr-xr-x"))
+        }
     }
 
     // ─── exec invocation ──────────────────────────────────────────────

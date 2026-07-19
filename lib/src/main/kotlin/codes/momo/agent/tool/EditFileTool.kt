@@ -137,17 +137,27 @@ public class EditFileTool : Tool<EditFileArgs>(
 }
 
 /**
- * The tool name fills the `$0` slot, as in write_file's script. The target
- * was just read, so unlike there, nothing needs creating or guarding.
+ * The tool name fills the `$0` slot, as in write_file's script. The new
+ * content goes to a same-directory temp seeded with `cp -p` — a
+ * mode-preserving copy of the target, POSIX-portable — so the replaced
+ * file keeps its permissions, and the final `mv` is an atomic rename on
+ * the same filesystem: the target holds either the old content or the
+ * complete new content, never a truncated write — that is what makes the
+ * description's "a call that fails leaves the file unchanged" hold.
+ * Accepted caveats: a symlink target is replaced by a regular file, and a
+ * hard kill mid-write can leave a `*.edit-tmp.*` temp behind.
  */
 private val EDIT_WRITE_SCRIPT: String = """
-    cat > "$1"
+    tmp="$1.edit-tmp.$$"
+    cp -p -- "$1" "${'$'}tmp" || exit
+    cat > "${'$'}tmp" || { rm -f -- "${'$'}tmp"; exit 1; }
+    mv -f -- "${'$'}tmp" "$1"
 """.trimIndent()
 
 /** LLM-facing contract of [EditFileTool] — the model only knows what this says. */
 private val EDIT_FILE_DESCRIPTION: String = """
     Replaces one exact string in an existing file. `old_string` must match the file content
     exactly — including whitespace and indentation, with no normalization and no regex — and
-    must occur exactly once. Binary content does not round-trip; use this tool only on
-    text files. For creating a new file use `write_file`.
+    must occur exactly once. A call that fails leaves the file unchanged. Binary files come
+    back garbled — use this only on text files. For creating a new file use `write_file`.
 """.trimIndent()

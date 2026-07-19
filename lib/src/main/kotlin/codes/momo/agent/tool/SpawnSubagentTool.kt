@@ -9,12 +9,12 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 public data class SpawnSubagentArgs(
-    @Description("Caller-chosen, human-readable name for the new subagent.")
+    @Description("Unique name for the new subagent.")
     val name: String,
-    @Description("The subagent type to spawn — one of the declared types.")
+    @Description("The subagent type — one of the type names listed in the tool description.")
     val type: String,
     @SerialName("model_id")
-    @Description("Model the subagent's runs use when you prompt it; omit to use your own run's model.")
+    @Description("Model id for the subagent's runs; omit to use the same model as your own run.")
     val modelId: String? = null,
 )
 
@@ -48,11 +48,12 @@ public class SpawnSubagentTool internal constructor(
 private fun spawnSubagentDescription(subagentTypes: Map<String, SubagentType>): String = buildString {
     append(
         """
-        Creates a subagent — a fresh agent of the type you pick, working for you under the name
-        you give it here. It starts with no conversation; send it work with prompt_subagent.
-        Delegate self-contained pieces of work to subagents to keep your own context focused.
-        Runs you drive through prompt_subagent use your own run's model, unless model_id names
-        another. Available types:
+        Creates a subagent: a fresh agent that works for you. It starts with no conversation
+        and does nothing until you send it work with prompt_subagent. Delegate self-contained
+        pieces of work to subagents to keep your own context focused. Each subagent needs a
+        unique name; prompt_subagent addresses it by that name. By default the subagent's runs
+        use the same model as your own run; set model_id to run it on a different model. Pass
+        one of the following as `type`:
         """.trimIndent(),
     )
     subagentTypes.forEach { (type, entry) -> append("\n- ").append(type).append(": ").append(entry.description) }

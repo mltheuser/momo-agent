@@ -91,6 +91,6 @@ private val WRITE_SCRIPT: String = """
 /** LLM-facing contract of [WriteFileTool] — the model only knows what this says. */
 private val WRITE_FILE_DESCRIPTION: String = """
     Creates a new file with the given content. `path` is the ABSOLUTE path of the file to
-    create; missing parent directories are created automatically. For changing an existing
-    file use `edit_file`.
+    create; missing parent directories are created automatically. If the file already exists
+    the call fails and nothing is written.
 """.trimIndent()

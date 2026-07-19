@@ -171,7 +171,9 @@ public class ReadFileTool : Tool<ReadFileArgs>(
 private val READ_FILE_DESCRIPTION: String = """
     Reads a UTF-8 text file from the workspace and returns its content verbatim — no line
     numbers, nothing reflowed — so the output can be copied exactly as it is in the file.
-    Binary content does not round-trip; use this tool only on text files. `path` is the
-    ABSOLUTE path of the text file to read. Searching and listing files is the `bash`
-    tool's job (grep/find/ls).
+    Each call returns a window of at most ${ReadFileTool.MAX_WINDOW_LINES} lines; every result ends in a footer saying
+    how the window ended and, when the file continues, the exact offset to call with next.
+    A window that starts inside the file and runs past the end just ends at the last line.
+    Binary files come back garbled — use this only on text files. `path` is the ABSOLUTE path
+    of the text file to read. Searching and listing files is the `bash` tool's job (grep/find/ls).
 """.trimIndent()

@@ -54,7 +54,7 @@ class WriteFileToolTest {
     // ─── Definition ───────────────────────────────────────────────────
 
     @Test
-    @DisplayName("The definition documents create semantics, parent creation, and edit_file steering")
+    @DisplayName("The definition documents create semantics, parent creation, and the exists refusal")
     fun definitionDocumentsTheContract() {
         val definition = WriteFileTool().definition
 
@@ -63,7 +63,7 @@ class WriteFileToolTest {
         assertContains(description, "Creates")
         assertContains(description, "ABSOLUTE path")
         assertContains(description, "parent directories")
-        assertContains(description, "edit_file")
+        assertContains(description, "already exists")
     }
 
     @Test

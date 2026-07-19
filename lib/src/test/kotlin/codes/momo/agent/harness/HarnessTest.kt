@@ -76,16 +76,14 @@ class HarnessTest {
         val harness = Harness.load(Path.of("examples/coder"))
 
         assertEquals(listOf("bash", "read_file", "write_file", "edit_file"), harness.tools)
-        assertTrue(harness.instructions.contains("Understand the task"), "instructions.md content is exposed raw")
+        assertTrue(
+            harness.instructions.contains("careful, methodical coding agent"),
+            "instructions.md content is exposed raw",
+        )
         // Its one subagent type is itself: `self: .` resolves to the same loaded instance.
         val self = harness.subagents.getValue("self")
         assertTrue(self.description.isNotBlank())
         assertSame(harness, self.harness)
-        // Its explorer type references the sibling example folder.
-        val explorer = harness.subagents.getValue("explorer")
-        assertTrue(explorer.description.isNotBlank())
-        assertEquals(listOf("bash", "read_file"), explorer.harness.tools)
-        assertEquals(Path.of("examples/explorer").toRealPath(), explorer.harness.folder)
     }
 
     // ─── Missing folder / files ───────────────────────────────────────

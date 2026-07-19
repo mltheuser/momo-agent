@@ -74,8 +74,10 @@ private val BASH_DESCRIPTION: String = """
     or shell functions. Chain dependent steps with `&&` and use paths relative to the workspace
     root.
 
-    Commands are killed after ${Budgets.TOOL_TIMEOUT} and report a timeout error with any partial output. Output
-    over ${ToolRegistry.MAX_RESULT_CHARS} characters is truncated. For long-running processes (e.g. servers), background
-    them with BOTH stdout and stderr redirected (to a file or /dev/null) — a backgrounded
-    process still holding either stream hangs the call until the timeout.
+    Commands are killed after ${Budgets.TOOL_TIMEOUT} and report a timeout error with any partial output. stdout
+    and stderr come back in one result (stderr first) and share a budget of ${ToolRegistry.MAX_RESULT_CHARS} characters;
+    truncation keeps the beginning and drops the end, so to see the end of long output, filter
+    it (e.g. `tail`, `grep`) instead of dumping it. Long-running processes (e.g. servers) MUST
+    be backgrounded with BOTH stdout and stderr redirected (to a file or /dev/null) — a
+    backgrounded process still holding either stream hangs the call until the timeout.
 """.trimIndent()
