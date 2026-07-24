@@ -152,6 +152,11 @@ internal class Subagents(
 private fun RunResult.asToolResult(name: String): ToolResult = when (status) {
     RunResult.Status.COMPLETED -> ToolResult.Success(finalMessage.orEmpty())
 
+    RunResult.Status.STOPPED -> ToolResult.Error(
+        "subagent '$name' run ended as STOPPED — it was stopped before it answered. " +
+            "Prompting it again continues where it left off.",
+    )
+
     RunResult.Status.TURNS_EXHAUSTED -> ToolResult.Error(
         "subagent '$name' run ended as TURNS_EXHAUSTED — it spent its turn budget before answering. " +
             "Prompting it again continues where it left off with a fresh budget.",

@@ -8,10 +8,10 @@ Shared build conventions live in the root build script.
 ## Build & verify
 
 - `./gradlew build` — compile + detekt + unit tests of both modules (needs
-  the ai-router checkout on disk — see README). The server's SSE tests run
-  real-time 30 s timeouts and are known to flake — reproduced on an
-  unmodified `main` (A/B-verified 2026-07-17), worst when the machine is
-  loaded — re-run before suspecting a change.
+  the ai-router checkout on disk — see README). The server's SSE tests
+  flake under load, a different one each run: re-run before suspecting a
+  change, and never infer one from *which* test failed (evidence in
+  README, Building).
 - `./lint.sh` / `./fmt.sh` — detekt check / auto-fix formatting.
 - `./gradlew liveTest` — live tests against a running local ai-router
   server; the e2e container variant also needs Docker (not in
@@ -30,6 +30,10 @@ Shared build conventions live in the root build script.
 - Comments and KDoc are minimal and purposeful: say only what naming and
   structure cannot, state each contract fact in exactly one place, and keep
   KDoc self-contained (no planning-doc or issue references).
+- `abort` and `stop` name different things and must never be swapped:
+  aborting is close/delete/shutdown cancelling a tree's runs, plus the
+  transcript repair for tool calls a run ended before answering; stopping
+  is the user's run-scoped command that records a `stopped` outcome.
 - Stored session state is a persisted format: the `@SerialName`s on
   `AgentEvent` and `RunResult.Status` and the `SessionMetadata` variant
   names in `session.json` are a compatibility contract — never change
@@ -58,6 +62,10 @@ Shared build conventions live in the root build script.
 - [../planning/issues/agent-lib/README.md](../planning/issues/agent-lib/README.md) — read when
   picking up an issue or looking up how a delivered feature was designed:
   issue index, binding design decisions, per-issue Outcomes (lives in the
-  enclosing momo-codes workspace, outside this repo).
+  enclosing momo-codes workspace, outside this repo). If a server feature
+  isn't in that index, look in
+  [vscode-client](../planning/issues/vscode-client/README.md) — the
+  momo-agent gaps the client needed were specified and delivered inside
+  the client's own issues.
 - [lib/examples/coder/](lib/examples/coder/) — the reference harness folder;
   read when authoring a harness or working on harness loading.

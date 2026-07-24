@@ -4,8 +4,8 @@ import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ChatRequest
 import codes.momo.agent.environment.LocalExecutionEnvironment
 import codes.momo.agent.harness.Harness
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -19,7 +19,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class SubagentRestoreTest {
@@ -85,7 +84,7 @@ class SubagentRestoreTest {
         }
     }
 
-    // ─── Cancellation ─────────────────────────────────────────────────
+    // ─── Cancellation and stopping ────────────────────────────────────
 
     @Test
     @DisplayName("Cancelling the parent mid-child-run cascades to the child and both logs stay loadable")
@@ -102,11 +101,7 @@ class SubagentRestoreTest {
             AiRouterClient(server.baseUrl).use { client ->
                 runBlocking {
                     val run = launch { workspace.agent(client, tree).send("go", TEST_RUN_SETTINGS) }
-                    withTimeout(5.seconds) {
-                        while (tree.children["helper"]?.events.orEmpty().none { it is AgentEvent.LlmCallStarted }) {
-                            delay(10.milliseconds)
-                        }
-                    }
+                    tree.awaitChildLlmCall("helper")
 
                     withTimeout(5.seconds) { run.cancelAndJoin() }
 
@@ -131,6 +126,55 @@ class SubagentRestoreTest {
             }
         }
         // The child's cut log loads too, keeping its identity.
+        withUnusedClient { client ->
+            val child = Agent.load(childEvents, SUBAGENT_HARNESS, client, LocalExecutionEnvironment(workspace))
+            assertEquals(assertIs<AgentEvent.SessionStarted>(childEvents.first()).sessionId, child.sessionId)
+        }
+    }
+
+    @Test
+    @DisplayName("Stopping a parent blocked on a child cascades: both runs end STOPPED and both logs load")
+    fun stopCascadesToTheChildAndBothRunsEndStopped() {
+        val tree = TreeEventListener()
+        val held = ScriptedReply.Held(assistantResponse(finishReason = "stop", text = "never delivered"))
+        scriptedServer(
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "work away"),
+            ).asReply(),
+            held,
+        ).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                runBlocking {
+                    val parent = workspace.agent(client, tree)
+                    val run = async { parent.send("go", TEST_RUN_SETTINGS) }
+                    tree.awaitChildLlmCall("helper")
+
+                    parent.stop()
+
+                    // The held reply was never released, so only the cascade
+                    // can have ended the child's run — and the child's stopped
+                    // run answers the parent's prompt call instead of throwing.
+                    val result = withTimeout(5.seconds) { run.await() }
+                    assertEquals(RunResult.Status.STOPPED, result.status)
+                    assertContains(result.transcript.toolTexts().last(), "'helper' run ended as STOPPED")
+                }
+            }
+        }
+        // Every run the stop cut records its own well-formed end.
+        val childEvents = assertNotNull(tree.children["helper"]).events
+        assertEquals(RunResult.Status.STOPPED, assertIs<AgentEvent.RunFinished>(childEvents.last()).status)
+        assertEquals(RunResult.Status.STOPPED, assertIs<AgentEvent.RunFinished>(tree.events.last()).status)
+
+        // Both logs load again and continue their conversations.
+        scriptedServer(assistantResponse(finishReason = "stop", text = "recovered")).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                val parent = Agent.load(tree.events, SUBAGENT_HARNESS, client, LocalExecutionEnvironment(workspace))
+                val result = runBlocking { parent.send("continue", TEST_RUN_SETTINGS) }
+
+                assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+            }
+        }
         withUnusedClient { client ->
             val child = Agent.load(childEvents, SUBAGENT_HARNESS, client, LocalExecutionEnvironment(workspace))
             assertEquals(assertIs<AgentEvent.SessionStarted>(childEvents.first()).sessionId, child.sessionId)

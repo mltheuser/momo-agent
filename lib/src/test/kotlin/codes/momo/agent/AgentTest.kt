@@ -6,9 +6,11 @@ import ai.router.sdk.models.ToolCallFunction
 import codes.momo.agent.environment.LocalExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -18,14 +20,14 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.net.ServerSocket
 import java.nio.file.Path
-import kotlin.io.path.notExists
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class AgentTest {
@@ -233,11 +235,7 @@ class AgentTest {
             listener = listener,
         ) { agent ->
             val first = launch { agent.send("first", TEST_RUN_SETTINGS) }
-            withTimeout(5.seconds) {
-                while (marker.notExists()) {
-                    delay(10.milliseconds)
-                }
-            }
+            awaitExists(marker)
 
             first.cancelAndJoin()
 
@@ -253,9 +251,123 @@ class AgentTest {
             assertEquals("call-1", aborted.toolCallId)
             assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.text)
 
-            // The cancelled run logs no RunFinished — the sole carve-out from run-end emission.
+            // The cancelled run logs no RunFinished — the carve-out close,
+            // delete and shutdown keep; a stop records its end instead.
             val finished = listener.events.filterIsInstance<AgentEvent.RunFinished>().single()
             assertEquals("done", finished.finalMessage)
+        }
+    }
+
+    // ─── Stopping a run ───────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Stopping mid-tool ends the run as STOPPED, repairs the transcript, and leaves the agent usable")
+    fun stopEndsTheRunAsStoppedAndAgentStaysUsable() {
+        val marker = workspace.resolve("tool-started")
+        val listener = CollectingEventListener()
+        workspace.withScriptedAgent(
+            toolCallResponse(bashCall(id = "call-1", command = "touch '$marker' && sleep 30")),
+            assistantResponse(finishReason = "stop", text = "done"),
+            listener = listener,
+        ) { agent ->
+            val first = async { agent.send("first", TEST_RUN_SETTINGS) }
+            awaitExists(marker)
+
+            agent.stop()
+
+            // The run reports its own end instead of throwing: the tool's
+            // process tree is killed well inside the scripted 30 s sleep.
+            val stopped = withTimeout(5.seconds) { first.await() }
+            assertEquals(RunResult.Status.STOPPED, stopped.status)
+            assertNull(stopped.finalMessage)
+            assertNull(stopped.error)
+            assertEquals(1, stopped.turnsUsed)
+            val aborted = stopped.transcript.single { it.role == "tool" }
+            assertEquals("call-1", aborted.toolCallId)
+            assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.text)
+
+            // The stopped run's end is logged like any other outcome, and the
+            // agent takes the next prompt over the repaired conversation.
+            assertEquals(
+                RunResult.Status.STOPPED,
+                listener.events.filterIsInstance<AgentEvent.RunFinished>().single().status,
+            )
+            val second = agent.send("second", TEST_RUN_SETTINGS)
+            assertEquals(RunResult.Status.COMPLETED, second.status, "error: ${second.error}")
+            assertEquals("done", second.finalMessage)
+            assertEquals(
+                listOf("system", "user", "assistant", "tool", "user", "assistant"),
+                second.transcript.map { it.role },
+            )
+        }
+    }
+
+    @Test
+    @DisplayName("A stop landing after the loop decided its outcome leaves the completed run standing")
+    fun stopLandingOnADecidedOutcomeLeavesTheRunStanding() {
+        val listener = CollectingEventListener()
+        val parked = CompletableDeferred<Unit>()
+        val gate = CountDownLatch(1)
+        // BudgetUpdated is a turn's last event, so parking the run there
+        // holds it in the window this test is about: the answer is in, the
+        // loop has yet to decide on it, and nothing suspends in between.
+        val parkingListener = AgentEventListener { event ->
+            listener.onEvent(event)
+            if (event is AgentEvent.BudgetUpdated) {
+                parked.complete(Unit)
+                assertTrue(gate.await(5, TimeUnit.SECONDS), "the stop must reach the parked run")
+            }
+        }
+        workspace.withScriptedAgent(
+            assistantResponse(finishReason = "stop", text = "the answer"),
+            listener = parkingListener,
+        ) { agent ->
+            // A thread of its own: parking blocks the one the run is on.
+            val run = async(Dispatchers.IO) { agent.send("go", TEST_RUN_SETTINGS) }
+            withTimeout(5.seconds) { parked.await() }
+
+            // UNDISPATCHED, so the loop is already cancelled when this
+            // returns: stop() suspends only afterwards, on the run's end.
+            val stopper = launch(start = CoroutineStart.UNDISPATCHED) { agent.stop() }
+            gate.countDown()
+
+            // The stop cut a live run and still lost the race, so it did
+            // nothing at all: no status of its own, and the answer neither
+            // dropped nor mislabelled.
+            val result = withTimeout(5.seconds) { run.await() }
+            withTimeout(5.seconds) { stopper.join() }
+            assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+            assertEquals("the answer", result.finalMessage)
+            assertNull(result.error)
+            val finished = listener.events.filterIsInstance<AgentEvent.RunFinished>().single()
+            assertEquals(RunResult.Status.COMPLETED, finished.status)
+            assertEquals("the answer", finished.finalMessage)
+        }
+    }
+
+    @Test
+    @DisplayName("A stop with no run in flight is a no-op, before the first run and after one ended")
+    fun stopWithNothingInFlightIsANoOp() {
+        val listener = CollectingEventListener()
+        workspace.withScriptedAgent(
+            assistantResponse(finishReason = "stop", text = "first answer"),
+            assistantResponse(finishReason = "stop", text = "second answer"),
+            listener = listener,
+        ) { agent ->
+            agent.stop()
+
+            val first = agent.send("first", TEST_RUN_SETTINGS)
+            assertEquals(RunResult.Status.COMPLETED, first.status, "error: ${first.error}")
+
+            agent.stop()
+
+            val second = agent.send("second", TEST_RUN_SETTINGS)
+            assertEquals(RunResult.Status.COMPLETED, second.status, "error: ${second.error}")
+            assertEquals("second answer", second.finalMessage)
+            assertEquals(
+                listOf(RunResult.Status.COMPLETED, RunResult.Status.COMPLETED),
+                listener.events.filterIsInstance<AgentEvent.RunFinished>().map { it.status },
+            )
         }
     }
 }

@@ -17,7 +17,12 @@ import codes.momo.agent.tool.ToolRegistry
 import codes.momo.agent.tool.ToolResult
 import codes.momo.agent.tool.coreToolRegistry
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration
 import kotlin.time.TimeSource
 
@@ -96,6 +101,9 @@ public class Agent internal constructor(
         addAll(session.conversation)
     }
 
+    // Volatile: [stop] reads it on whatever thread the user command arrives
+    // on, while the run itself writes it from the run's own.
+    @Volatile
     private var currentRun: RunState? = null
 
     init {
@@ -108,8 +116,8 @@ public class Agent internal constructor(
      * Sends [text] as the next user message and runs the loop to a terminal
      * outcome: each turn is one LLM call, followed by executing every
      * requested tool call sequentially, in order, until the model answers
-     * without tool calls or a budget ends the run. Budget breaches and
-     * terminal LLM failures are reported through the returned
+     * without tool calls or a budget ends the run. Budget breaches,
+     * terminal LLM failures and a [stop] are reported through the returned
      * [RunResult], never thrown.
      *
      * Runs accumulate: each continues the previous conversation with
@@ -129,15 +137,43 @@ public class Agent internal constructor(
         check(running.compareAndSet(false, true)) {
             "send() is already running on this agent — await the active call before sending another."
         }
+        // The loop runs under a job of its own, so a stop cancels the loop
+        // while leaving this coroutine live to record the run's outcome.
+        val run = RunState(settings, loop = Job(coroutineContext[Job]))
         try {
-            return executeRun(text, settings)
+            return executeRun(text, run)
         } finally {
+            // The loop's job is a child of the caller's: leaving it
+            // incomplete would keep the caller from ever completing.
+            run.loop.complete()
             running.set(false)
+            // Signalled last of all, so a [stop] returning on it finds the
+            // run over in every respect: guard cleared, outcome recorded.
+            run.ended.complete()
         }
     }
 
-    private suspend fun executeRun(text: String, settings: RunSettings): RunResult {
-        val run = RunState(settings)
+    /**
+     * Stops the run in flight, if any, and returns once it has ended: its
+     * loop is cancelled — killing the process tree of a tool mid-execution
+     * with it, and cascading into the runs of children the loop is blocked
+     * on — and every run the stop cuts ends as [RunResult.Status.STOPPED],
+     * its [AgentEvent.RunFinished] recorded like any other outcome. Nothing
+     * else is touched: the session stays usable and immediately promptable,
+     * over the same collaborators.
+     *
+     * A stop the run beats is a no-op: none in flight, one that already
+     * ended, or one whose outcome the loop had decided — that outcome
+     * stands. Since it awaits the run, it must be called from outside it:
+     * from a tool or a listener of the run it stops, it would wait forever.
+     */
+    public suspend fun stop() {
+        val run = currentRun ?: return
+        run.loop.cancel(RunStoppedException())
+        run.ended.join()
+    }
+
+    private suspend fun executeRun(text: String, run: RunState): RunResult {
         currentRun = run
         history += userMessage(text)
         emitter.emit { id, at ->
@@ -150,9 +186,12 @@ public class Agent internal constructor(
             )
         }
         val status = try {
-            runLoop(run)
+            withContext(run.loop) { runLoop(run) }
         } catch (cancellation: CancellationException) {
-            throw cancellation
+            if (!cancellation.isRunStopped()) {
+                throw cancellation
+            }
+            run.decided ?: RunResult.Status.STOPPED
         } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
             run.failure = failure
             RunResult.Status.ERROR
@@ -190,13 +229,17 @@ public class Agent internal constructor(
      */
     private suspend fun runLoop(run: RunState): RunResult.Status {
         while (true) {
+            // A stopped child run *returns* to its caller, so the tool call
+            // that just finished may leave this loop cancelled: a cut loop
+            // never starts another turn.
+            coroutineContext.ensureActive()
             if (run.remaining <= Duration.ZERO) {
-                return RunResult.Status.TIMEOUT
+                return run.decide(RunResult.Status.TIMEOUT)
             }
             val response = takeTurn(run)
             val outcome = turnOutcome(run, response)
             if (outcome != null) {
-                return outcome
+                return run.decide(outcome)
             }
             for (call in response.message.toolCalls.orEmpty()) {
                 executeCall(run, call)
@@ -358,10 +401,15 @@ public class Agent internal constructor(
         }
     }
 
-    /** Mutable accounting for one [send] run. */
-    private inner class RunState(val settings: RunSettings) {
+    /** Mutable accounting for one [send] run, over the [loop] job it runs under. */
+    private inner class RunState(val settings: RunSettings, val loop: CompletableJob) {
 
         val start = TimeSource.Monotonic.markNow()
+
+        /** Completed once the run has ended in full — what [stop] returns on. */
+        val ended: CompletableJob = Job()
+
+        var decided: RunResult.Status? = null
 
         var turnsUsed: Int = 0
         var usage: ChatUsage = ZERO_USAGE
@@ -376,6 +424,14 @@ public class Agent internal constructor(
 
         val remaining: Duration
             get() = budgets.maxWallClock - elapsed
+
+        /**
+         * Records [status] as this run's outcome and returns it: a
+         * cancelling job discards the value its block returns, so an
+         * outcome the loop does not record as it reaches it is one a stop
+         * landing on the return replaces with [RunResult.Status.STOPPED].
+         */
+        fun decide(status: RunResult.Status): RunResult.Status = status.also { decided = it }
     }
 
     public companion object {
@@ -407,6 +463,22 @@ public class Agent internal constructor(
         ): Agent = Agent(harness, client, environment, eventListener, RunBudgets(), restoredSession(events, harness))
     }
 }
+
+/**
+ * Cancellation cause marking an [Agent.stop]: the one cancellation a run
+ * reports as an outcome instead of propagating. Library-internal — it never
+ * leaves the run whose loop it cancelled.
+ */
+private class RunStoppedException : CancellationException("The run was stopped.")
+
+/**
+ * Whether this cancellation is a stop reaching the run — the marker looked
+ * for along the cause chain rather than compared by identity, since a
+ * cancellation can arrive as a stack-trace-recovered copy that carries the
+ * original as its cause.
+ */
+private fun CancellationException.isRunStopped(): Boolean =
+    generateSequence<Throwable>(this) { it.cause }.any { it is RunStoppedException }
 
 /**
  * The system prompt: the harness instructions plus the library-owned facts

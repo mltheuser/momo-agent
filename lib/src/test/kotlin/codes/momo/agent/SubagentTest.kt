@@ -4,6 +4,7 @@ import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ChatRequest
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.harness.Harness
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -14,7 +15,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
-import kotlin.io.path.notExists
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -476,11 +476,7 @@ class SubagentTest {
                     // freeing the scripted LLM for the parent's turns.
                     val child = assertNotNull(parent.subagents["worker"])
                     val busy = launch { child.send("keep busy", TEST_RUN_SETTINGS) }
-                    withTimeout(5.seconds) {
-                        while (marker.notExists()) {
-                            delay(10.milliseconds)
-                        }
-                    }
+                    awaitExists(marker)
 
                     val result = parent.send("check on the worker", TEST_RUN_SETTINGS)
 
@@ -491,6 +487,42 @@ class SubagentTest {
                     )
 
                     busy.cancelAndJoin()
+                }
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Stopping a parent-driven child is an error result the parent reacts to, its own run untouched")
+    fun stoppedChildIsAnErrorResultAndTheParentRunsOn() {
+        val marker = workspace.resolve("child-tool-started")
+        val tree = TreeEventListener()
+        scriptedServer(
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "grind away"),
+            ).asReply(),
+            // The child's slow tool call keeps its run in flight while leaving
+            // the scripted LLM free for the parent's turn after the stop.
+            toolCallResponse(bashCall(id = "call-c1", command = "touch '$marker' && sleep 30")).asReply(),
+            assistantResponse(finishReason = "stop", text = "the helper was stopped").asReply(),
+        ).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                val parent = workspace.agent(client, tree)
+                runBlocking {
+                    val run = async { parent.send("go", TEST_RUN_SETTINGS) }
+                    awaitExists(marker)
+
+                    assertNotNull(parent.subagents["helper"]).stop()
+
+                    val result = withTimeout(5.seconds) { run.await() }
+
+                    assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+                    assertEquals("the helper was stopped", result.finalMessage)
+                    assertContains(result.transcript.toolTexts().last(), "'helper' run ended as STOPPED")
+                    // Only the child's run was cut, and it recorded its end.
+                    val childEvents = assertNotNull(tree.children["helper"]).events
+                    assertEquals(RunResult.Status.STOPPED, assertIs<AgentEvent.RunFinished>(childEvents.last()).status)
                 }
             }
         }

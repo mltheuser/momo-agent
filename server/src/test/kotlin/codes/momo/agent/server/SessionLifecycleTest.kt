@@ -68,6 +68,25 @@ class SessionLifecycleTest {
     }
 
     @Test
+    @DisplayName("Stopping a session with no run in flight is an idempotent no-op success")
+    fun stopWithNothingRunningIsANoOp() {
+        withSessionServer(tempDir) { http ->
+            val created = http.createSession(harnessPath(tempDir), localWorkspace(tempDir))
+
+            val stopped = http.stopResponse(created.id)
+
+            assertEquals(HttpStatusCode.OK, stopped.status, stopped.bodyAsText())
+            assertEquals(SessionStatus.IDLE, stopped.body<SessionInfo>().status)
+
+            // Nor does a stop attach a dormant session, or park a live one.
+            http.post("/v1/sessions/${created.id}/close")
+            val whileClosed = http.stopResponse(created.id)
+            assertEquals(HttpStatusCode.OK, whileClosed.status)
+            assertEquals(SessionStatus.CLOSED, whileClosed.body<SessionInfo>().status)
+        }
+    }
+
+    @Test
     @DisplayName("Delete removes the session and its stored artifacts; subsequent lookups 404")
     fun deleteRemovesTheSession() {
         withSessionServer(tempDir) { http ->
@@ -174,6 +193,7 @@ class SessionLifecycleTest {
     fun unknownSessionIs404() {
         withSessionServer(tempDir) { http ->
             assertEquals(HttpStatusCode.NotFound, http.get("/v1/sessions/no-such-id").status)
+            assertEquals(HttpStatusCode.NotFound, http.stopResponse("no-such-id").status)
             assertEquals(HttpStatusCode.NotFound, http.post("/v1/sessions/no-such-id/close").status)
             assertEquals(HttpStatusCode.NotFound, http.delete("/v1/sessions/no-such-id").status)
         }

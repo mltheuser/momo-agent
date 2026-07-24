@@ -161,6 +161,10 @@ private fun Route.sessionRoutes(registry: SessionRegistry) {
                 call.respond(registry.setFavorite(call.sessionId(), request.favorite))
             }
             eventStreamRoute(registry)
+            post("/stop") {
+                registry.stopRun(call.sessionId())
+                call.respond(registry.info(call.sessionId()))
+            }
             post("/close") {
                 registry.close(call.sessionId())
                 call.respond(registry.info(call.sessionId()))

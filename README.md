@@ -37,6 +37,12 @@ of both modules. It does **not** run the live or container integration
 tests and does not require a running ai-router server — only the checkout
 on disk.
 
+One caveat: the server's SSE tests drive real-time 30-second timeouts, and
+under load some of them time out spuriously — a different one each run.
+This was A/B-verified against an unmodified `main` on 2026-07-17 and again
+on 2026-07-25, so treat an SSE failure as noise until a re-run reproduces
+it, and never conclude anything from *which* test failed.
+
 ## Linting & formatting
 
 Both scripts wrap detekt (with detekt-formatting) and cover all source sets:
@@ -166,7 +172,8 @@ the host and is removed) and keeps the stored log.
 | `POST /v1/sessions/{id}/rename` | Set the session's title (request body below) → `200` with the updated session info. |
 | `POST /v1/sessions/{id}/favorite` | Set the session's favorite flag (request body below) → `200` with the updated session info. |
 | `GET /v1/sessions/{id}/events`| The session's event log as an SSE stream: stored history, then live events. |
-| `POST /v1/sessions/{id}/close`| Close the session's whole subagent tree; aborts in-flight work, tears the environment down, keeps the stored logs. Idempotent. |
+| `POST /v1/sessions/{id}/stop` | Stop the session's in-flight run — no request body → `200` with the session info once the run has ended. Idempotent. |
+| `POST /v1/sessions/{id}/close`| Close the session's whole subagent tree; aborts in-flight work without recording its end, tears the environment down, keeps the stored logs. Idempotent. |
 | `DELETE /v1/sessions/{id}`    | Close the tree if needed, then remove the session and its descendants with their stored artifacts → `204`. |
 | `GET /v1/models`              | ai-router's model catalog in its own response shape, filtered to the models an agent can run (capabilities include both `chat` and `tools`). Each entry's `model` field is the fully-qualified string to send as a prompt's `model`. |
 
@@ -221,13 +228,16 @@ which pins its model (see Subagent sessions); a directly prompted child
 uses only its own prompt's settings.
 
 Prompting a `closed` session rebuilds its tree's runtime first — that is
-the resume path (see Subagent sessions). No endpoint returns the run's outcome: its `run_finished`
-event (status, final message verbatim, usage, turns used, elapsed) is the
-record, observed via the event stream. The one run without that record is
-one aborted by closing the session — the log ends mid-run and the session's
-`status` is the indicator. A blank prompt is a `400 invalid_request`, a
-prompt while a run is active a `409 conflict`, and a session whose event
-log can no longer persist refuses new runs with a `500 event_log_failed`.
+the resume path (see Subagent sessions). No endpoint returns the run's
+outcome: its `run_finished` event (status, final message verbatim, usage,
+turns used, elapsed) is the record, observed via the event stream. A run's
+`status` there is one of `completed`, `stopped` (the stop endpoint ended
+it), `turns_exhausted`, `timeout`, or `error`. The one run without that
+record is one cut short by closing or deleting the session, or by a server
+shutdown — the log ends mid-run and the session's `status` is the
+indicator. A blank prompt is a `400 invalid_request`, a prompt while a run
+is active a `409 conflict`, and a session whose event log can no longer
+persist refuses new runs with a `500 event_log_failed`.
 
 ### The event stream
 
@@ -298,17 +308,24 @@ in-flight runs anywhere in it are aborted, the one environment is torn
 down, and every member becomes `closed` with its log intact. Delete
 additionally removes the target session and all its descendants; a deleted
 child later prompted by its parent draws the unknown-subagent error
-result, and the name is free to spawn anew. Prompting any dormant member —
-root or child — rebuilds the tree's runtime and revives just the chain
-from the root to the prompted session from the stored logs, so a
-re-prompted parent can still converse with children spawned before a
-restart. Revival can fail by configuration: a stored spawn without a type
-(a log predating typed spawning), or one whose type the harness no longer
-declares, is a `409 unrevivable_subagent` when prompted or renamed
-directly, and a parent's `prompt_subagent` to it draws an error result. A
-human may prompt an idle child at any time; a running child
-answers `409`, and a parent's `prompt_subagent` to a human-busy child gets
-an error result in its own log.
+result, and the name is free to spawn anew.
+
+A stop, by contrast, is run-scoped and leaves the tree attached: it
+cascades only downward, into the child runs the stopped run is blocked on
+— each recording its own `stopped` end. A stopped parent-driven child
+hands its parent the same kind of error result any other unfinished child
+run does, and the parent runs on.
+
+Prompting any dormant member — root or child — rebuilds the tree's runtime
+and revives just the chain from the root to the prompted session from the
+stored logs, so a re-prompted parent can still converse with children
+spawned before a restart. Revival can fail by configuration: a stored
+spawn without a type (a log predating typed spawning), or one whose type
+the harness no longer declares, is a `409 unrevivable_subagent` when
+prompted or renamed directly, and a parent's `prompt_subagent` to it draws
+an error result. A human may prompt an idle child at any time; a running
+child answers `409`, and a parent's `prompt_subagent` to a human-busy
+child gets an error result in its own log.
 
 ## Supported platforms & system assumptions
 

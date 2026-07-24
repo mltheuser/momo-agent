@@ -3,12 +3,14 @@ package codes.momo.agent.server
 import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ChatRequest
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.RunResult
 import codes.momo.agent.ScriptedReply
 import codes.momo.agent.TEST_RUN_SETTINGS
 import codes.momo.agent.asReply
 import codes.momo.agent.assertTwoCleanRuns
 import codes.momo.agent.assistantResponse
 import codes.momo.agent.baseUrl
+import codes.momo.agent.bashCall
 import codes.momo.agent.promptSubagentCall
 import codes.momo.agent.scriptedServer
 import codes.momo.agent.spawnSubagentCall
@@ -605,6 +607,50 @@ class SubagentSessionTest {
             assertEquals(HttpStatusCode.NotFound, http.get("/v1/sessions/$rootId").status)
             assertEquals(HttpStatusCode.NotFound, http.get("/v1/sessions/$childId").status)
             assertEquals(emptyList(), SessionStore(tempDir.resolve("data")).sessionIds())
+        }
+    }
+
+    @Test
+    @DisplayName("Stopping a parent-driven child ends that child's run only; the tree stays attached and runs on")
+    fun stopOnAChildEndsItsRunOnly() {
+        withScriptedSessionServer(
+            tempDir,
+            toolCallResponse(
+                spawnSubagentCall(id = "call-1", name = "helper"),
+                promptSubagentCall(id = "call-2", name = "helper", message = "work away"),
+            ).asReply(),
+            // Holds the child's run open across the stop.
+            toolCallResponse(bashCall(id = "call-c1", command = "sleep 30")).asReply(),
+            assistantResponse(finishReason = "stop", text = "the helper was stopped").asReply(),
+        ) { http ->
+            val rootId = http.createSession(subagentHarness(), localWorkspace(tempDir)).id
+            http.prompt(rootId, "go")
+            val childId = spawnedChildId(http, rootId)
+            // The child's run is genuinely in flight — inside its tool call —
+            // though no server-started run claims its slot.
+            http.streamEvents(childId, until = { it is AgentEvent.ToolCallStarted })
+            assertEquals(SessionStatus.RUNNING, http.get("/v1/sessions/$childId").body<SessionInfo>().status)
+
+            val stopped = http.stopResponse(childId)
+
+            // Idle already in the stop's own answer, and still attached.
+            assertEquals(HttpStatusCode.OK, stopped.status)
+            assertEquals(SessionStatus.IDLE, stopped.body<SessionInfo>().status)
+            assertEquals(
+                RunResult.Status.STOPPED,
+                assertIs<AgentEvent.RunFinished>(http.streamEvents(childId).last().event).status,
+            )
+
+            // Only the child's run was cut: the parent took the stopped child
+            // as an error result and finished its own run.
+            http.awaitRunEnd(rootId)
+            val parentRun = http.streamEvents(rootId).map { it.event }
+            assertEquals("the helper was stopped", assertIs<AgentEvent.RunFinished>(parentRun.last()).finalMessage)
+            assertContains(
+                parentRun.filterIsInstance<AgentEvent.ToolCallFinished>().single { it.callId == "call-2" }.resultText,
+                "'helper' run ended as STOPPED",
+            )
+            assertEquals(SessionStatus.IDLE, http.get("/v1/sessions/$rootId").body<SessionInfo>().status)
         }
     }
 

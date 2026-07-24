@@ -60,9 +60,9 @@ public sealed interface AgentEvent {
     ) : AgentEvent
 
     /**
-     * A run reached a terminal status, however it ended. External
-     * cancellation is the one exception: a log records a cancelled run
-     * without this event, and
+     * A run reached a terminal status, however it ended — an [Agent.stop]
+     * included. Cancelling the coroutine that runs [Agent.send] is the one
+     * exception: such a log records the run without this event, and
      * [Agent.load]'s transcript repair covers that missing tail. The
      * fields carry the final [RunResult] counterparts: the run's
      * totals, the final message verbatim.

@@ -285,6 +285,16 @@ class AgentLoadTest {
                 turnsUsed = 1,
                 elapsed = 3.seconds,
             ),
+            // A second run end, for the stopped status's own wire string.
+            AgentEvent.RunFinished(
+                sequenceId = 11,
+                timestampMillis = 12,
+                status = RunResult.Status.STOPPED,
+                finalMessage = null,
+                usage = ZERO_USAGE,
+                turnsUsed = 2,
+                elapsed = 4.seconds,
+            ),
         )
 
         val json = Json.encodeToString(events)
@@ -298,6 +308,7 @@ class AgentLoadTest {
         assertContains(json, "\"subagentType\":\"self\"")
         assertContains(json, "\"modelId\":\"pinned-model\"")
         assertContains(json, "\"status\":\"timeout\"")
+        assertContains(json, "\"status\":\"stopped\"")
         assertContains(json, "\"outcome\":\"timed_out\"")
     }
 

@@ -28,6 +28,7 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.testApplication
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.transformWhile
@@ -201,6 +202,21 @@ internal suspend fun HttpClient.favoriteResponse(sessionId: String, favorite: Bo
         contentType(ContentType.Application.Json)
         setBody(FavoriteRequest(favorite))
     }
+
+/** POSTs a stop — no request body — whose response carries the session info. */
+internal suspend fun HttpClient.stopResponse(sessionId: String): HttpResponse =
+    post("/v1/sessions/$sessionId/stop")
+
+/**
+ * Waits until [id]'s run has reached its agent, its `run_started` logged —
+ * a claimed run slot alone still leaves a window with no run to stop.
+ */
+internal suspend fun SessionRegistry.awaitRunStart(id: String) {
+    withTimeout(STREAM_TIMEOUT_MILLIS) {
+        eventsAfter(id, BEFORE_FIRST_EVENT)
+            .first { Json.decodeFromString<AgentEvent>(it.json) is AgentEvent.RunStarted }
+    }
+}
 
 /** Waits until [id]'s active run ends, however it ends. */
 internal suspend fun SessionRegistry.awaitRunEnd(id: String) {

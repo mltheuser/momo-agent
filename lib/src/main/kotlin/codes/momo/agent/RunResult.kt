@@ -34,6 +34,10 @@ public data class RunResult(
         @SerialName("completed")
         COMPLETED,
 
+        /** [Agent.stop] cut the run short before the model answered. */
+        @SerialName("stopped")
+        STOPPED,
+
         /** The turn budget ran out while the model still wanted tool calls. */
         @SerialName("turns_exhausted")
         TURNS_EXHAUSTED,

@@ -128,8 +128,9 @@ internal class SessionRegistry(
         } catch (_: NoSuchFileException) {
             throw UnknownSessionException(id) // Deleted between lookup and read.
         }
-        // Status comes from the tree's runtime, never from the log's tail:
-        // an aborted run leaves no RunFinished behind to read.
+        // Status comes from the tree's runtime, never from the log's tail: a
+        // run cut by a close leaves no RunFinished behind to read, and a
+        // stopped run leaves one that must not read as a closed session.
         val runtime = entries[position.path.first()]?.runtime
         SessionInfo(
             id = id,
@@ -263,6 +264,26 @@ internal class SessionRegistry(
     suspend fun close(id: String) {
         val (_, root) = treeOf(entries, store, id)
         root.mutex.withLock { teardown(root) }
+    }
+
+    /**
+     * Stops [id]'s in-flight run — see [Agent.stop] for what a stop does to
+     * the run itself. A run [startRun] has claimed but not yet started is
+     * one a stop may always outrun, and finding nothing to stop is a no-op
+     * success like any other.
+     *
+     * The one mutating operation that does not take the root's mutex, since
+     * it is no lifecycle transition — it attaches nothing, detaches nothing,
+     * writes no metadata, and reads only the attached runtime and its live
+     * links. Staying off the mutex is what keeps a stop from queueing behind
+     * an unrelated tree member's transition, up to a close tearing a
+     * container down; a tree still being rebuilt has no runtime to reach
+     * either way. Racing a close is benign, as its teardown cancels the same
+     * runs.
+     */
+    suspend fun stopRun(id: String) {
+        val (path, root) = treeOf(entries, store, id)
+        root.runtime?.stopRun(path)
     }
 
     /**
@@ -531,7 +552,13 @@ private class TreeRuntime(
 
     private val scope = CoroutineScope(job + Dispatchers.Default)
 
-    /** Session IDs with a server-started run in flight. */
+    /**
+     * Session IDs with a server-started run in flight, covering the start
+     * window — from [claimRun] until the agent is running — while
+     * [Agent.isRunning] covers the run itself. A claim is dropped in the
+     * run's own coroutine, so a stopper resuming on another can still read
+     * the claim of the run it just ended.
+     */
     private val activeRuns = ConcurrentHashMap.newKeySet<String>()
 
     /** The live-or-revived agent at [path] (root ID first); null when a link is unknown to its parent. */
@@ -558,12 +585,23 @@ private class TreeRuntime(
     fun startRun(agent: Agent, prompt: String, settings: RunSettings) {
         logs[agent.sessionId]?.failure?.let { throw EventLogFailedException(it) }
         claimRun(agent)
-        scope.launch { agent.send(prompt, settings) }.invokeOnCompletion { activeRuns.remove(agent.sessionId) }
+        scope.launch {
+            try {
+                agent.send(prompt, settings)
+            } finally {
+                activeRuns.remove(agent.sessionId)
+            }
+        }
     }
 
     /** Cancels every in-flight run in the tree and waits for the aborts; the runtime takes no further runs. */
     suspend fun abortRuns() {
         job.cancelAndJoin()
+    }
+
+    /** Stops the run in flight on [path]'s member, reached through live links only. */
+    suspend fun stopRun(path: List<String>) {
+        liveAgentAt(path)?.stop()
     }
 
     /** Closes every member's open log; the first failure propagates once all are closed. */
