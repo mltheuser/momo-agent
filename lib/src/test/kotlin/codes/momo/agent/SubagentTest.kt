@@ -519,7 +519,13 @@ class SubagentTest {
 
                     assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
                     assertEquals("the helper was stopped", result.finalMessage)
-                    assertContains(result.transcript.toolTexts().last(), "'helper' run ended as STOPPED")
+                    // The result names the stop as the user's own and steers the
+                    // parent away from retrying it — unlike the budget statuses,
+                    // where prompting again is the right move.
+                    val toolText = result.transcript.toolTexts().last()
+                    assertContains(toolText, "'helper' run ended as STOPPED")
+                    assertContains(toolText, "a user deliberately stopped it")
+                    assertFalse(toolText.contains("Prompting it again"), "must not invite a retry: $toolText")
                     // Only the child's run was cut, and it recorded its end.
                     val childEvents = assertNotNull(tree.children["helper"]).events
                     assertEquals(RunResult.Status.STOPPED, assertIs<AgentEvent.RunFinished>(childEvents.last()).status)

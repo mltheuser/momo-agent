@@ -152,9 +152,12 @@ internal class Subagents(
 private fun RunResult.asToolResult(name: String): ToolResult = when (status) {
     RunResult.Status.COMPLETED -> ToolResult.Success(finalMessage.orEmpty())
 
+    // The one status whose advice inverts: a user chose this, so re-prompting
+    // undoes their intent. A parent only ever reads this result for a child
+    // stopped from outside — a stop of its own run cancels its loop instead.
     RunResult.Status.STOPPED -> ToolResult.Error(
-        "subagent '$name' run ended as STOPPED — it was stopped before it answered. " +
-            "Prompting it again continues where it left off.",
+        "subagent '$name' run ended as STOPPED — a user deliberately stopped it. " +
+            "Do not prompt it again to retry that work; report what happened and finish your run.",
     )
 
     RunResult.Status.TURNS_EXHAUSTED -> ToolResult.Error(
