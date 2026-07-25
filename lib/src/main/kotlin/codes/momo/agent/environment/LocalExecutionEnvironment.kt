@@ -62,9 +62,8 @@ public class LocalExecutionEnvironment internal constructor(
      */
     public override suspend fun exec(
         command: List<String>,
-        stdin: ByteArray?,
         timeout: Duration,
-    ): ExecResult = runProcess(command, workingDirectory = workspace, stdin = stdin, timeout = timeout)
+    ): ExecResult = runProcess(command, workingDirectory = workspace, timeout = timeout)
 
     /** No-op: the local environment sets nothing up, so there is nothing to tear down. */
     public override fun close() {

@@ -10,7 +10,6 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.IOException
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
-import java.util.HexFormat
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.readText
@@ -38,11 +37,10 @@ class LocalExecutionEnvironmentTest {
     /** Runs [command] in a fresh environment over [workspace]. */
     private fun exec(
         vararg command: String,
-        stdin: ByteArray? = null,
         timeout: Duration = 30.seconds,
         workspace: Path = tempDir,
     ): ExecResult = runBlocking {
-        LocalExecutionEnvironment(workspace).exec(command.toList(), stdin, timeout)
+        LocalExecutionEnvironment(workspace).exec(command.toList(), timeout)
     }
 
     private fun ExecResult.assertCompletedOk(): ExecResult.Completed {
@@ -50,8 +48,6 @@ class LocalExecutionEnvironmentTest {
         assertEquals(0, completed.exitCode)
         return completed
     }
-
-    private fun hexOf(bytes: ByteArray): String = HexFormat.of().formatHex(bytes)
 
     /** Waits (up to [KILL_GRACE_PERIOD]) for the process with [pid] to be gone. */
     private fun assertProcessDies(pid: Long) {
@@ -134,31 +130,14 @@ class LocalExecutionEnvironmentTest {
     // ─── stdin ────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("stdin text with quotes, newlines, and shell metacharacters passes through exactly")
-    fun stdinTrickyTextPassesThroughExactly() {
-        val tricky = "line one\n\"double\" 'single' `backtick`\n\$HOME && rm -rf | ; \\ *?[a-z] é\nno trailing newline"
+    @DisplayName("stdin is closed immediately: a stdin-reading command sees EOF instead of hanging")
+    fun stdinIsImmediateEof() {
+        val result = exec("cat", timeout = 5.seconds)
 
-        val result = exec("cat", stdin = tricky.toByteArray())
-
-        assertEquals(tricky, result.assertCompletedOk().stdout)
+        assertEquals("", result.assertCompletedOk().stdout)
     }
 
-    @Test
-    @DisplayName("stdin is binary-safe: a 1 MiB payload cycling all 256 byte values round-trips exactly")
-    fun stdinIsBinarySafe() {
-        val bytes = ByteArray(1 shl 20) { it.toByte() }
-
-        // od (POSIX) hex-dumps the bytes back — raw ones would be mangled by
-        // the result's UTF-8 decoding. The payload also spans many pipe
-        // buffers, so a writer deadlock would surface here as a timeout.
-        val result = exec("od", "-An", "-v", "-tx1", stdin = bytes)
-
-        val completed = result.assertCompletedOk()
-        assertTrue(
-            completed.stdout.filterNot { it.isWhitespace() } == hexOf(bytes),
-            "1 MiB stdin payload did not round-trip byte-exactly",
-        )
-    }
+    // ─── Output capture ───────────────────────────────────────────────
 
     @Test
     @DisplayName("A 1 MiB stdout (bigger than a pipe buffer) is drained without deadlock")
@@ -168,21 +147,6 @@ class LocalExecutionEnvironmentTest {
         // NUL bytes decode to one char each, so String.length counts bytes.
         assertEquals(1 shl 20, result.assertCompletedOk().stdout.length)
     }
-
-    @Test
-    @DisplayName("A process that exits without reading its stdin does not crash the exec")
-    fun processExitingWithoutReadingStdinDoesNotCrash() {
-        // Large enough that the writer is still blocked on a full pipe buffer
-        // when the process dies — the resulting broken pipe must be swallowed.
-        val unread = ByteArray(1 shl 20)
-
-        val result = exec("bash", "-c", "exit 7", stdin = unread)
-
-        val completed = assertIs<ExecResult.Completed>(result)
-        assertEquals(7, completed.exitCode)
-    }
-
-    // ─── Output capture cap ───────────────────────────────────────────
 
     @Test
     @DisplayName("stdout past the capture cap is discarded, flagged, and the process still completes")

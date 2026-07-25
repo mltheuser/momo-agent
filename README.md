@@ -330,9 +330,7 @@ child gets an error result in its own log.
 ## Supported platforms & system assumptions
 
 - **Linux x86_64** — officially supported; the platform for eval runs.
-- **macOS** (including arm64) — best-effort, for development only. Known
-  divergence: BSD `sed` appends a newline when printing a final line that
-  lacks one, so `read_file` output is byte-exact only on GNU `sed`.
+- **macOS** (including arm64) — best-effort, for development only.
 - **Windows** — unsupported.
 
 The project assumes a POSIX userland (`bash`, coreutils, `grep`, `find`,

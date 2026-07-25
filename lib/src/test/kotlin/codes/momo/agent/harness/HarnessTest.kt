@@ -34,7 +34,7 @@ class HarnessTest {
 
     /** Renders a harness.yaml; all string scalars quoted so blanks survive. */
     private fun manifestYaml(
-        tools: List<String> = listOf("bash", "read_file"),
+        tools: List<String> = listOf("bash", "extra_tool"),
         extraTopLevelLine: String? = null,
         subagentEntries: List<String>? = null,
     ): String = buildString {
@@ -75,7 +75,7 @@ class HarnessTest {
         // Test working directory is the Gradle project dir.
         val harness = Harness.load(Path.of("examples/coder"))
 
-        assertEquals(listOf("bash", "read_file", "write_file", "edit_file"), harness.tools)
+        assertEquals(listOf("bash"), harness.tools)
         assertTrue(
             harness.instructions.contains("careful, methodical coding agent"),
             "instructions.md content is exposed raw",
@@ -232,14 +232,14 @@ class HarnessTest {
     @Test
     @DisplayName("A whitespace-padded tool name is rejected, quoting the offender")
     fun whitespacePaddedToolNameFails() {
-        val folder = harnessFolder(manifest = manifestYaml(tools = listOf("bash ", "read_file")))
+        val folder = harnessFolder(manifest = manifestYaml(tools = listOf("bash ", "extra_tool")))
         assertLoadFails(folder, "harness.yaml", "tools", "whitespace", "'bash '")
     }
 
     @Test
     @DisplayName("Duplicate tool names are rejected by name")
     fun duplicateToolNameFails() {
-        val folder = harnessFolder(manifest = manifestYaml(tools = listOf("bash", "read_file", "bash")))
+        val folder = harnessFolder(manifest = manifestYaml(tools = listOf("bash", "extra_tool", "bash")))
         assertLoadFails(folder, "harness.yaml", "duplicate", "bash")
     }
 
@@ -406,7 +406,7 @@ class HarnessTest {
     @DisplayName("requireToolsKnown passes when every tool is known")
     fun requireToolsKnownPassesWhenAllKnown() {
         val harness = Harness.load(harnessFolder())
-        harness.requireToolsKnown(setOf("bash", "read_file", "write_file"))
+        harness.requireToolsKnown(setOf("bash", "extra_tool", "other_tool"))
     }
 
     @Test
@@ -417,7 +417,7 @@ class HarnessTest {
         )
 
         val exception = assertFailsWith<HarnessValidationException> {
-            harness.requireToolsKnown(setOf("bash", "read_file"))
+            harness.requireToolsKnown(setOf("bash", "extra_tool"))
         }
         val message = exception.message.orEmpty()
         assertContains(message, "banana")

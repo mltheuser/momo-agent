@@ -65,7 +65,7 @@ public class Agent internal constructor(
     private val toolDefinitions: List<ToolDefinition>
 
     init {
-        val coreRegistry = coreToolRegistry(subagents, harness.subagents)
+        val coreRegistry = coreToolRegistry(environment.workspacePath, subagents, harness.subagents)
         harness.requireToolsKnown(coreRegistry.names)
         // The depth cap withholds rather than fails: a hallucinated call
         // outside the offered set draws the standard unknown-tool error.
@@ -97,7 +97,7 @@ public class Agent internal constructor(
         }
 
     private val history: MutableList<ChatMessage> = mutableListOf<ChatMessage>().apply {
-        add(textMessage(ROLE_SYSTEM, systemPromptFor(harness, environment.workspacePath, subagent = depth > 0)))
+        add(textMessage(ROLE_SYSTEM, systemPromptFor(harness, subagent = depth > 0)))
         addAll(session.conversation)
     }
 
@@ -481,13 +481,14 @@ private fun CancellationException.isRunStopped(): Boolean =
     generateSequence<Throwable>(this) { it.cause }.any { it is RunStoppedException }
 
 /**
- * The system prompt: the harness instructions plus the library-owned facts
- * about the workspace and who is on the other end — the human user, or for
- * a [subagent] the parent blocked on its reply.
+ * The system prompt: the harness instructions plus the library-owned fact
+ * about who is on the other end — the human user, or for a [subagent] the
+ * parent blocked on its reply. Workspace facts are deliberately absent:
+ * where commands run and how to name files belong to the description of
+ * the tool that acts on the workspace, stated once there.
  */
-internal fun systemPromptFor(harness: Harness, workspacePath: String, subagent: Boolean): String =
+internal fun systemPromptFor(harness: Harness, subagent: Boolean): String =
     harness.instructions.trimEnd() +
-        "\n\nThe workspace root is $workspacePath. File paths passed to tools must be absolute." +
         "\n\n" + (if (subagent) SUBAGENT_GUIDANCE else USER_GUIDANCE)
 
 private const val USER_GUIDANCE: String =

@@ -27,21 +27,24 @@ class BashToolTest {
 
     // ─── Helpers ──────────────────────────────────────────────────────
 
+    /** The tool under test, told the temp workspace is where its commands run. */
+    private fun bashTool(): BashTool = BashTool(tempDir.toString())
+
     /** Runs [command] through the tool against a real local environment over the temp workspace. */
     private fun run(command: String): ToolResult = runBlocking {
-        BashTool().execute(BashArgs(command), LocalExecutionEnvironment(tempDir))
+        bashTool().execute(BashArgs(command), LocalExecutionEnvironment(tempDir))
     }
 
     private fun runStubbed(execResult: ExecResult): ToolResult = runBlocking {
-        BashTool().execute(BashArgs("true"), FixedResultEnvironment(execResult))
+        bashTool().execute(BashArgs("true"), FixedResultEnvironment(execResult))
     }
 
     // ─── Definition ───────────────────────────────────────────────────
 
     @Test
-    @DisplayName("The definition is named bash and documents file search, the timeout, and the output bound")
+    @DisplayName("The definition is named bash and documents output filtering, the timeout, and the output bound")
     fun definitionDocumentsTheContract() {
-        val definition = BashTool().definition
+        val definition = bashTool().definition
 
         assertEquals("bash", definition.name)
         val description = assertNotNull(definition.description)
@@ -51,9 +54,18 @@ class BashToolTest {
     }
 
     @Test
+    @DisplayName("The definition states the workspace root commands run from")
+    fun definitionStatesTheWorkingDirectory() {
+        val description = assertNotNull(BashTool("/some/workspace").definition.description)
+
+        assertContains(description, "/some/workspace")
+        assertContains(description, "workspace root")
+    }
+
+    @Test
     @DisplayName("The parameters schema declares command as a required, described string property")
     fun parametersSchemaDeclaresCommand() {
-        val schema = assertNotNull(BashTool().definition.parameters)
+        val schema = assertNotNull(bashTool().definition.parameters)
 
         val command = schema.getValue("properties").jsonObject.getValue("command").jsonObject
         assertEquals("string", command.getValue("type").jsonPrimitive.content)
@@ -109,7 +121,7 @@ class BashToolTest {
     fun commandRunsAsBashDashCWithBudget() = runBlocking {
         val environment = FixedResultEnvironment(completed())
 
-        BashTool().execute(BashArgs("echo hi"), environment)
+        bashTool().execute(BashArgs("echo hi"), environment)
 
         assertEquals(listOf("bash", "-c", "echo hi"), environment.lastCommand)
         assertEquals(Budgets.TOOL_TIMEOUT, environment.lastTimeout)
@@ -140,7 +152,7 @@ class BashToolTest {
     @Test
     @DisplayName("Oversized real output dispatched through the registry is truncated with the marker")
     fun oversizedOutputIsTruncatedByDispatch() = runBlocking {
-        val registry = ToolRegistry(listOf(BashTool()))
+        val registry = ToolRegistry(listOf(bashTool()))
         val arguments = buildJsonObject {
             put("command", "head -c ${ToolRegistry.MAX_RESULT_CHARS + 1} /dev/zero | tr '\\0' x")
         }

@@ -14,10 +14,15 @@ public data class BashArgs(
 
 /**
  * general-purpose shell tool: one bash command per call.
+ *
+ * [workspacePath] is the absolute workspace root commands run in, named in
+ * the description: the model learns the working directory from the tool
+ * that owns it, so it must be the workspace path of the environment this
+ * tool is executed against.
  */
-public class BashTool : Tool<BashArgs>(
+public class BashTool(workspacePath: String) : Tool<BashArgs>(
     name = "bash",
-    description = BASH_DESCRIPTION,
+    description = bashDescription(workspacePath),
     argsSerializer = BashArgs.serializer(),
 ) {
 
@@ -64,15 +69,17 @@ public class BashTool : Tool<BashArgs>(
     }
 }
 
-/** LLM-facing contract of [BashTool] — the model only knows what this says. */
-private val BASH_DESCRIPTION: String = """
-    Runs a bash command (via `bash -c`) with the workspace root as the working directory. This is
-    the tool for searching and listing files — use `grep`, `find`, and `ls` here; there are no
-    dedicated tools for that.
+/**
+ * LLM-facing contract of [BashTool] — the model only knows what this says,
+ * so the workspace root is stated here and nowhere else: one place to read
+ * where commands run and how to name files.
+ */
+private fun bashDescription(workspacePath: String): String = """
+    Runs a bash command (via `bash -c`) from the workspace root, $workspacePath.
 
-    Each call is a fresh shell and nothing persists between calls — no `cd`, exported variables,
-    or shell functions. Chain dependent steps with `&&` and use paths relative to the workspace
-    root.
+    Each call is a fresh shell: a directory change, exported variable, or shell function from one
+    call is gone by the next, and the working directory is back at the workspace root. Chain
+    dependent steps into a single command with `&&`.
 
     Commands are killed after ${Budgets.TOOL_TIMEOUT} and report a timeout error with any partial output. stdout
     and stderr come back in one result (stderr first) and share a budget of ${ToolRegistry.MAX_RESULT_CHARS} characters;

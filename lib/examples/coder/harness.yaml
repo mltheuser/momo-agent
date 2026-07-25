@@ -1,8 +1,5 @@
 tools:
   - bash
-  - read_file
-  - write_file
-  - edit_file
 subagents:
   self:
     path: .

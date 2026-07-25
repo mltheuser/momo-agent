@@ -87,15 +87,13 @@ public class ContainerExecutionEnvironment(
      */
     public override suspend fun exec(
         command: List<String>,
-        stdin: ByteArray?,
         timeout: Duration,
     ): ExecResult {
         require(command.isNotEmpty()) { "command must not be empty." }
         check(!closed.get()) { "environment is closed." }
         val marker = "$EXEC_MARKER_VARIABLE=${UUID.randomUUID()}"
         val result = docker(
-            listOf("exec", "-i", "-e", marker, "-w", CONTAINER_WORKSPACE, containerName) + command,
-            stdin = stdin,
+            listOf("exec", "-e", marker, "-w", CONTAINER_WORKSPACE, containerName) + command,
             timeout = timeout,
             killer = markedProcessKiller(marker),
         )

@@ -381,7 +381,7 @@ private object UnusedEnvironment : ExecutionEnvironment {
     override val workspacePath: String
         get() = error("the registry tests never use the workspace")
 
-    override suspend fun exec(command: List<String>, stdin: ByteArray?, timeout: Duration): ExecResult =
+    override suspend fun exec(command: List<String>, timeout: Duration): ExecResult =
         error("the registry tests never exec")
 
     override fun close(): Unit = Unit

@@ -29,9 +29,9 @@ class AgentLiveTest {
     // ─── Fixture helpers ──────────────────────────────────────────────
 
     private fun harness(): Harness = Harness(
-        tools = listOf("bash", "read_file", "write_file", "edit_file"),
+        tools = listOf("bash"),
         instructions = "You are a careful coding agent working in a project workspace. " +
-            "Use your tools to inspect files when a question concerns them, and keep final answers short.",
+            "Use your bash tool to inspect files when a question concerns them, and keep final answers short.",
     )
 
     // ─── Scenarios ────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ class AgentLiveTest {
             val agent = Agent(harness(), client, environment, "Live test session")
 
             val result = agent.send(
-                "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
+                "Read the file ${environment.workspacePath}/token.txt with the bash tool " +
                     "and reply with the token it contains.",
                 liveRunSettings,
             )
@@ -123,7 +123,7 @@ class AgentLiveTest {
             val agent = Agent(harness(), client, environment, "Live test session")
 
             val first = agent.send(
-                "Read the file ${environment.workspacePath}/token.txt with the read_file tool " +
+                "Read the file ${environment.workspacePath}/token.txt with the bash tool " +
                     "and reply with the token it contains.",
                 liveRunSettings,
             )

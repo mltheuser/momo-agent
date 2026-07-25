@@ -5,17 +5,19 @@ import codes.momo.agent.harness.SubagentType
 
 /**
  * Builds the core tool set every harness draws its tool list from. Called
- * once per agent: the subagent tools hold the session-owned [subagents]
- * collaborator and enumerate the harness's [subagentTypes], so instances
- * are never shared across sessions.
+ * once per agent: [workspacePath] is the executing environment's workspace
+ * root, which the bash tool states in its description, and the subagent
+ * tools hold the session-owned [subagents] collaborator and enumerate the
+ * harness's [subagentTypes], so instances are never shared across sessions.
  */
-internal fun coreToolRegistry(subagents: Subagents, subagentTypes: Map<String, SubagentType>): ToolRegistry =
+internal fun coreToolRegistry(
+    workspacePath: String,
+    subagents: Subagents,
+    subagentTypes: Map<String, SubagentType>,
+): ToolRegistry =
     ToolRegistry(
         listOf(
-            BashTool(),
-            ReadFileTool(),
-            WriteFileTool(),
-            EditFileTool(),
+            BashTool(workspacePath),
             SpawnSubagentTool(subagents, subagentTypes),
             PromptSubagentTool(subagents),
         ),

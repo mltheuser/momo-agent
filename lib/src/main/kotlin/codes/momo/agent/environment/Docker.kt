@@ -8,10 +8,9 @@ import kotlin.time.Duration.Companion.seconds
 /** Runs one `docker` CLI command as a subprocess. */
 internal suspend fun docker(
     args: List<String>,
-    stdin: ByteArray? = null,
     timeout: Duration,
     killer: ProcessKiller = HOST_PROCESS_TREE_KILLER,
-): ExecResult = runProcess(listOf("docker") + args, stdin = stdin, timeout = timeout, killer = killer)
+): ExecResult = runProcess(listOf("docker") + args, timeout = timeout, killer = killer)
 
 /** [docker] for the blocking lifecycle paths (construction, close, shutdown hook). */
 internal fun dockerBlocking(args: List<String>, timeout: Duration): ExecResult =

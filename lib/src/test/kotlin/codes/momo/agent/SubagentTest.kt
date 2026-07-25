@@ -213,7 +213,7 @@ class SubagentTest {
                 assertEquals(TEST_HARNESS.tools, requests.first().tools.orEmpty().map { it.name })
                 val toolText = result.transcript.toolTexts().single()
                 assertContains(toolText, "unknown tool 'spawn_subagent'")
-                assertContains(toolText, "available tools: bash, edit_file, read_file, write_file.")
+                assertContains(toolText, "available tools: bash.")
             }
         }
     }
@@ -255,7 +255,7 @@ class SubagentTest {
                 assertEquals(TEST_HARNESS.tools, requests.first().tools.orEmpty().map { it.name })
                 val toolText = result.transcript.toolTexts().single()
                 assertContains(toolText, "unknown tool 'spawn_subagent'")
-                assertContains(toolText, "available tools: bash, edit_file, read_file, write_file.")
+                assertContains(toolText, "available tools: bash.")
             }
         }
     }
@@ -607,10 +607,9 @@ class SubagentTest {
     @Test
     @DisplayName("A subagent's system prompt replaces the human-user guidance with the spawner contract")
     fun subagentSystemPromptStatesTheSpawnerContract() {
-        val prompt = systemPromptFor(SUBAGENT_HARNESS, "/some/workspace", subagent = true)
+        val prompt = systemPromptFor(SUBAGENT_HARNESS, subagent = true)
 
         assertTrue(prompt.startsWith("Unit-test instructions."))
-        assertContains(prompt, "/some/workspace")
         assertContains(prompt, "spawned you")
         assertContains(prompt, "final message")
         assertFalse(prompt.contains("hours or days"))

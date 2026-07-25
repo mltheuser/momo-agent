@@ -3,13 +3,7 @@ package codes.momo.agent.environment
 import codes.momo.agent.labeledContainers
 import codes.momo.agent.tool.BashArgs
 import codes.momo.agent.tool.BashTool
-import codes.momo.agent.tool.EditFileArgs
-import codes.momo.agent.tool.EditFileTool
-import codes.momo.agent.tool.ReadFileArgs
-import codes.momo.agent.tool.ReadFileTool
 import codes.momo.agent.tool.ToolResult
-import codes.momo.agent.tool.WriteFileArgs
-import codes.momo.agent.tool.WriteFileTool
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.DisplayName
@@ -64,7 +58,8 @@ class ContainerExecutionEnvironmentTest {
         withEnvironment { environment ->
             assertEquals("/workspace", environment.workspacePath)
 
-            val result = BashTool().execute(BashArgs("pwd && cat /etc/os-release"), environment)
+            val bash = BashTool(environment.workspacePath)
+            val result = bash.execute(BashArgs("pwd && cat /etc/os-release"), environment)
 
             val text = assertIs<ToolResult.Success>(result, result.text).text
             assertContains(text, "/workspace")
@@ -73,23 +68,26 @@ class ContainerExecutionEnvironmentTest {
     }
 
     @Test
-    @DisplayName("write_file, read_file, and edit_file round-trip stdin-borne tricky content")
-    fun fileToolsRoundTripTrickyContent() {
-        val tricky = "it's \"double\" `backtick` \$(sub) \${brace} \\slash\nsecond line\nno trailing newline"
+    @DisplayName("The bash tool writes, reads back, and edits tricky content in the container")
+    fun bashToolRoundTripsTrickyContent() {
+        val tricky = "it's \"double\" `backtick` \$(sub) \${brace} \\slash\nsecond line\n"
         withEnvironment { environment ->
-            val write = WriteFileTool().execute(WriteFileArgs("/workspace/tricky.txt", tricky), environment)
-            assertIs<ToolResult.Success>(write, write.text)
-
-            val read = ReadFileTool().execute(ReadFileArgs("/workspace/tricky.txt", 1, 50), environment)
-            assertTrue(
-                assertIs<ToolResult.Success>(read, read.text).text.startsWith(tricky),
-                "read_file did not return the written content verbatim: ${read.text}",
-            )
-
-            val edit = EditFileTool().execute(
-                EditFileArgs("/workspace/tricky.txt", "`backtick`", "[EDITED]"),
+            val bash = BashTool(environment.workspacePath)
+            // A quoted heredoc delimiter keeps every metacharacter literal.
+            val write = bash.execute(
+                BashArgs("cat > tricky.txt <<'MOMO_EOF'\n${tricky}MOMO_EOF"),
                 environment,
             )
+            assertIs<ToolResult.Success>(write, write.text)
+
+            val read = bash.execute(BashArgs("cat tricky.txt"), environment)
+            assertContains(
+                assertIs<ToolResult.Success>(read, read.text).text,
+                tricky,
+                message = "the bash tool did not return the written content verbatim: ${read.text}",
+            )
+
+            val edit = bash.execute(BashArgs("sed -i 's/`backtick`/[EDITED]/' tricky.txt"), environment)
             assertIs<ToolResult.Success>(edit, edit.text)
 
             val readBack = environment.exec(listOf("cat", "/workspace/tricky.txt"), timeout = 30.seconds)

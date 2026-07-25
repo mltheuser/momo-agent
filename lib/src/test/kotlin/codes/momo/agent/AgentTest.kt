@@ -1,6 +1,7 @@
 package codes.momo.agent
 
 import ai.router.sdk.AiRouterClient
+import ai.router.sdk.models.ChatRequest
 import ai.router.sdk.models.ToolCall
 import ai.router.sdk.models.ToolCallFunction
 import codes.momo.agent.environment.LocalExecutionEnvironment
@@ -20,11 +21,13 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.net.ServerSocket
 import java.nio.file.Path
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -68,13 +71,29 @@ class AgentTest {
     }
 
     @Test
-    @DisplayName("The system prompt keeps the instructions and states the absolute workspace path")
-    fun systemPromptStatesWorkspaceAndPathContract() {
-        val prompt = systemPromptFor(TEST_HARNESS, "/some/workspace", subagent = false)
+    @DisplayName("The system prompt keeps the instructions and states the human-user contract")
+    fun systemPromptStatesTheUserContract() {
+        val prompt = systemPromptFor(TEST_HARNESS, subagent = false)
 
         assertTrue(prompt.startsWith("Unit-test instructions."))
-        assertContains(prompt, "/some/workspace")
-        assertContains(prompt, "absolute")
+        assertContains(prompt, "hours or days")
+    }
+
+    @Test
+    @DisplayName("The workspace root reaches the model only through the bash tool's description")
+    fun workspaceRootIsStatedOnlyByTheBashTool() {
+        val requests = CopyOnWriteArrayList<ChatRequest>()
+        scriptedServer(requests, assistantResponse(finishReason = "stop", text = "done").asReply()).use { server ->
+            AiRouterClient(server.baseUrl).use { client ->
+                runBlocking { agent(client).send("go", TEST_RUN_SETTINGS) }
+
+                val root = LocalExecutionEnvironment(workspace).workspacePath
+                val request = requests.single()
+                assertFalse(request.messages.first().text.contains(root))
+                val bash = request.tools.orEmpty().single { it.name == "bash" }
+                assertContains(assertNotNull(bash.description), root)
+            }
+        }
     }
 
     // ─── Input validation ─────────────────────────────────────────────
@@ -158,8 +177,8 @@ class AgentTest {
     @DisplayName("A call to any tool the harness does not list errors as unknown")
     fun unlistedToolCallsGetErrorResults() = workspace.withScriptedAgent(
         toolCallResponse(
-            ToolCall(id = "call-1", function = ToolCallFunction("write_file", buildJsonObject { })),
-            ToolCall(id = "call-2", function = ToolCallFunction("edit_file", buildJsonObject { })),
+            ToolCall(id = "call-1", function = ToolCallFunction("made_up_tool", buildJsonObject { })),
+            ToolCall(id = "call-2", function = ToolCallFunction("other_made_up_tool", buildJsonObject { })),
         ),
         assistantResponse(finishReason = "stop", text = "done"),
         harness = Harness(tools = listOf("bash"), instructions = "i"),
@@ -168,8 +187,8 @@ class AgentTest {
 
         assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
         val toolMessages = result.transcript.filter { it.role == "tool" }
-        assertContains(toolMessages[0].text, "unknown tool 'write_file'")
-        assertContains(toolMessages[1].text, "unknown tool 'edit_file'")
+        assertContains(toolMessages[0].text, "unknown tool 'made_up_tool'")
+        assertContains(toolMessages[1].text, "unknown tool 'other_made_up_tool'")
         // From the model's view only the harness's tools exist.
         toolMessages.forEach { assertContains(it.text, "available tools: bash.") }
     }

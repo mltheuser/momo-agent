@@ -34,8 +34,8 @@ class BashToolLiveTest {
     @DisplayName("Tool round-trip: the model calls bash, the registry executes it, and the model answers")
     fun bashToolRoundTrip() = runBlocking {
         workspace.resolve("notes.txt").writeText("the magic word is plugh\n")
-        val registry = ToolRegistry(listOf(BashTool()))
         val environment = LocalExecutionEnvironment(workspace)
+        val registry = ToolRegistry(listOf(BashTool(environment.workspacePath)))
 
         AiRouterClient(liveBaseUrl).use { client ->
             // The DSL's ToolsBuilder.addTool(ToolDefinition) is internal, so

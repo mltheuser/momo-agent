@@ -4,7 +4,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.future.await
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
@@ -15,16 +14,14 @@ import kotlin.time.Duration
 
 /**
  * Runs [command] as a host subprocess per the [ExecutionEnvironment.exec]
- * contract: concurrent capped stream capture, [stdin] written then closed
- * (a broken pipe is not an error), and the [killer] invoked on [timeout].
- * Cleanup-and-rethrow: no abnormal exit (cancellation included) may leak a
- * live process — the kill also closes the pipes, unblocking the drain and
- * stdin workers.
+ * contract: concurrent capped stream capture, stdin closed immediately,
+ * and the [killer] invoked on [timeout]. Cleanup-and-rethrow: no abnormal
+ * exit (cancellation included) may leak a live process — the kill also
+ * closes the pipes, unblocking the drain workers.
  */
 internal suspend fun runProcess(
     command: List<String>,
     workingDirectory: Path? = null,
-    stdin: ByteArray? = null,
     timeout: Duration,
     killer: ProcessKiller = HOST_PROCESS_TREE_KILLER,
 ): ExecResult {
@@ -38,7 +35,7 @@ internal suspend fun runProcess(
             // a full pipe buffer would otherwise deadlock the process.
             val stdoutJob = async { process.inputStream.drain() }
             val stderrJob = async { process.errorStream.drain() }
-            launch { writeStdin(process, stdin) }
+            closeStdin(process)
 
             val exitedInTime = withTimeoutOrNull(timeout) { process.onExit().await() } != null
             if (!exitedInTime) {
@@ -101,15 +98,11 @@ private fun InputStream.drain(): CapturedStream {
 
 private class CapturedStream(val text: String, val truncated: Boolean)
 
-private fun writeStdin(process: Process, stdin: ByteArray?) {
+/** Closes the process's stdin so it reads EOF, per the exec contract. */
+private fun closeStdin(process: Process) {
     try {
-        process.outputStream.use { processStdin ->
-            if (stdin != null) {
-                processStdin.write(stdin)
-            }
-        }
+        process.outputStream.close()
     } catch (_: IOException) {
-        // Broken pipe: the process exited without reading its stdin — not
-        // an error, per the exec contract.
+        // The process is already gone — nothing to close.
     }
 }

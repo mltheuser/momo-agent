@@ -1,7 +1,8 @@
 package codes.momo.agent
 
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 
 /**
  * Library-wide execution budgets, enforced by the agent loop and the tool
@@ -16,10 +17,10 @@ public object Budgets {
     public const val MAX_TURNS: Int = 40
 
     /** Maximum wall-clock time per run. */
-    public val MAX_WALL_CLOCK: Duration = 30.minutes
+    public val MAX_WALL_CLOCK: Duration = 3.days
 
     /** Timeout for a single tool execution. */
-    public val TOOL_TIMEOUT: Duration = 5.minutes
+    public val TOOL_TIMEOUT: Duration = 24.hours
 
     /**
      * Maximum subagent nesting depth: agents this many spawns below the

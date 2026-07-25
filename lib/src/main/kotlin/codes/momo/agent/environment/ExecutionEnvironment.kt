@@ -26,9 +26,7 @@ public interface ExecutionEnvironment : AutoCloseable {
      *
      * - [command] is an argv vector — no shell is interposed. Callers
      *   wanting shell features pass `["bash", "-c", script]`.
-     * - [stdin] is written to the process unmodified, then closed; null
-     *   means immediate EOF. A process that exits without reading it is
-     *   not an error.
+     * - The process's stdin is closed immediately: it reads EOF.
      * - Each of stdout/stderr is captured up to [MAX_CAPTURED_BYTES]; the
      *   rest is drained but discarded — the process still runs to
      *   completion — and reported via the [ExecResult] truncation flags.
@@ -44,7 +42,6 @@ public interface ExecutionEnvironment : AutoCloseable {
      */
     public suspend fun exec(
         command: List<String>,
-        stdin: ByteArray? = null,
         timeout: Duration,
     ): ExecResult
 

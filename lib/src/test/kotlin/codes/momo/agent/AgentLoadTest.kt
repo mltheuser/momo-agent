@@ -106,7 +106,7 @@ class AgentLoadTest {
     @DisplayName("Loading into a harness missing a used tool fails, naming the tool")
     fun loadIntoHarnessMissingUsedToolFails() {
         val logged = recordedSession()
-        val slim = Harness(tools = listOf("read_file"), instructions = TEST_HARNESS.instructions)
+        val slim = Harness(tools = listOf("extra_tool"), instructions = TEST_HARNESS.instructions)
 
         withUnusedClient { client ->
             val failure = assertFailsWith<HarnessValidationException> {
