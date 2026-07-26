@@ -50,6 +50,13 @@ class ContainerExecutionEnvironmentTest {
         return completed
     }
 
+    /** Asserts the tool call succeeded with exit code 0 — Success alone also covers failing commands. */
+    private fun ToolResult.assertExitZero(): String {
+        val resultText = assertIs<ToolResult.Success>(this, text).text
+        assertTrue(resultText.startsWith("exit code: 0\n"), "command failed: $resultText")
+        return resultText
+    }
+
     // ─── Core tool scenarios ──────────────────────────────────────────
 
     @Test
@@ -74,24 +81,51 @@ class ContainerExecutionEnvironmentTest {
         withEnvironment { environment ->
             val bash = BashTool(environment.workspacePath)
             // A quoted heredoc delimiter keeps every metacharacter literal.
-            val write = bash.execute(
+            bash.execute(
                 BashArgs("cat > tricky.txt <<'MOMO_EOF'\n${tricky}MOMO_EOF"),
                 environment,
-            )
-            assertIs<ToolResult.Success>(write, write.text)
+            ).assertExitZero()
 
             val read = bash.execute(BashArgs("cat tricky.txt"), environment)
             assertContains(
-                assertIs<ToolResult.Success>(read, read.text).text,
+                read.assertExitZero(),
                 tricky,
                 message = "the bash tool did not return the written content verbatim: ${read.text}",
             )
 
-            val edit = bash.execute(BashArgs("sed -i 's/`backtick`/[EDITED]/' tricky.txt"), environment)
-            assertIs<ToolResult.Success>(edit, edit.text)
+            bash.execute(BashArgs("sed -i 's/`backtick`/[EDITED]/' tricky.txt"), environment).assertExitZero()
 
             val readBack = environment.exec(listOf("cat", "/workspace/tricky.txt"), timeout = 30.seconds)
             assertEquals(tricky.replace("`backtick`", "[EDITED]"), readBack.assertCompletedOk().stdout)
+        }
+    }
+
+    @Test
+    @DisplayName("Content without a trailing newline survives the write byte-exact")
+    fun bashToolWritesNoTrailingNewlineByteExact() {
+        val bare = "it's \"double\" `backtick` \$(sub) \${brace} \\slash ends bare"
+        withEnvironment { environment ->
+            val bash = BashTool(environment.workspacePath)
+            // The heredoc adds a final newline; truncate drops it again.
+            bash.execute(
+                BashArgs("cat > bare.txt <<'MOMO_EOF'\n${bare}\nMOMO_EOF\ntruncate -s -1 bare.txt"),
+                environment,
+            ).assertExitZero()
+
+            val readBack = environment.exec(listOf("cat", "/workspace/bare.txt"), timeout = 30.seconds)
+            assertEquals(bare, readBack.assertCompletedOk().stdout)
+        }
+    }
+
+    // ─── stdin ────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("stdin is closed immediately: a stdin-reading command sees EOF instead of hanging")
+    fun stdinIsImmediateEof() {
+        withEnvironment { environment ->
+            val result = environment.exec(listOf("cat"), timeout = 10.seconds)
+
+            assertEquals("", result.assertCompletedOk().stdout)
         }
     }
 
