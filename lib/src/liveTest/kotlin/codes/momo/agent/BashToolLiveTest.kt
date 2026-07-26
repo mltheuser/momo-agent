@@ -35,7 +35,7 @@ class BashToolLiveTest {
     fun bashToolRoundTrip() = runBlocking {
         workspace.resolve("notes.txt").writeText("the magic word is plugh\n")
         val environment = LocalExecutionEnvironment(workspace)
-        val registry = ToolRegistry(listOf(BashTool(environment.workspacePath)))
+        val registry = ToolRegistry(listOf(BashTool(environment.workspacePath, environment.privilege)))
 
         AiRouterClient(liveBaseUrl).use { client ->
             // The DSL's ToolsBuilder.addTool(ToolDefinition) is internal, so

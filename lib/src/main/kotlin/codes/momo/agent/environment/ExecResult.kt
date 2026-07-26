@@ -36,3 +36,16 @@ public sealed interface ExecResult {
         override val stderrTruncated: Boolean,
     ) : ExecResult
 }
+
+/** Whether the command ran to its end and exited 0. */
+internal val ExecResult.succeeded: Boolean
+    get() = this is ExecResult.Completed && exitCode == 0
+
+/**
+ * Failure detail of a command for error messages: the trimmed stderr, or —
+ * when it was silent — the exit code; a timeout says so.
+ */
+internal fun ExecResult.problem(): String = when (this) {
+    is ExecResult.Completed -> stderr.trim().ifEmpty { "exited with code $exitCode" }
+    is ExecResult.TimedOut -> "timed out"
+}

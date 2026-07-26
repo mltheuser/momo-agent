@@ -65,7 +65,8 @@ public class Agent internal constructor(
     private val toolDefinitions: List<ToolDefinition>
 
     init {
-        val coreRegistry = coreToolRegistry(environment.workspacePath, subagents, harness.subagents)
+        val coreRegistry =
+            coreToolRegistry(environment.workspacePath, environment.privilege, subagents, harness.subagents)
         harness.requireToolsKnown(coreRegistry.names)
         // The depth cap withholds rather than fails: a hallucinated call
         // outside the offered set draws the standard unknown-tool error.

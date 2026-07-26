@@ -21,6 +21,15 @@ public interface ExecutionEnvironment : AutoCloseable {
     public val workspacePath: String
 
     /**
+     * [Privilege] the commands run through [exec] have. Defaulted so that
+     * embedders' own implementations of this interface keep working, and
+     * defaulted to the lowest state: an environment that cannot elevate has
+     * nothing to declare.
+     */
+    public val privilege: Privilege
+        get() = Privilege.UNPRIVILEGED
+
+    /**
      * Runs [command] with the workspace root as the working directory,
      * returning once the process exited or [timeout] elapsed.
      *

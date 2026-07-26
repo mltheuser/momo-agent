@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.future.await
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
@@ -65,6 +66,13 @@ internal suspend fun runProcess(
         }
     }
 }
+
+/** [runProcess] for the blocking lifecycle paths, which have no coroutine to suspend in. */
+internal fun runProcessBlocking(
+    command: List<String>,
+    workingDirectory: Path? = null,
+    timeout: Duration,
+): ExecResult = runBlocking { runProcess(command, workingDirectory = workingDirectory, timeout = timeout) }
 
 /**
  * Reads the stream to EOF, capturing at most

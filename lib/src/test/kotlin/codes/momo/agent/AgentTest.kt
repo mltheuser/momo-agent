@@ -80,18 +80,25 @@ class AgentTest {
     }
 
     @Test
-    @DisplayName("The workspace root reaches the model only through the bash tool's description")
-    fun workspaceRootIsStatedOnlyByTheBashTool() {
+    @DisplayName("The workspace root and the privilege reach the model only through the bash tool's description")
+    fun environmentFactsAreStatedOnlyByTheBashTool() {
         val requests = CopyOnWriteArrayList<ChatRequest>()
         scriptedServer(requests, assistantResponse(finishReason = "stop", text = "done").asReply()).use { server ->
             AiRouterClient(server.baseUrl).use { client ->
                 runBlocking { agent(client).send("go", TEST_RUN_SETTINGS) }
 
-                val root = LocalExecutionEnvironment(workspace).workspacePath
                 val request = requests.single()
-                assertFalse(request.messages.first().text.contains(root))
-                val bash = request.tools.orEmpty().single { it.name == "bash" }
-                assertContains(assertNotNull(bash.description), root)
+                val systemPrompt = request.messages.first().text
+                val description = assertNotNull(request.tools.orEmpty().single { it.name == "bash" }.description)
+                // Each fact is pinned as the description actually words it, so
+                // what the prompt is denied cannot drift off what the
+                // description says. The test environment is the unprivileged one.
+                val root = LocalExecutionEnvironment(workspace).workspacePath
+                val facts = listOf(root, "unprivileged user with no way up")
+                facts.forEach { fact ->
+                    assertContains(description, fact)
+                    assertFalse(systemPrompt.contains(fact), "the system prompt must not state: $fact")
+                }
             }
         }
     }

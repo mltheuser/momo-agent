@@ -157,6 +157,27 @@ class SessionLifecycleTest {
     }
 
     @Test
+    @DisplayName("An unknown privilege is a 400 invalid_request")
+    fun invalidPrivilegeIsRejected() {
+        withSessionServer(tempDir) { http ->
+            val body = """
+                {"harnessPath": ${Json.encodeToString(harnessPath(tempDir))},
+                 "environment": {"type": "local",
+                                 "workspace": ${Json.encodeToString(localWorkspace(tempDir).workspace)},
+                                 "privilege": "sorcerer"}}
+            """.trimIndent()
+
+            val response = http.post("/v1/sessions") {
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+
+            assertEquals(HttpStatusCode.BadRequest, response.status, response.bodyAsText())
+            assertEquals("invalid_request", response.body<ApiError>().code)
+        }
+    }
+
+    @Test
     @DisplayName("A missing workspace folder is a 400 invalid_environment")
     fun missingWorkspaceIsRejected() {
         withSessionServer(tempDir) { http ->

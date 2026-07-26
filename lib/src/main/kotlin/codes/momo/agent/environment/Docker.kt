@@ -1,6 +1,5 @@
 package codes.momo.agent.environment
 
-import kotlinx.coroutines.runBlocking
 import java.io.IOException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -14,7 +13,7 @@ internal suspend fun docker(
 
 /** [docker] for the blocking lifecycle paths (construction, close, shutdown hook). */
 internal fun dockerBlocking(args: List<String>, timeout: Duration): ExecResult =
-    runBlocking { docker(args, timeout = timeout) }
+    runProcessBlocking(listOf("docker") + args, timeout = timeout)
 
 /**
  * The one startup check covering the whole docker dependency: CLI on PATH,
@@ -47,19 +46,6 @@ internal suspend fun inspectRunningState(containerName: String): Boolean? {
         timeout = DOCKER_QUICK_CALL_TIMEOUT,
     )
     return (inspect as? ExecResult.Completed)?.takeIf { it.exitCode == 0 }?.let { it.stdout.trim() == "true" }
-}
-
-/** Whether the command ran to its end and exited 0. */
-internal val ExecResult.succeeded: Boolean
-    get() = this is ExecResult.Completed && exitCode == 0
-
-/**
- * Failure detail of a docker CLI call for error messages: the trimmed
- * stderr, or — when it was silent — the exit code; a timeout says so.
- */
-internal fun ExecResult.problem(): String = when (this) {
-    is ExecResult.Completed -> stderr.trim().ifEmpty { "exited with code $exitCode" }
-    is ExecResult.TimedOut -> "timed out"
 }
 
 /** Deadline for quick docker calls (version, inspect, in-container probes, rm). */

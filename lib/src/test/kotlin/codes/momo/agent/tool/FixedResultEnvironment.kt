@@ -33,12 +33,3 @@ internal class FixedResultEnvironment(private vararg val results: ExecResult) : 
 
     override fun close(): Unit = Unit
 }
-
-/** An [ExecResult.Completed] with quiet defaults, so tests spell out only what they assert on. */
-internal fun completed(
-    exitCode: Int = 0,
-    stdout: String = "",
-    stderr: String = "",
-    stdoutTruncated: Boolean = false,
-    stderrTruncated: Boolean = false,
-): ExecResult.Completed = ExecResult.Completed(exitCode, stdout, stderr, stdoutTruncated, stderrTruncated)

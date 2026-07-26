@@ -8,10 +8,11 @@ Shared build conventions live in the root build script.
 ## Build & verify
 
 - `./gradlew build` — compile + detekt + unit tests of both modules (needs
-  the ai-router checkout on disk — see README). The server's SSE tests
-  flake under load, a different one each run: re-run before suspecting a
-  change, and never infer one from *which* test failed (evidence in
-  README, Building).
+  the ai-router checkout on disk — see README). The server suite flakes:
+  roughly one test per run dies on a 30-second timeout, a different one
+  each time, on every invocation including an untouched `main` — re-run,
+  and never infer anything about a change from it (README, *Flaky
+  30-second test timeouts*).
 - `./lint.sh` / `./fmt.sh` — detekt check / auto-fix formatting.
 - `./gradlew liveTest` — live tests against a running local ai-router
   server; the e2e container variant also needs Docker (not in
@@ -35,9 +36,10 @@ Shared build conventions live in the root build script.
   transcript repair for tool calls a run ended before answering; stopping
   is the user's run-scoped command that records a `stopped` outcome.
 - Stored session state is a persisted format: the `@SerialName`s on
-  `AgentEvent` and `RunResult.Status` and the `SessionMetadata` variant
-  names in `session.json` are a compatibility contract — never change
-  them (details in the event KDoc; storage layout in README, Sessions).
+  `AgentEvent`, `RunResult.Status` and `Privilege`, and the
+  `SessionMetadata` variant names in `session.json`, are a compatibility
+  contract — never change them (details in the event KDoc; storage layout
+  in README, Sessions).
 - Test compilations are `associateWith`-bound for `internal` access (see
   the module build scripts): the lib's suites and `testFixtures` to its
   main, the server's `containerTest` to its main and test.

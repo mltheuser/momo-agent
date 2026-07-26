@@ -60,16 +60,18 @@ class ContainerExecutionEnvironmentTest {
     // ─── Core tool scenarios ──────────────────────────────────────────
 
     @Test
-    @DisplayName("The bash tool runs in the container with /workspace as the working directory")
+    @DisplayName("The bash tool runs in the container as root with /workspace as the working directory")
     fun bashToolRunsInContainerWorkspace() {
         withEnvironment { environment ->
             assertEquals("/workspace", environment.workspacePath)
+            assertEquals(Privilege.ROOT, environment.privilege)
 
-            val bash = BashTool(environment.workspacePath)
-            val result = bash.execute(BashArgs("pwd && cat /etc/os-release"), environment)
+            val bash = BashTool(environment.workspacePath, environment.privilege)
+            val result = bash.execute(BashArgs("pwd && id -u && cat /etc/os-release"), environment)
 
+            // The reported ROOT is a constant, so uid 0 is asserted for real here.
             val text = assertIs<ToolResult.Success>(result, result.text).text
-            assertContains(text, "/workspace")
+            assertContains(text, "stdout:\n/workspace\n0\n")
             assertContains(text, "Debian GNU/Linux 12")
         }
     }
@@ -79,7 +81,7 @@ class ContainerExecutionEnvironmentTest {
     fun bashToolRoundTripsTrickyContent() {
         val tricky = "it's \"double\" `backtick` \$(sub) \${brace} \\slash\nsecond line\n"
         withEnvironment { environment ->
-            val bash = BashTool(environment.workspacePath)
+            val bash = BashTool(environment.workspacePath, environment.privilege)
             // A quoted heredoc delimiter keeps every metacharacter literal.
             bash.execute(
                 BashArgs("cat > tricky.txt <<'MOMO_EOF'\n${tricky}MOMO_EOF"),
@@ -105,7 +107,7 @@ class ContainerExecutionEnvironmentTest {
     fun bashToolWritesNoTrailingNewlineByteExact() {
         val bare = "it's \"double\" `backtick` \$(sub) \${brace} \\slash ends bare"
         withEnvironment { environment ->
-            val bash = BashTool(environment.workspacePath)
+            val bash = BashTool(environment.workspacePath, environment.privilege)
             // The heredoc adds a final newline; truncate drops it again.
             bash.execute(
                 BashArgs("cat > bare.txt <<'MOMO_EOF'\n${bare}\nMOMO_EOF\ntruncate -s -1 bare.txt"),

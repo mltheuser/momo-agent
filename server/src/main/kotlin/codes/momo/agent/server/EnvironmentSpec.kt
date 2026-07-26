@@ -4,6 +4,7 @@ import codes.momo.agent.environment.ContainerExecutionEnvironment
 import codes.momo.agent.environment.EnvironmentStartupException
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.environment.Privilege
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.nio.file.Path
@@ -26,9 +27,13 @@ internal sealed interface EnvironmentSpec {
 
     @Serializable
     @SerialName("local")
-    data class Local(val workspace: String) : EnvironmentSpec {
+    data class Local(
+        val workspace: String,
+        /** Rights the session's commands run with; the host must grant it, or building fails. */
+        val privilege: Privilege = Privilege.UNPRIVILEGED,
+    ) : EnvironmentSpec {
 
-        override fun build(): ExecutionEnvironment = LocalExecutionEnvironment(Path.of(workspace))
+        override fun build(): ExecutionEnvironment = LocalExecutionEnvironment(Path.of(workspace), privilege)
     }
 
     @Serializable

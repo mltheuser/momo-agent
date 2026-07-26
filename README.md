@@ -37,11 +37,26 @@ of both modules. It does **not** run the live or container integration
 tests and does not require a running ai-router server — only the checkout
 on disk.
 
-One caveat: the server's SSE tests drive real-time 30-second timeouts, and
-under load some of them time out spuriously — a different one each run.
-This was A/B-verified against an unmodified `main` on 2026-07-17 and again
-on 2026-07-25, so treat an SSE failure as noise until a re-run reproduces
-it, and never conclude anything from *which* test failed.
+### Flaky 30-second test timeouts
+
+The server suite fails intermittently — usually exactly one test per run, a
+different one each time, always `TimeoutCancellationException: Timed out
+waiting for 30000 ms`. The budget is `STREAM_TIMEOUT_MILLIS` in
+`ServerTestSupport.kt`, shared by `streamEvents`, `awaitRunStart` and both
+`awaitRunEnd` helpers, so the blast radius is every test that waits on a
+run — not only the streaming ones. A/B-verified against an unmodified
+`main` repeatedly, most recently 2026-07-26.
+
+The identity of the failing test carries no signal. Neither does the
+invocation: on 2026-07-26 `build` failed 3/3, `check` 2/2, `:lib:test
+:server:test` 2/2, and `:server:test` alone 1/2, on a 16-core machine with
+no memory pressure — so this is not load, and no command is reliably clean.
+The rule that does hold: a lone 30-second timeout, on a different test each
+run, is noise. A failure that reproduces on the *same* test, or that is not
+a 30-second timeout, is yours.
+
+Being unable to trust the suite is not acceptable long-term; the root cause
+is tracked in [server-test-timeout-flake](../planning/issues/agent-lib/server-test-timeout-flake.md).
 
 ## Linting & formatting
 
@@ -182,8 +197,16 @@ an optional title:
 
 ```json
 {"harnessPath": "<dir>", "environment": {"type": "local", "workspace": "<dir>"}, "title": "..."}
+{"harnessPath": "<dir>", "environment": {"type": "local", "workspace": "<dir>", "privilege": "passwordless_sudo"}}
 {"harnessPath": "<dir>", "environment": {"type": "container", "image": "<img>", "workspace": "<dir>"}}
 ```
+
+A local environment may declare the privileges its commands run with —
+`unprivileged` (the default), `passwordless_sudo` or `root` — which the
+agent is told and the host must actually grant: a claim the host denies is
+a `400 invalid_environment`, at creation and again whenever a dormant
+session is resumed. Container environments are always root and take no
+such field. See the platform section for granting it.
 
 Rename and favorite each take a one-field body:
 
@@ -337,3 +360,35 @@ The project assumes a POSIX userland (`bash`, coreutils, `grep`, `find`,
 `sed`), UTF-8 everywhere, LF line endings, and a `docker` CLI usable
 without `sudo` (needed for container-backed execution and the
 `containerTest` suite).
+
+### Command privileges
+
+Container-backed sessions run their commands as root, inherent to the
+pinned run user and needing no setup. A local environment instead
+*declares* what it has — unprivileged by default — and verifies the claim
+when it is constructed, so a false declaration fails startup instead of
+becoming a confident falsehood in the prompt. Nothing is ever granted or
+elevated by the library, and an unprivileged declaration is a statement to
+the model, not a sandbox.
+
+Passwordless sudo is granted by host configuration: a sudoers entry for the
+OS user the server process runs as, added with `visudo -f`, never a plain
+editor.
+
+```text
+# /etc/sudoers.d/momo-agent
+momo-agent ALL=(ALL) NOPASSWD: ALL
+```
+
+sudoers is keyed on user, host, run-as user and command list — it **cannot
+be scoped to a working directory**, so per-workspace elevation is not
+expressible: the unit of granting is the account, in practice the server
+process. Run the server under a dedicated account for it rather than a
+developer's own login, and where two workspaces need different postures,
+run two server processes under two accounts.
+
+The verification is a single probe per startup: `sudo -n -k true` for
+passwordless sudo (`-k` ignores any warm credential cache, so a password
+typed minutes ago cannot pass for a NOPASSWD entry) and an effective-uid
+check for root. An unprivileged declaration is not probed at all — running
+as root while declaring less is safe and stays supported.

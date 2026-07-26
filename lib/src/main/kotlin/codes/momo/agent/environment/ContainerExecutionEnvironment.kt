@@ -73,6 +73,12 @@ public class ContainerExecutionEnvironment(
     public override val workspacePath: String = CONTAINER_WORKSPACE
 
     /**
+     * Constant rather than configured or probed: the run pins `--user 0:0`
+     * and execs inherit it, so the pin *is* the guarantee.
+     */
+    public override val privilege: Privilege = Privilege.ROOT
+
+    /**
      * Runs [command] in the container per the [ExecutionEnvironment.exec]
      * contract. Timeout and cancellation SIGKILL the in-container process
      * tree — matched via a per-exec marker environment variable that

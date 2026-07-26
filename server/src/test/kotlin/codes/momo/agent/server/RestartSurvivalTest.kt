@@ -8,6 +8,7 @@ import codes.momo.agent.TEST_RUN_SETTINGS
 import codes.momo.agent.asReply
 import codes.momo.agent.assistantResponse
 import codes.momo.agent.baseUrl
+import codes.momo.agent.environment.Privilege
 import codes.momo.agent.scriptedServer
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
@@ -122,6 +123,32 @@ class RestartSurvivalTest {
                     assertEquals(SessionStatus.CLOSED, info.status)
                 }
             }
+        }
+    }
+
+    @Test
+    @DisplayName("A stored session whose metadata predates the privilege field loads and rebuilds as unprivileged")
+    fun preprivilegeMetadataRebuildsAsUnprivileged() {
+        val harness = writeHarness(tempDir.resolve("harness")).toString()
+        val workspace = tempDir.resolve("workspace").createDirectories().toString()
+        val folder = tempDir.resolve("data/sessions/old-session").createDirectories()
+        folder.resolve("session.json").writeText(
+            """{"type":"root","harnessPath":"$harness",""" +
+                """"environment":{"type":"local","workspace":"$workspace"}}""",
+        )
+        folder.resolve("events.jsonl").writeText(
+            """{"type":"session_started","sequenceId":0,"timestampMillis":0,""" +
+                """"sessionId":"old-session","title":"Older than the field"}""" + "\n",
+        )
+
+        withScriptedSessionServer(tempDir, assistantResponse(finishReason = "stop", text = "resumed")) { http ->
+            val info = http.get("/v1/sessions/old-session").body<SessionInfo>()
+            assertEquals(EnvironmentSpec.Local(workspace, Privilege.UNPRIVILEGED), info.environment)
+
+            // The rebuild half: the next prompt constructs the environment from that spec.
+            http.prompt("old-session", "carry on")
+            http.awaitRunEnd("old-session")
+            assertEquals(SessionStatus.IDLE, http.get("/v1/sessions/old-session").body<SessionInfo>().status)
         }
     }
 

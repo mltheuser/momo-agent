@@ -4,6 +4,7 @@ import ai.router.sdk.schema.Description
 import codes.momo.agent.Budgets
 import codes.momo.agent.environment.ExecResult
 import codes.momo.agent.environment.ExecutionEnvironment
+import codes.momo.agent.environment.Privilege
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -15,14 +16,14 @@ public data class BashArgs(
 /**
  * general-purpose shell tool: one bash command per call.
  *
- * [workspacePath] is the absolute workspace root commands run in, named in
- * the description: the model learns the working directory from the tool
- * that owns it, so it must be the workspace path of the environment this
- * tool is executed against.
+ * [workspacePath] and [privilege] are the absolute workspace root commands
+ * run in and the rights they run with, both named in the description: the
+ * model learns them from the tool that owns them, so both must come from
+ * the environment this tool is executed against.
  */
-public class BashTool(workspacePath: String) : Tool<BashArgs>(
+public class BashTool(workspacePath: String, privilege: Privilege) : Tool<BashArgs>(
     name = "bash",
-    description = bashDescription(workspacePath),
+    description = bashDescription(workspacePath, privilege),
     argsSerializer = BashArgs.serializer(),
 ) {
 
@@ -71,20 +72,42 @@ public class BashTool(workspacePath: String) : Tool<BashArgs>(
 
 /**
  * LLM-facing contract of [BashTool] — the model only knows what this says,
- * so the workspace root is stated here and nowhere else: one place to read
- * where commands run and how to name files.
+ * so the workspace root and the privilege wording are stated here and
+ * nowhere else: one place to read where commands run, with what rights, and
+ * how to name files.
  */
-private fun bashDescription(workspacePath: String): String = """
-    Runs a bash command (via `bash -c`) from the workspace root, $workspacePath.
+private fun bashDescription(workspacePath: String, privilege: Privilege): String {
+    val rights = when (privilege) {
+        Privilege.ROOT -> """
+            Commands already run as root, so there is nothing to elevate and reaching for `sudo` only
+            wastes a call — a permission-shaped failure here is never a privilege problem.
+        """.trimIndent()
 
-    Each call is a fresh shell: a directory change, exported variable, or shell function from one
-    call is gone by the next, and the working directory is back at the workspace root. Chain
-    dependent steps into a single command with `&&`.
+        Privilege.PASSWORDLESS_SUDO -> """
+            Assume commands run as an unprivileged user, but `sudo` works without a password: when a
+            command needs root, prefix the command with `sudo`.
+        """.trimIndent()
 
-    Commands are killed after ${Budgets.TOOL_TIMEOUT} and report a timeout error with any partial output. stdout
-    and stderr come back in one result (stderr first) and share a budget of ${ToolRegistry.MAX_RESULT_CHARS} characters;
-    truncation keeps the beginning and drops the end, so to see the end of long output, filter
-    it (e.g. `tail`, `grep`) instead of dumping it. Long-running processes (e.g. servers) MUST
-    be backgrounded with BOTH stdout and stderr redirected (to a file or /dev/null) — a
-    backgrounded process still holding either stream hangs the call until the timeout.
-""".trimIndent()
+        Privilege.UNPRIVILEGED -> """
+            Assume commands run as an unprivileged user with no way up: `sudo` will not work. Treat a
+            permission error as a real ceiling — report it instead of working around it.
+        """.trimIndent()
+    }
+    val contract = """
+        Each call is a fresh shell: a directory change, exported variable, or shell function from one
+        call is gone by the next, and the working directory is back at the workspace root. Chain
+        dependent steps into a single command with `&&`.
+
+        Commands are killed after ${Budgets.TOOL_TIMEOUT} and report a timeout error with any partial output. stdout
+        and stderr come back in one result (stderr first) and share a budget of ${ToolRegistry.MAX_RESULT_CHARS} characters;
+        truncation keeps the beginning and drops the end, so to see the end of long output, filter
+        it (e.g. `tail`, `grep`) instead of dumping it. Long-running processes (e.g. servers) MUST
+        be backgrounded with BOTH stdout and stderr redirected (to a file or /dev/null) — a
+        backgrounded process still holding either stream hangs the call until the timeout.
+    """.trimIndent()
+    return listOf(
+        "Runs a bash command (via `bash -c`) from the workspace root, $workspacePath.",
+        rights,
+        contract,
+    ).joinToString("\n\n")
+}

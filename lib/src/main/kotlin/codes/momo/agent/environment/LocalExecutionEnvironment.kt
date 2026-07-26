@@ -23,19 +23,26 @@ import kotlin.time.Duration
  */
 public class LocalExecutionEnvironment internal constructor(
     private val workspace: Path,
+    public override val privilege: Privilege,
     searchPath: String?,
+    probe: PrivilegeProbe = hostPrivilegeProbe(workspace),
 ) : ExecutionEnvironment {
 
     /**
-     * Wraps [workspace], validating it and the host userland baseline up
-     * front.
+     * Wraps [workspace], validating it, the host userland baseline and the
+     * claimed [privilege] up front. The claim comes from the embedder
+     * because posture is a deployment fact: this environment falsifies a
+     * claim, it never discovers one.
      *
      * @throws EnvironmentStartupException when [workspace] is not an
-     *   existing directory, or baseline binaries (see the README's
-     *   platform section) are missing from `PATH` — naming everything
-     *   that is missing.
+     *   existing directory, baseline binaries (see the README's platform
+     *   section) are missing from `PATH` — naming everything that is
+     *   missing — or the host does not grant [privilege].
      */
-    public constructor(workspace: Path) : this(workspace, System.getenv("PATH"))
+    public constructor(
+        workspace: Path,
+        privilege: Privilege = Privilege.UNPRIVILEGED,
+    ) : this(workspace, privilege, System.getenv("PATH"))
 
     init {
         if (!workspace.isDirectory()) {
@@ -50,6 +57,7 @@ public class LocalExecutionEnvironment internal constructor(
                     "${missing.joinToString(", ")}. Install them (or fix PATH) and retry.",
             )
         }
+        probe.verify(privilege)
     }
 
     public override val workspacePath: String = workspace.toAbsolutePath().normalize().toString()
@@ -69,16 +77,13 @@ public class LocalExecutionEnvironment internal constructor(
     public override fun close() {
         // Nothing owned.
     }
-
-    private companion object {
-
-        private fun isOnSearchPath(binary: String, searchPath: String?): Boolean =
-            searchPath.orEmpty()
-                .split(File.pathSeparator)
-                .filter { it.isNotBlank() }
-                .any { directory ->
-                    val candidate = Path.of(directory, binary)
-                    Files.isRegularFile(candidate) && Files.isExecutable(candidate)
-                }
-    }
 }
+
+private fun isOnSearchPath(binary: String, searchPath: String?): Boolean =
+    searchPath.orEmpty()
+        .split(File.pathSeparator)
+        .filter { it.isNotBlank() }
+        .any { directory ->
+            val candidate = Path.of(directory, binary)
+            Files.isRegularFile(candidate) && Files.isExecutable(candidate)
+        }
