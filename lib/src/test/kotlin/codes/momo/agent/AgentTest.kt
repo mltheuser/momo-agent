@@ -7,6 +7,7 @@ import ai.router.sdk.models.ToolCallFunction
 import codes.momo.agent.environment.LocalExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
+import codes.momo.agent.tool.BashTool
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -90,15 +91,17 @@ class AgentTest {
                 val request = requests.single()
                 val systemPrompt = request.messages.first().text
                 val description = assertNotNull(request.tools.orEmpty().single { it.name == "bash" }.description)
-                // Each fact is pinned as the description actually words it, so
-                // what the prompt is denied cannot drift off what the
-                // description says. The test environment is the unprivileged one.
-                val root = LocalExecutionEnvironment(workspace).workspacePath
-                val facts = listOf(root, "unprivileged user with no way up")
-                facts.forEach { fact ->
-                    assertContains(description, fact)
-                    assertFalse(systemPrompt.contains(fact), "the system prompt must not state: $fact")
-                }
+                // Which posture the host grants is not this suite's business —
+                // it is discovered, so any hardcoded wording would pass only on
+                // some machines. The expectation is the description the same
+                // environment produces, which pins both facts as it words them.
+                val environment = LocalExecutionEnvironment(workspace)
+                val expected = BashTool(environment.workspacePath, environment.privilege).definition.description
+                assertEquals(expected, description)
+                // And the prompt states neither of them: not the root, and not
+                // the rights, whose every wording names `sudo`.
+                assertFalse(environment.workspacePath in systemPrompt, "the system prompt must not state the root")
+                assertFalse("sudo" in systemPrompt, "the system prompt must not state the privilege")
             }
         }
     }

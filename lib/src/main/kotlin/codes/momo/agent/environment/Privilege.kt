@@ -4,13 +4,13 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
- * Rights the commands of an [ExecutionEnvironment] run with. Root and
- * passwordless sudo stay distinguishable because they need opposite
- * guidance: under root, writing `sudo` is the mistake; under passwordless
- * sudo, omitting it is.
+ * Rights the commands of an [ExecutionEnvironment] run with, discovered
+ * from the host rather than configured. Root and passwordless sudo stay
+ * distinguishable because they need opposite guidance: under root, writing
+ * `sudo` is the mistake; under passwordless sudo, omitting it is.
  *
- * The wire names are a compatibility contract — they are stored in session
- * metadata, so renaming one breaks every session written before the rename.
+ * The wire names are a read contract — they are reported by the server's
+ * inspection endpoints, so renaming one breaks the clients that display it.
  */
 @Serializable
 public enum class Privilege {

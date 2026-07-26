@@ -24,7 +24,7 @@ public interface ExecutionEnvironment : AutoCloseable {
      * [Privilege] the commands run through [exec] have. Defaulted so that
      * embedders' own implementations of this interface keep working, and
      * defaulted to the lowest state: an environment that cannot elevate has
-     * nothing to declare.
+     * nothing to report.
      */
     public val privilege: Privilege
         get() = Privilege.UNPRIVILEGED

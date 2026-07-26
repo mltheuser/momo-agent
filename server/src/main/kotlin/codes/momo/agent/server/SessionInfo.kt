@@ -1,6 +1,7 @@
 package codes.momo.agent.server
 
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.environment.Privilege
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlin.time.Duration
@@ -19,6 +20,13 @@ internal data class SessionInfo(
     val title: String,
     val harnessPath: String,
     val environment: EnvironmentSpec,
+    /**
+     * Rights the session's commands run with, as its built environment
+     * reports them — discovered, never requested. Null for a `closed`
+     * session: with no environment built there is nothing to have asked,
+     * and the answer could differ by the time one is.
+     */
+    val privilege: Privilege?,
     val status: SessionStatus,
     val favorite: Boolean,
     val createdAtMillis: Long,

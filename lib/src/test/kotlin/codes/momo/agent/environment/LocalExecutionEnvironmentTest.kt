@@ -277,7 +277,7 @@ class LocalExecutionEnvironmentTest {
             }
 
         val exception = assertFailsWith<EnvironmentStartupException> {
-            LocalExecutionEnvironment(tempDir, Privilege.UNPRIVILEGED, searchPath = stubBin.toString())
+            LocalExecutionEnvironment(tempDir, searchPath = stubBin.toString())
         }
         val message = exception.message.orEmpty()
         assertContains(message, "grep")
@@ -289,7 +289,7 @@ class LocalExecutionEnvironmentTest {
     @DisplayName("With no PATH at all, the full baseline is named")
     fun noSearchPathNamesTheFullBaseline() {
         val exception = assertFailsWith<EnvironmentStartupException> {
-            LocalExecutionEnvironment(tempDir, Privilege.UNPRIVILEGED, searchPath = null)
+            LocalExecutionEnvironment(tempDir, searchPath = null)
         }
         val message = exception.message.orEmpty()
         BASELINE_BINARIES.forEach { binary ->
@@ -297,46 +297,72 @@ class LocalExecutionEnvironmentTest {
         }
     }
 
-    // ─── Privilege verification ───────────────────────────────────────
+    // ─── Privilege detection ──────────────────────────────────────────
     //
-    // The host's own posture is deliberately out of play here: every claim is
-    // falsified against an injected probe, so the suite passes as root, as a
+    // The host's own posture is deliberately out of play here: every posture
+    // is answered by an injected probe, so the suite passes as root, as a
     // NOPASSWD-granted CI user and on a host without `sudo` alike.
 
-    /** Constructs over [tempDir] claiming [privilege], with [probe] answering for the host. */
-    private fun environment(privilege: Privilege, probe: PrivilegeProbe): LocalExecutionEnvironment =
-        LocalExecutionEnvironment(tempDir, privilege, System.getenv("PATH"), probe)
+    /** Constructs over [tempDir] with [probe] answering for the host. */
+    private fun environment(probe: PrivilegeProbe): LocalExecutionEnvironment =
+        LocalExecutionEnvironment(tempDir, System.getenv("PATH"), probe)
 
-    /** A probe that appends every command it is asked to run to [commands] and confirms the claim. */
+    /** A probe that appends every command it is asked to run to [commands] and grants it. */
     private fun recordingProbe(commands: MutableList<List<String>>): PrivilegeProbe = PrivilegeProbe { command ->
         commands += command
         completed()
     }
 
-    @Test
-    @DisplayName("An unprivileged claim is taken at its word: nothing is probed and the environment reports it")
-    fun unprivilegedClaimIsNotProbed() {
-        val probed = mutableListOf<List<String>>()
-
-        val environment = environment(Privilege.UNPRIVILEGED, recordingProbe(probed))
-
-        assertEquals(Privilege.UNPRIVILEGED, environment.privilege)
-        assertTrue(probed.isEmpty(), "an unprivileged claim must not be probed, ran: $probed")
+    /** A probe that succeeds for exactly the probe programs named in [granted]. */
+    private fun probeGranting(vararg granted: String): PrivilegeProbe = PrivilegeProbe { command ->
+        if (command.first() in granted) completed() else completed(exitCode = 1)
     }
 
     @Test
-    @DisplayName("Each probed claim runs the one command that can falsify it")
-    fun eachClaimRunsItsOwnProbe() {
+    @DisplayName("A host whose commands already run as root is detected as root")
+    fun rootHostIsDetectedAsRoot() {
+        assertEquals(Privilege.ROOT, environment(probeGranting("bash")).privilege)
+    }
+
+    @Test
+    @DisplayName("A host that grants NOPASSWD sudo but does not run as root is detected as passwordless sudo")
+    fun sudoGrantingHostIsDetectedAsPasswordlessSudo() {
+        assertEquals(Privilege.PASSWORDLESS_SUDO, environment(probeGranting("sudo")).privilege)
+    }
+
+    @Test
+    @DisplayName("A host that grants neither is detected as unprivileged — the floor detection never falls below")
+    fun plainHostIsDetectedAsUnprivileged() {
+        assertEquals(Privilege.UNPRIVILEGED, environment(probeGranting()).privilege)
+    }
+
+    @Test
+    @DisplayName("Root wins over sudo when a host satisfies both probes, so the guidance is not the inverted one")
+    fun rootTakesPrecedenceOverSudo() {
         val probed = mutableListOf<List<String>>()
 
-        environment(Privilege.ROOT, recordingProbe(probed))
-        environment(Privilege.PASSWORDLESS_SUDO, recordingProbe(probed))
+        val environment = environment(recordingProbe(probed))
+
+        assertEquals(Privilege.ROOT, environment.privilege)
+        assertEquals(1, probed.size, "detection must stop at the first posture it confirms, ran: $probed")
+    }
+
+    @Test
+    @DisplayName("Detection runs the two commands that discriminate the postures, argv pinned verbatim")
+    fun detectionRunsThePinnedProbes() {
+        val probed = mutableListOf<List<String>>()
+
+        // Granting nothing forces both probes to run, in order.
+        LocalExecutionEnvironment(tempDir, System.getenv("PATH")) { command ->
+            probed += command
+            completed(exitCode = 1)
+        }
 
         // The argv is the contract with the host, so it is pinned verbatim,
         // `-k` included (the probe's KDoc says why it matters).
         assertEquals(
             listOf(
-                listOf("bash", "-c", "echo \"\$EUID\"; [ \"\$EUID\" -eq 0 ]"),
+                listOf("bash", "-c", "[ \"\$EUID\" -eq 0 ]"),
                 listOf("sudo", "-n", "-k", "true"),
             ),
             probed,
@@ -344,59 +370,14 @@ class LocalExecutionEnvironmentTest {
     }
 
     @Test
-    @DisplayName("A claim the probe confirms constructs successfully and is reported as declared")
-    fun confirmedClaimSucceeds() {
-        listOf(Privilege.ROOT, Privilege.PASSWORDLESS_SUDO).forEach { claimed ->
-            val environment = environment(claimed) { completed() }
-
-            assertEquals(claimed, environment.privilege)
+    @DisplayName("A probe program that cannot be started denies its posture instead of failing construction")
+    fun unstartableProbeProgramIsADenial() {
+        // The plainest case of this is a host with no `sudo` at all.
+        val environment = environment { command ->
+            if (command.first() == "sudo") throw IOException("Cannot run program") else completed(exitCode = 1)
         }
-    }
 
-    @Test
-    @DisplayName("A root claim fails when the probe reports a non-root effective uid, naming that uid")
-    fun rootClaimWithNonRootEuidFails() {
-        val exception = assertFailsWith<EnvironmentStartupException> {
-            environment(Privilege.ROOT) { completed(exitCode = 1, stdout = "501\n") }
-        }
-        val message = exception.message.orEmpty()
-        assertContains(message, ROOT_DECLARED)
-        assertContains(message, "501")
-    }
-
-    @Test
-    @DisplayName("A passwordless-sudo claim the probe is denied fails, naming the sudoers remedy")
-    fun deniedPasswordlessSudoClaimFails() {
-        val exception = assertFailsWith<EnvironmentStartupException> {
-            environment(Privilege.PASSWORDLESS_SUDO) {
-                completed(exitCode = 1, stderr = "sudo: a password is required")
-            }
-        }
-        val message = exception.message.orEmpty()
-        assertContains(message, SUDO_DECLARED)
-        assertContains(message, "sudo -n -k true")
-        assertContains(message, "a password is required")
-        assertContains(message, "NOPASSWD")
-        // The message goes out verbatim as the API's 400 body, where the wire
-        // vocabulary is lowercase, so the remedy must not name an enum constant.
-        assertFalse(
-            Privilege.UNPRIVILEGED.name in message,
-            "the remedy must read for an HTTP client too: $message",
-        )
-    }
-
-    @Test
-    @DisplayName("A probe program that cannot be started fails construction instead of escaping as an IOException")
-    fun unstartableProbeProgramFailsConstruction() {
-        mapOf(Privilege.ROOT to ROOT_DECLARED, Privilege.PASSWORDLESS_SUDO to SUDO_DECLARED)
-            .forEach { (claimed, declared) ->
-                val exception = assertFailsWith<EnvironmentStartupException> {
-                    environment(claimed) { throw IOException("Cannot run program") }
-                }
-
-                assertContains(exception.message.orEmpty(), declared)
-                assertIs<IOException>(exception.cause)
-            }
+        assertEquals(Privilege.UNPRIVILEGED, environment.privilege)
     }
 
     @Test
@@ -405,12 +386,7 @@ class LocalExecutionEnvironmentTest {
         val probed = mutableListOf<List<String>>()
 
         assertFailsWith<EnvironmentStartupException> {
-            LocalExecutionEnvironment(
-                tempDir,
-                privilege = Privilege.ROOT,
-                searchPath = null,
-                probe = recordingProbe(probed),
-            )
+            LocalExecutionEnvironment(tempDir, searchPath = null, probe = recordingProbe(probed))
         }
 
         assertTrue(probed.isEmpty(), "the baseline scan must fail first, ran: $probed")
@@ -437,9 +413,5 @@ class LocalExecutionEnvironmentTest {
 
         /** How long the polling helpers wait for a killed process / pid file before failing. */
         val KILL_GRACE_PERIOD = 5.seconds
-
-        /** How a denial names the claim it falsified — prose, so it reads on the wire too. */
-        const val ROOT_DECLARED = "Root privilege was declared"
-        const val SUDO_DECLARED = "Passwordless sudo was declared"
     }
 }

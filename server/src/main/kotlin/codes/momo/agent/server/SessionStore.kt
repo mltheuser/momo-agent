@@ -88,12 +88,12 @@ internal class SessionStore(dataDir: Path) {
         // they must only ever see a complete file — old or new.
         val directory = directory(id).createDirectories()
         val staging = Files.createTempFile(directory, METADATA_FILE, ".tmp")
-        staging.writeText(Json.encodeToString(metadata))
+        staging.writeText(metadataJson.encodeToString(metadata))
         Files.move(staging, directory.resolve(METADATA_FILE), StandardCopyOption.ATOMIC_MOVE)
     }
 
     fun readMetadata(id: String): SessionMetadata = try {
-        Json.decodeFromString(directory(id).resolve(METADATA_FILE).readText())
+        metadataJson.decodeFromString(directory(id).resolve(METADATA_FILE).readText())
     } catch (failure: SerializationException) {
         throw CorruptSessionException(id, failure)
     }
@@ -294,3 +294,12 @@ private fun dropTornTail(file: Path) {
 private const val METADATA_FILE = "session.json"
 
 private const val EVENTS_FILE = "events.jsonl"
+
+/**
+ * Session metadata tolerates keys it does not know, because a file on disk
+ * outlives the schema that wrote it: a session stored while the environment
+ * spec still carried a `privilege` must keep loading now that the privilege
+ * is discovered instead. The event log stays strict by contrast — there an
+ * unknown key is a wire-contract break worth failing on.
+ */
+private val metadataJson = Json { ignoreUnknownKeys = true }

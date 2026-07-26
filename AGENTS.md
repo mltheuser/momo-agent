@@ -36,10 +36,12 @@ Shared build conventions live in the root build script.
   transcript repair for tool calls a run ended before answering; stopping
   is the user's run-scoped command that records a `stopped` outcome.
 - Stored session state is a persisted format: the `@SerialName`s on
-  `AgentEvent`, `RunResult.Status` and `Privilege`, and the
-  `SessionMetadata` variant names in `session.json`, are a compatibility
-  contract — never change them (details in the event KDoc; storage layout
-  in README, Sessions).
+  `AgentEvent` and `RunResult.Status`, and the `SessionMetadata` variant
+  names in `session.json`, are a compatibility contract — never change them
+  (`Privilege` is *not* in this class: response contract only, never
+  stored). `session.json` tolerates unknown keys so a file can outlive its
+  schema; the event log deliberately does not. Details in the event KDoc;
+  storage layout in README, Sessions.
 - Test compilations are `associateWith`-bound for `internal` access (see
   the module build scripts): the lib's suites and `testFixtures` to its
   main, the server's `containerTest` to its main and test.
@@ -59,8 +61,8 @@ Shared build conventions live in the root build script.
 - [README.md](README.md) — read when setting up the build, running the
   live/container test suites, running or configuring the agent server,
   working on or against its HTTP API (endpoints and wire format),
-  working with container-backed execution, or checking platform
-  assumptions.
+  working with container-backed execution, granting or explaining the
+  host's command privileges (sudoers), or checking platform assumptions.
 - [../planning/issues/agent-lib/README.md](../planning/issues/agent-lib/README.md) — read when
   picking up an issue or looking up how a delivered feature was designed:
   issue index, binding design decisions, per-issue Outcomes (lives in the

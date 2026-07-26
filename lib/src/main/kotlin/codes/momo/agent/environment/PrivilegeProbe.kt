@@ -18,40 +18,48 @@ internal fun interface PrivilegeProbe {
 
 /**
  * The real probe. Runs in [workspace] like every other command of that
- * environment, so a probe passes or fails under the conditions of the
- * commands it vouches for.
+ * environment, so a probe reports the posture of the commands it speaks for.
  */
 internal fun hostPrivilegeProbe(workspace: Path): PrivilegeProbe = PrivilegeProbe { command ->
     runProcessBlocking(command, workingDirectory = workspace, timeout = PROBE_TIMEOUT)
 }
 
 /**
- * Falsifies the [claimed] privilege against the host. Call once the userland
- * baseline is established — that is what lets a probe use `bash` rather than,
- * say, `id -u`.
+ * Derives the posture the host actually grants. Nothing is declared and so
+ * nothing can be wrong: a claim could only ever narrow what the model was
+ * told while the host went on granting what it granted, which is a
+ * confusing falsehood rather than a restraint — the elevation a command can
+ * reach is a property of the account this process runs as, not of anything
+ * expressible here.
  *
- * @throws EnvironmentStartupException when the host does not grant [claimed],
- *   naming what it reported instead and the remedy.
+ * Ordered most-privileged first, because the postures overlap: root can
+ * satisfy the sudo probe too, and would be described by the wrong guidance
+ * if that answered first.
+ *
+ * Call once the userland baseline is established — that is what lets a probe
+ * use `bash` rather than, say, `id -u`.
  */
-internal fun PrivilegeProbe.verify(claimed: Privilege) {
-    when (claimed) {
-        // Taken at its word, unprobed: under-claiming is safe, and a
-        // deployment that happens to run as root must keep working.
-        Privilege.UNPRIVILEGED -> Unit
-        Privilege.ROOT -> verifyRoot()
-        Privilege.PASSWORDLESS_SUDO -> verifyPasswordlessSudo()
-    }
+internal fun PrivilegeProbe.detect(): Privilege = when {
+    grants(EUID_PROBE) -> Privilege.ROOT
+    grants(SUDO_PROBE) -> Privilege.PASSWORDLESS_SUDO
+    else -> Privilege.UNPRIVILEGED
 }
 
-private fun PrivilegeProbe.verifyRoot() {
-    val result = runOrDeny(listOf("bash", "-c", EUID_PROBE_SCRIPT), ::rootDenied)
-    if (result.succeeded) {
-        return
+/**
+ * Whether [command] ran and reported success. A probe program that cannot be
+ * started at all — no `sudo` on the host, say — is the plainest possible
+ * denial of the posture it tests, not a failure: detection always has a
+ * floor to fall back to, so it never throws.
+ */
+private fun PrivilegeProbe.grants(command: List<String>): Boolean =
+    try {
+        run(command).succeeded
+    } catch (_: IOException) {
+        false
     }
-    val euid = (result as? ExecResult.Completed)?.stdout?.trim().orEmpty()
-    val detail = if (euid.isEmpty()) result.problem() else "the effective uid is $euid"
-    throw EnvironmentStartupException(rootDenied(detail))
-}
+
+/** Succeeds exactly when commands already run as root. */
+private val EUID_PROBE = listOf("bash", "-c", "[ \"\$EUID\" -eq 0 ]")
 
 /**
  * `-k` is what makes this precise: a warm credential cache would otherwise
@@ -59,38 +67,11 @@ private fun PrivilegeProbe.verifyRoot() {
  * days. With a command given, `-k` ignores the cache without invalidating it,
  * so the probe leaves no trace.
  */
-private fun PrivilegeProbe.verifyPasswordlessSudo() {
-    val result = runOrDeny(listOf("sudo", "-n", "-k", "true"), ::sudoDenied)
-    if (!result.succeeded) {
-        throw EnvironmentStartupException(sudoDenied("`sudo -n -k true` failed: ${result.problem()}"))
-    }
-}
-
-/**
- * Turns a probe program that cannot be started at all — absent, or unrunnable
- * despite being on `PATH` — into the [denied] refusal it amounts to.
- */
-private fun PrivilegeProbe.runOrDeny(command: List<String>, denied: (String) -> String): ExecResult =
-    try {
-        run(command)
-    } catch (unstartable: IOException) {
-        throw EnvironmentStartupException(denied("`${command.first()}` could not be started"), unstartable)
-    }
-
-/** Puts the effective uid on stdout so a denial can name it. */
-private const val EUID_PROBE_SCRIPT = "echo \"\$EUID\"; [ \"\$EUID\" -eq 0 ]"
+private val SUDO_PROBE = listOf("sudo", "-n", "-k", "true")
 
 /**
  * Deadline for a privilege probe. Generous for a local `true`, tight enough
  * that a stalled `sudo -n` — a PAM or LDAP lookup, which is not passwordless
- * in any useful sense — fails instead of hanging.
+ * in any useful sense — resolves to unprivileged instead of hanging.
  */
 private val PROBE_TIMEOUT: Duration = 10.seconds
-
-private fun rootDenied(detail: String): String =
-    "Root privilege was declared, but commands do not run as root — $detail. Run this process as " +
-        "root, or declare the privilege it actually has."
-
-private fun sudoDenied(detail: String): String =
-    "Passwordless sudo was declared, but $detail. Grant a NOPASSWD sudoers entry for the user this " +
-        "process runs as (see the README's platform section), or declare that commands run unprivileged."

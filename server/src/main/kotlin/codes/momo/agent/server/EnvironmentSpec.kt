@@ -4,7 +4,6 @@ import codes.momo.agent.environment.ContainerExecutionEnvironment
 import codes.momo.agent.environment.EnvironmentStartupException
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.environment.LocalExecutionEnvironment
-import codes.momo.agent.environment.Privilege
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.nio.file.Path
@@ -13,6 +12,11 @@ import java.nio.file.Path
  * Client-provided description of a session's execution environment, kept
  * verbatim in the session's metadata so a dormant session's runtime can be
  * rebuilt from it.
+ *
+ * It describes only what a client can choose. The privilege a session's
+ * commands run with is not among those things — it follows from the account
+ * the server process runs as — so it is discovered when the environment is
+ * built and reported through [SessionInfo.privilege], never accepted here.
  */
 @Serializable
 internal sealed interface EnvironmentSpec {
@@ -27,13 +31,9 @@ internal sealed interface EnvironmentSpec {
 
     @Serializable
     @SerialName("local")
-    data class Local(
-        val workspace: String,
-        /** Rights the session's commands run with; the host must grant it, or building fails. */
-        val privilege: Privilege = Privilege.UNPRIVILEGED,
-    ) : EnvironmentSpec {
+    data class Local(val workspace: String) : EnvironmentSpec {
 
-        override fun build(): ExecutionEnvironment = LocalExecutionEnvironment(Path.of(workspace), privilege)
+        override fun build(): ExecutionEnvironment = LocalExecutionEnvironment(Path.of(workspace))
     }
 
     @Serializable

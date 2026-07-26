@@ -138,6 +138,7 @@ internal class SessionRegistry(
             title = events.sessionTitle(),
             harnessPath = resolvedHarnessPath(position),
             environment = position.root.environment,
+            privilege = runtime?.environment?.privilege,
             status = when {
                 runtime == null -> SessionStatus.CLOSED
                 runtime.isRunning(position.path) -> SessionStatus.RUNNING

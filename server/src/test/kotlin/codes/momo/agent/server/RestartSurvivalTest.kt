@@ -8,7 +8,6 @@ import codes.momo.agent.TEST_RUN_SETTINGS
 import codes.momo.agent.asReply
 import codes.momo.agent.assistantResponse
 import codes.momo.agent.baseUrl
-import codes.momo.agent.environment.Privilege
 import codes.momo.agent.scriptedServer
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
@@ -127,14 +126,16 @@ class RestartSurvivalTest {
     }
 
     @Test
-    @DisplayName("A stored session whose metadata predates the privilege field loads and rebuilds as unprivileged")
-    fun preprivilegeMetadataRebuildsAsUnprivileged() {
+    @DisplayName("A stored session whose metadata still carries the obsolete privilege field loads and rebuilds")
+    fun obsoletePrivilegeFieldInStoredMetadataIsIgnored() {
         val harness = writeHarness(tempDir.resolve("harness")).toString()
         val workspace = tempDir.resolve("workspace").createDirectories().toString()
         val folder = tempDir.resolve("data/sessions/old-session").createDirectories()
+        // Written while the spec still accepted a declared privilege. The file
+        // outlives that schema, so the key must be ignored, not fail the load.
         folder.resolve("session.json").writeText(
-            """{"type":"root","harnessPath":"$harness",""" +
-                """"environment":{"type":"local","workspace":"$workspace"}}""",
+            """{"type":"root","harnessPath":"$harness","environment":{"type":"local",""" +
+                """"workspace":"$workspace","privilege":"passwordless_sudo"}}""",
         )
         folder.resolve("events.jsonl").writeText(
             """{"type":"session_started","sequenceId":0,"timestampMillis":0,""" +
@@ -143,7 +144,7 @@ class RestartSurvivalTest {
 
         withScriptedSessionServer(tempDir, assistantResponse(finishReason = "stop", text = "resumed")) { http ->
             val info = http.get("/v1/sessions/old-session").body<SessionInfo>()
-            assertEquals(EnvironmentSpec.Local(workspace, Privilege.UNPRIVILEGED), info.environment)
+            assertEquals(EnvironmentSpec.Local(workspace), info.environment)
 
             // The rebuild half: the next prompt constructs the environment from that spec.
             http.prompt("old-session", "carry on")

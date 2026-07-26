@@ -181,7 +181,7 @@ the host and is removed) and keeps the stored log.
 | Method & path                 | Effect |
 | ----------------------------- | ------ |
 | `POST /v1/sessions`           | Create a session (request body below) → `201` with the session info. |
-| `GET /v1/sessions`            | List the root sessions (ID, parent, title, harness path, environment, status, favorite, created-at, updated-at, last run's budget consumption). Subagent sessions are omitted — fetch them by ID. |
+| `GET /v1/sessions`            | List the root sessions (ID, parent, title, harness path, environment, privilege, status, favorite, created-at, updated-at, last run's budget consumption). Subagent sessions are omitted — fetch them by ID. |
 | `GET /v1/sessions/{id}`       | One session's info. |
 | `POST /v1/sessions/{id}/prompt` | Send the next user message; the run starts in the background → `202` with a snapshot of the session info. |
 | `POST /v1/sessions/{id}/rename` | Set the session's title (request body below) → `200` with the updated session info. |
@@ -197,16 +197,12 @@ an optional title:
 
 ```json
 {"harnessPath": "<dir>", "environment": {"type": "local", "workspace": "<dir>"}, "title": "..."}
-{"harnessPath": "<dir>", "environment": {"type": "local", "workspace": "<dir>", "privilege": "passwordless_sudo"}}
 {"harnessPath": "<dir>", "environment": {"type": "container", "image": "<img>", "workspace": "<dir>"}}
 ```
 
-A local environment may declare the privileges its commands run with —
-`unprivileged` (the default), `passwordless_sudo` or `root` — which the
-agent is told and the host must actually grant: a claim the host denies is
-a `400 invalid_environment`, at creation and again whenever a dormant
-session is resumed. Container environments are always root and take no
-such field. See the platform section for granting it.
+A `privilege` key in the body is a `400 invalid_request`: a session's
+privilege is discovered, not chosen, and reported read-only (see the derived
+fields below, and *Command privileges* for what decides it).
 
 Rename and favorite each take a one-field body:
 
@@ -217,7 +213,11 @@ Rename and favorite each take a one-field body:
 
 Session `status` is derived, never stored: `running` (a run is in
 flight), `idle` (live, nothing running), `closed` (no runtime attached;
-resumable).
+resumable). So is `privilege` — `unprivileged`, `passwordless_sudo` or
+`root` — which reports what the session's built environment found the host
+to grant, and which the agent is told too. It is `null` for a `closed`
+session, where no environment exists to have asked and the answer could
+differ by the time one does.
 
 Session info also carries `updatedAtMillis` — the last logged event's
 timestamp, for ordering by recency — and `favorite`, stored as root
@@ -363,13 +363,17 @@ without `sudo` (needed for container-backed execution and the
 
 ### Command privileges
 
-Container-backed sessions run their commands as root, inherent to the
-pinned run user and needing no setup. A local environment instead
-*declares* what it has — unprivileged by default — and verifies the claim
-when it is constructed, so a false declaration fails startup instead of
-becoming a confident falsehood in the prompt. Nothing is ever granted or
-elevated by the library, and an unprivileged declaration is a statement to
-the model, not a sandbox.
+Container-backed sessions are always root (see *Container-backed
+execution*) — inherent to the pinned run user, nothing to set up. A local
+environment *discovers* what it has when it is constructed and tells the
+model that, so the prompt cannot disagree with the host.
+
+Nothing is ever granted or elevated by the library, and none of this is a
+sandbox: what a command can reach follows entirely from the OS account the
+server process runs as. That is why the posture is not configurable — asking
+for a smaller number would change only what the model is told. To run an
+agent that genuinely cannot elevate, remove the grant from the account, or
+use a container.
 
 Passwordless sudo is granted by host configuration: a sudoers entry for the
 OS user the server process runs as, added with `visudo -f`, never a plain
@@ -387,8 +391,10 @@ process. Run the server under a dedicated account for it rather than a
 developer's own login, and where two workspaces need different postures,
 run two server processes under two accounts.
 
-The verification is a single probe per startup: `sudo -n -k true` for
-passwordless sudo (`-k` ignores any warm credential cache, so a password
-typed minutes ago cannot pass for a NOPASSWD entry) and an effective-uid
-check for root. An unprivileged declaration is not probed at all — running
-as root while declaring less is safe and stays supported.
+Detection is at most two probes per environment, most-privileged first: an
+effective-uid check for root, then `sudo -n -k true` for passwordless sudo
+(`-k` ignores any warm credential cache, so a password typed minutes ago
+cannot pass for a NOPASSWD entry). Neither succeeding is `unprivileged` —
+the floor detection never falls below, which is also where a host with no
+`sudo` at all lands. Detection therefore never fails a session; it only
+ever reports something less than you hoped for.

@@ -23,26 +23,20 @@ import kotlin.time.Duration
  */
 public class LocalExecutionEnvironment internal constructor(
     private val workspace: Path,
-    public override val privilege: Privilege,
     searchPath: String?,
     probe: PrivilegeProbe = hostPrivilegeProbe(workspace),
 ) : ExecutionEnvironment {
 
     /**
-     * Wraps [workspace], validating it, the host userland baseline and the
-     * claimed [privilege] up front. The claim comes from the embedder
-     * because posture is a deployment fact: this environment falsifies a
-     * claim, it never discovers one.
+     * Wraps [workspace], validating it and the host userland baseline up
+     * front and discovering the [privilege] its commands run with.
      *
      * @throws EnvironmentStartupException when [workspace] is not an
-     *   existing directory, baseline binaries (see the README's platform
+     *   existing directory, or baseline binaries (see the README's platform
      *   section) are missing from `PATH` — naming everything that is
-     *   missing — or the host does not grant [privilege].
+     *   missing.
      */
-    public constructor(
-        workspace: Path,
-        privilege: Privilege = Privilege.UNPRIVILEGED,
-    ) : this(workspace, privilege, System.getenv("PATH"))
+    public constructor(workspace: Path) : this(workspace, System.getenv("PATH"))
 
     init {
         if (!workspace.isDirectory()) {
@@ -57,8 +51,15 @@ public class LocalExecutionEnvironment internal constructor(
                     "${missing.joinToString(", ")}. Install them (or fix PATH) and retry.",
             )
         }
-        probe.verify(privilege)
     }
+
+    /**
+     * Discovered, never declared: what a command here can elevate to is
+     * fixed by the account this process runs as, so the host is asked rather
+     * than told. Initialized after the init block because the probes lean on
+     * the userland baseline it establishes.
+     */
+    public override val privilege: Privilege = probe.detect()
 
     public override val workspacePath: String = workspace.toAbsolutePath().normalize().toString()
 

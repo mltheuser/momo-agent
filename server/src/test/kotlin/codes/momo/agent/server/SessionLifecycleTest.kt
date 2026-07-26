@@ -21,6 +21,7 @@ import kotlin.io.path.writeText
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -157,14 +158,17 @@ class SessionLifecycleTest {
     }
 
     @Test
-    @DisplayName("An unknown privilege is a 400 invalid_request")
-    fun invalidPrivilegeIsRejected() {
+    @DisplayName("A create request still declaring a privilege is a 400 invalid_request, not a silently ignored field")
+    fun declaredPrivilegeIsRejected() {
         withSessionServer(tempDir) { http ->
+            // A well-formed value, so this pins the absence of the field rather
+            // than the rejection of a bad one: a client that still asks for a
+            // posture is told, instead of quietly getting whatever the host has.
             val body = """
                 {"harnessPath": ${Json.encodeToString(harnessPath(tempDir))},
                  "environment": {"type": "local",
                                  "workspace": ${Json.encodeToString(localWorkspace(tempDir).workspace)},
-                                 "privilege": "sorcerer"}}
+                                 "privilege": "passwordless_sudo"}}
             """.trimIndent()
 
             val response = http.post("/v1/sessions") {
@@ -174,6 +178,23 @@ class SessionLifecycleTest {
 
             assertEquals(HttpStatusCode.BadRequest, response.status, response.bodyAsText())
             assertEquals("invalid_request", response.body<ApiError>().code)
+        }
+    }
+
+    @Test
+    @DisplayName("A live session reports the privilege its environment discovered; a closed one reports none")
+    fun privilegeIsReportedWhileAttached() {
+        withSessionServer(tempDir) { http ->
+            val created = http.createSession(harnessPath(tempDir), localWorkspace(tempDir))
+
+            // Which posture the host grants is its business — CI, a root
+            // container and a NOPASSWD dev box all differ — so only its
+            // presence is asserted, never its value.
+            assertNotNull(created.privilege, "a built environment must report the posture it found")
+
+            val closed = http.post("/v1/sessions/${created.id}/close").body<SessionInfo>()
+
+            assertNull(closed.privilege, "with no environment built there is nothing to report")
         }
     }
 
