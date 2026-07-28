@@ -17,6 +17,8 @@ internal class AgentEventEmitter(
             // Deliberately includes CancellationException — onEvent never
             // carries the run's own cancellation (it is not a suspension
             // point), so rethrowing would only let a listener cancel a run.
+            // Just as deliberately narrower than Throwable: what that leaves
+            // reaching the run is [AgentEventListener]'s contract.
         }
     }
 }

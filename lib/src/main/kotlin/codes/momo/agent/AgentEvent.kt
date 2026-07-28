@@ -61,11 +61,12 @@ public sealed interface AgentEvent {
 
     /**
      * A run reached a terminal status, however it ended — an [Agent.stop]
-     * included. Cancelling the coroutine that runs [Agent.send] is the one
-     * exception: such a log records the run without this event, and
-     * [Agent.load]'s transcript repair covers that missing tail. The
-     * fields carry the final [RunResult] counterparts: the run's
-     * totals, the final message verbatim.
+     * included. A log can still record a run without this event: cancelling
+     * the coroutine that runs [Agent.send] leaves one, as does this event's
+     * own emit raising what the [AgentEventListener] contract does not
+     * swallow. [Agent.load]'s transcript repair covers that missing tail
+     * either way. The fields carry the final [RunResult] counterparts: the
+     * run's totals, the final message verbatim.
      */
     @Serializable
     @SerialName("run_finished")

@@ -19,7 +19,9 @@ import kotlin.time.TimeSource
 /**
  * The fake router's own contract: a request its script cannot answer fails
  * where it arrives, naming both sides, and does so at once. The bound is what
- * makes "cannot hang" an observation rather than a claim.
+ * makes "cannot hang" an observation rather than a claim. Its one deliberate
+ * escape hatch — a reply that throws — is pinned here too, since a fake that
+ * lost it would leave the cases resting on it passing for another reason.
  */
 class FakeLlmTest {
 
@@ -78,6 +80,21 @@ class FakeLlmTest {
         assertUnderTheBound(elapsed)
         assertEquals(RunResult.Status.ERROR, run.status)
         assertContains(assertNotNull(run.error).message.orEmpty(), "The fake router has no reply for")
+    }
+
+    @Test
+    @DisplayName("A reply that throws surfaces at the call as the throwable it planted")
+    fun aThrowingReplySurfacesAtTheCall() {
+        val fake = FakeLlm(
+            onAnyTurn(
+                reply = FakeLlmReply.Thrown { PlantedError("planted where the reply would be") },
+                expectation = "any turn, raising an Error instead of answering",
+            ),
+        )
+
+        fake.client().use { client ->
+            assertFailsWith<PlantedError> { runBlocking { client.chat(openingRequest()) } }
+        }
     }
 
     private fun openingRequest(): ChatRequest =

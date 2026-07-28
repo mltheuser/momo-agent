@@ -29,6 +29,10 @@ Shared build conventions live in the root build script.
   is the user's run-scoped command that records a `stopped` outcome. The
   server's mocked cascade cases (`SubagentStopCascadeTest`) are where the
   difference is pinned.
+- Three catch arms deliberately stay narrower than `Throwable` — the event
+  emitter's, tool dispatch's, and the run loop's `Exception` arm — so
+  widening one in a tidy-up silently converts a failed JVM into a run that
+  merely errored. Contract in `Agent.send`'s KDoc.
 - Stored session state is a persisted format: the `@SerialName`s on
   `AgentEvent` and `RunResult.Status`, and the `SessionMetadata` variant
   names in `session.json`, are a compatibility contract — never change them
@@ -36,7 +40,7 @@ Shared build conventions live in the root build script.
   stored). `session.json` tolerates unknown keys so a file can outlive its
   schema; the event log deliberately does not. Details in the event KDoc;
   storage layout in README, Sessions.
-- Shared test helpers live once, in a `testFixtures` source set — never a
+- Shared test helpers live once in one shared source set — never a
   per-suite copy. Which set, and how the suites are bound for `internal`
   access: [TESTING.md](TESTING.md), Source sets and fixtures.
 - Control characters in source files are written as visible escapes
@@ -51,8 +55,8 @@ Shared build conventions live in the root build script.
 
 - [TESTING.md](TESTING.md) — read when adding, moving or deleting a test,
   running one tier at a time, or getting a fresh checkout's `build` green: the
-  three tiers, the rule deciding which one a test belongs to, and what each
-  needs.
+  three tiers, the rule deciding which one a test belongs to, what each needs,
+  and where a shared helper lives.
 - [README.md](README.md) — read when setting up the build, pointing the live
   tier at another router or model, running or configuring the agent server,
   working on or against its HTTP API (endpoints and wire format),

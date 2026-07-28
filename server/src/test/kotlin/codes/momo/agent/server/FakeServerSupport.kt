@@ -4,6 +4,7 @@ import ai.router.sdk.AiRouterClient
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.FakeLlm
 import codes.momo.agent.FakeLlmRule
+import codes.momo.agent.RunResult
 import codes.momo.agent.TEST_RUN_SETTINGS
 import codes.momo.agent.unusedAiRouterClient
 import io.ktor.client.HttpClient
@@ -15,9 +16,13 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import org.opentest4j.TestAbortedException
 import java.nio.file.Path
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 import io.ktor.server.cio.CIO as ServerCIO
 
 /** Runs [block] against a full server over a registry on [tempDir]'s data dir, with no LLM reachable. */
@@ -129,6 +134,26 @@ internal suspend fun HttpClient.prompt(sessionId: String, prompt: String): Sessi
 internal suspend fun HttpClient.promptResponse(sessionId: String, prompt: String): HttpResponse =
     promptResponse(sessionId, prompt, TEST_RUN_SETTINGS.model)
 
+/**
+ * Streams [sessionId]'s events to its run's terminal one, asserting that the
+ * run ended as [expected] inside [FAIL_FAST_BOUND] and that the session reads
+ * idle once it did — the mechanics every case about a run ending by itself
+ * shares, whatever ends it.
+ */
+internal suspend fun HttpClient.assertRunEndsAtOnce(sessionId: String, expected: RunResult.Status) {
+    val started = TimeSource.Monotonic.markNow()
+    val events = streamEvents(sessionId)
+    val elapsed = started.elapsedNow()
+
+    assertEquals(expected, assertIs<AgentEvent.RunFinished>(events.last().event).status)
+    assertTrue(elapsed < FAIL_FAST_BOUND, "expected the run to end inside $FAIL_FAST_BOUND, took $elapsed")
+    // Awaited, and only once the bound above is measured, since the server's
+    // claim on the run it just ended can outlive the terminal frame the stream
+    // returned on.
+    awaitRunEnd(sessionId)
+    assertEquals(SessionStatus.IDLE, sessionInfo(sessionId).status)
+}
+
 // ─── Waits below the HTTP surface ─────────────────────────────────────
 
 /** Waits until [id]'s active run ends, however it ends. */
@@ -165,6 +190,16 @@ internal suspend fun SessionStore.awaitLoggedEvent(id: String, until: (AgentEven
  * proportionate to that work instead.
  */
 private val RUN_WAIT: Duration = 30.seconds
+
+/**
+ * How long a run that ends by itself may take to reach its subscriber. The
+ * timed window is a loopback SSE handshake and a decode — plus, for the case
+ * whose run gets as far as a tool, one bash process — measured at ~20 ms, so
+ * two orders of magnitude of slack leave only an actual wait able to breach it,
+ * and the only wait on offer is [RUN_WAIT], what a run without a terminal event
+ * costs.
+ */
+private val FAIL_FAST_BOUND: Duration = 2.seconds
 
 private val SHUTDOWN_TIMEOUT: Duration = 5.seconds
 

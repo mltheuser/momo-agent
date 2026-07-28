@@ -25,8 +25,10 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -41,6 +43,18 @@ class AgentTest {
     private fun refusingBaseUrl(): String {
         val port = ServerSocket(0).use { it.localPort }
         return "http://127.0.0.1:$port"
+    }
+
+    /** A listener recording into [log] and raising [planted] on the events [plantOn] matches. */
+    private fun plantingListener(
+        log: CollectingEventListener,
+        planted: PlantedError,
+        plantOn: (AgentEvent) -> Boolean,
+    ): AgentEventListener = AgentEventListener { event ->
+        log.onEvent(event)
+        if (plantOn(event)) {
+            throw planted
+        }
     }
 
     // ─── Construction ─────────────────────────────────────────────────
@@ -108,6 +122,54 @@ class AgentTest {
         assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
         assertEquals("the answer", result.finalMessage)
         assertEquals(listOf("system", "user", "assistant", "tool", "assistant"), result.transcript.map { it.role })
+    }
+
+    @Test
+    @DisplayName("A listener's Error mid-run ends the run as ERROR, records that outcome, and propagates the Error")
+    fun aListenerErrorEndsTheRunAndPropagates() {
+        val planted = PlantedError("a listener raised this mid-run")
+        val log = CollectingEventListener()
+        // The script would complete the run, so ERROR can only come from the
+        // Error — raised on the single tool call's end, with the run under way
+        // and the listener still recording what follows.
+        val listener = plantingListener(log, planted) { it is AgentEvent.ToolCallFinished }
+
+        val thrown = workspace.withFakeAgent(
+            onOpeningTurn(toolCallResponse(bashCall(id = "call-1", command = "echo hi"))),
+            onToolResults(assistantResponse(finishReason = "stop", text = "never reached")),
+            listener = listener,
+        ) { agent ->
+            assertFailsWith<PlantedError> { agent.send("go", TEST_RUN_SETTINGS) }
+        }
+
+        // Matched along the cause chain rather than by identity — for the
+        // reason a stop is — since kotlinx's stack-trace recovery can copy a
+        // throwable crossing the run's own job, carrying the original as its
+        // cause.
+        assertTrue(
+            generateSequence<Throwable>(thrown) { it.cause }.any { it === planted },
+            "expected the planted Error itself in what propagated, got $thrown",
+        )
+        assertEquals(RunResult.Status.ERROR, assertIs<AgentEvent.RunFinished>(log.events.last()).status)
+    }
+
+    @Test
+    @DisplayName("An Error on the run's opening event ends the run as ERROR too, before propagating")
+    fun aListenerErrorOnTheOpeningEventStillEndsTheRun() {
+        val planted = PlantedError("a listener raised this on the run's first event")
+        val log = CollectingEventListener()
+        val listener = plantingListener(log, planted) { it is AgentEvent.RunStarted }
+
+        // Scriptless on purpose: the Error lands before the opening turn, so a
+        // run reaching the router at all would fail on the missing reply.
+        val thrown = workspace.withFakeAgent(listener = listener) { agent ->
+            assertFailsWith<PlantedError> { agent.send("go", TEST_RUN_SETTINGS) }
+        }
+
+        // Raised before the loop's own job, so this one is the planted
+        // instance itself rather than a stack-trace-recovered copy of it.
+        assertSame(planted, thrown)
+        assertEquals(RunResult.Status.ERROR, assertIs<AgentEvent.RunFinished>(log.events.last()).status)
     }
 
     // ─── Terminal failures as data ────────────────────────────────────

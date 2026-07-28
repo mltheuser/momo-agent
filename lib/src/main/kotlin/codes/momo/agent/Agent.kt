@@ -118,8 +118,10 @@ public class Agent internal constructor(
      * outcome: each turn is one LLM call, followed by executing every
      * requested tool call sequentially, in order, until the model answers
      * without tool calls or a budget ends the run. Budget breaches,
-     * terminal LLM failures and a [stop] are reported through the returned
-     * [RunResult], never thrown.
+     * terminal LLM failures, a [stop] and every [Exception] the run raises
+     * are reported through the returned [RunResult], never thrown — bar the
+     * [CancellationException] of cancelling this coroutine, which propagates
+     * rather than becoming a result.
      *
      * Runs accumulate: each continues the previous conversation with
      * fresh budget counters. [settings] carries this run's model settings
@@ -132,6 +134,11 @@ public class Agent internal constructor(
      *
      * @throws IllegalArgumentException when [text] is blank.
      * @throws IllegalStateException when a send is already running.
+     * @throws Throwable when the run raises one that is no [Exception] — an
+     *   [Error] from a listener, say. It propagates once the run has ended
+     *   as [RunResult.Status.ERROR] and its [AgentEvent.RunFinished] has
+     *   been emitted best-effort: a JVM that has failed must not be
+     *   reported as a run that merely errored.
      */
     public suspend fun send(text: String, settings: RunSettings): RunResult {
         require(text.isNotBlank()) { "A user message must not be blank." }
@@ -177,16 +184,20 @@ public class Agent internal constructor(
     private suspend fun executeRun(text: String, run: RunState): RunResult {
         currentRun = run
         history += userMessage(text)
-        emitter.emit { id, at ->
-            AgentEvent.RunStarted(
-                sequenceId = id,
-                timestampMillis = at,
-                userMessage = text,
-                model = run.settings.model,
-                reasoningEffort = run.settings.reasoningEffort,
-            )
-        }
+        // Outlives the try: the arm that records it cannot also rethrow it.
+        var fatal: Throwable? = null
         val status = try {
+            // Inside the try, so a listener raising on the opening event ends
+            // the run through the arms below like any later one would.
+            emitter.emit { id, at ->
+                AgentEvent.RunStarted(
+                    sequenceId = id,
+                    timestampMillis = at,
+                    userMessage = text,
+                    model = run.settings.model,
+                    reasoningEffort = run.settings.reasoningEffort,
+                )
+            }
             withContext(run.loop) { runLoop(run) }
         } catch (cancellation: CancellationException) {
             if (!cancellation.isRunStopped()) {
@@ -195,6 +206,11 @@ public class Agent internal constructor(
             run.decided ?: RunResult.Status.STOPPED
         } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
             run.failure = failure
+            RunResult.Status.ERROR
+        } catch (@Suppress("TooGenericExceptionCaught") raised: Throwable) {
+            // No RunFinished carries an error: the rethrow is this
+            // throwable's only delivery.
+            fatal = raised
             RunResult.Status.ERROR
         } finally {
             currentRun = null
@@ -210,18 +226,12 @@ public class Agent internal constructor(
             elapsed = run.elapsed,
             error = run.failure,
         )
-        emitter.emit { id, at ->
-            AgentEvent.RunFinished(
-                sequenceId = id,
-                timestampMillis = at,
-                status = result.status,
-                finalMessage = result.finalMessage,
-                usage = result.usage,
-                turnsUsed = result.turnsUsed,
-                elapsed = result.elapsed,
-            )
+        if (fatal == null) {
+            emitter.emitRunFinished(result)
+            return result
         }
-        return result
+        emitter.emitRunFinishedUnder(fatal, result)
+        throw fatal
     }
 
     /**
@@ -526,6 +536,38 @@ private fun AgentEventListener.subagentListener(name: String, sessionId: String)
     listenerForSubagent(name, sessionId)
 } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
     NoOpAgentEventListener
+}
+
+private fun AgentEventEmitter.emitRunFinished(result: RunResult) {
+    emit { id, at ->
+        AgentEvent.RunFinished(
+            sequenceId = id,
+            timestampMillis = at,
+            status = result.status,
+            finalMessage = result.finalMessage,
+            usage = result.usage,
+            turnsUsed = result.turnsUsed,
+            elapsed = result.elapsed,
+        )
+    }
+}
+
+/**
+ * Emits [result]'s terminal event while [fatal] is on its way out to the
+ * caller, guaranteeing that a failure of the emit itself never replaces it:
+ * whatever the emit raises is suppressed onto [fatal] instead.
+ */
+private fun AgentEventEmitter.emitRunFinishedUnder(fatal: Throwable, result: RunResult) {
+    try {
+        emitRunFinished(result)
+    } catch (@Suppress("TooGenericExceptionCaught") emitFailure: Throwable) {
+        // A listener rethrowing its cached throwable, or a preallocated
+        // OutOfMemoryError, hands back the very instance being thrown —
+        // which self-suppression would turn into the caller's failure.
+        if (emitFailure !== fatal) {
+            fatal.addSuppressed(emitFailure)
+        }
+    }
 }
 
 private fun textMessage(role: String, text: String): ChatMessage =

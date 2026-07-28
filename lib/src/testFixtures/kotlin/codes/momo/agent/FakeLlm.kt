@@ -43,8 +43,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * its run as [RunResult.Status.ERROR] with that text as its
  * [RunResult.error] — its [AgentEvent.RunFinished] emitted like any other
  * outcome, so a watcher waiting on the run's end is released at once. The
- * fake never waits and never throws past the caller's error handling, so a
- * script that has run out or was never right cannot look like a hang.
+ * fake never waits, so a script that has run out or was never right cannot
+ * look like a hang; and apart from [FakeLlmReply.Thrown], which exists for
+ * the cases whose subject is a throwable escaping a run, it never throws past
+ * the caller's error handling either.
  */
 public class FakeLlm private constructor(
     private val catalog: ModelList?,
@@ -107,6 +109,8 @@ public class FakeLlm private constructor(
                 respondApiError(HttpStatusCode.fromValue(reply.statusCode), reply.message)
 
             is FakeLlmReply.Verbatim -> respondJson(HttpStatusCode.fromValue(reply.statusCode), reply.body)
+
+            is FakeLlmReply.Thrown -> throw reply.raise()
         }
 
     /**
@@ -160,7 +164,7 @@ public class FakeLlmRule internal constructor(
         used.getAndUpdate { served -> if (served < cap) served + 1 else served } < cap
 }
 
-/** What a [FakeLlmRule] serves: a completion, a failing status with an API error body, or a verbatim body. */
+/** What a [FakeLlmRule] serves: a completion, a failing status with an API error body, a verbatim body, or a throw. */
 public sealed interface FakeLlmReply {
 
     public data class Completion(val response: ChatResponse) : FakeLlmReply
@@ -169,6 +173,14 @@ public sealed interface FakeLlmReply {
 
     /** A body the SDK's types cannot produce — for the cases that are about a malformed response. */
     public data class Verbatim(val statusCode: Int, val body: String) : FakeLlmReply
+
+    /**
+     * No answer at all: [raise] produces the throwable served where the reply
+     * would be, so it surfaces at the SDK call the run is making. A factory
+     * rather than an instance, so a rule serving several requests never hands
+     * out the same throwable twice.
+     */
+    public class Thrown(public val raise: () -> Throwable) : FakeLlmReply
 }
 
 // ─── Rules ────────────────────────────────────────────────────────────

@@ -6,8 +6,9 @@ package codes.momo.agent
  * is called synchronously from the run for every event, in sequence order —
  * implementations must return quickly and not throw. Exceptions thrown
  * from [onEvent] or [listenerForSubagent] are swallowed or degraded to the
- * default, so observing can never alter a run's outcome; [storedEventsFor]
- * carries its own failure contract.
+ * default, so observing can never alter a run's outcome; a throwable that is
+ * no [Exception] is not caught at all and reaches the run it was observing
+ * (see [Agent.send]). [storedEventsFor] carries its own failure contract.
  */
 public fun interface AgentEventListener {
 

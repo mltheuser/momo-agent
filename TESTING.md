@@ -9,8 +9,10 @@ Three tiers, and one rule deciding which tier a test belongs to:
 > logic under test contains no HTTP call and is complex enough to fail on its
 > own. A test of a **fixture** rather than of the project is kept only where
 > that fixture failing quietly would cost more than the bug it hid — which
-> here means one thing: a fake router that could hang. Nothing else is a test
-> we keep.
+> here means two things, both about the fake router: that it could hang, and
+> that it could stop raising the throwable a case planted in a reply, leaving
+> the one case resting on that seam to pass for another reason. Nothing else
+> is a test we keep.
 
 | Tier             | Source sets                               | In `build`?       | Hang ceiling |
 | ---------------- | ----------------------------------------- | ----------------- | ------------ |
@@ -89,7 +91,10 @@ script that has drifted from the run it serves cannot look green.
 `FakeLlmTest` pins the in-process half of all this inside a bound only an
 actual wait can breach, and `FakeLlmServerTest` the half over the registry —
 the sole opt-out from the unanswered check, being the case whose subject *is*
-an unanswerable request.
+an unanswerable request. Server-side cases make that assertion through
+`assertRunEndsAtOnce` in `FakeServerSupport`, whose one bound is a backstop
+like the tier ceilings above, never a budget — so a second, rival bound is not
+a thing to invent.
 
 What the rule admits here, and all it admits: the LLM failure taxonomy
 (transient retry, terminal failure, a reported `finish_reason` of `error`,
@@ -97,8 +102,10 @@ an unparseable body), timeout and budget expiry at millisecond scale,
 per-run model and reasoning-effort selection — which the live tier
 structurally cannot see, because any model answers — how a child run's
 outcome reaches its parent as a tool result, subagent registry integrity
-and the revival fallbacks, and event-log integrity (torn tails, a failed
-log refusing new runs).
+and the revival fallbacks, event-log integrity (torn tails, a failed
+log refusing new runs), and outcome recording when an `Error` kills a run —
+a throwable no router can produce, so the cases plant their own in a
+listener or in a reply.
 
 Content scripting is not a subject. Positional request indices and exact
 N-element event sequences are gone outright: a rule answers requests that
@@ -147,10 +154,14 @@ module's main; the server's three suites to the server's `testFixtures` as
 well, whose helpers are `internal` because the API types they carry are; and
 its `containerTest` to its `test` on top of that.
 
-Shared helpers live once in a `testFixtures` source set, never as per-suite
-copies: the lib's for everything about agents and the fake router, consumed by
-every lib suite and by the server's too; the server's for the HTTP shape of
-its API, consumed by all three of its suites.
+Shared helpers live once, never as per-suite copies: the lib's `testFixtures`
+for everything about agents and the fake router, consumed by every lib suite
+and by the server's too; the server's `testFixtures` for the HTTP shape of its
+API, consumed by all three of its suites; and what only the mocked suites can
+share — standing a fake-backed server up, and the assertions that mean
+something only against one — in `server/src/test`'s `FakeServerSupport`, which
+has to be there: the server's `testFixtures` depends on `lib`, not on `lib`'s
+fixtures, so each suite that wants the fake router asks for it directly.
 
 ## Running them
 
