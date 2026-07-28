@@ -103,9 +103,11 @@ per-run model and reasoning-effort selection — which the live tier
 structurally cannot see, because any model answers — how a child run's
 outcome reaches its parent as a tool result, subagent registry integrity
 and the revival fallbacks, event-log integrity (torn tails, a failed
-log refusing new runs), and outcome recording when an `Error` kills a run —
-a throwable no router can produce, so the cases plant their own in a
-listener or in a reply.
+log refusing new runs), the rewind — its HTTP surface over stored
+multi-run logs only the fake builds cheaply, its cascade over the subagent
+tree, and its open streams surviving the log truncation — and outcome
+recording when an `Error` kills a run — a throwable no router can produce,
+so the cases plant their own in a listener or in a reply.
 
 Content scripting is not a subject. Positional request indices and exact
 N-element event sequences are gone outright: a rule answers requests that

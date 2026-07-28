@@ -177,6 +177,7 @@ the host and is removed) and keeps the stored log.
 | `POST /v1/sessions/{id}/prompt` | Send the next user message; the run starts in the background → `202` with a snapshot of the session info. |
 | `POST /v1/sessions/{id}/rename` | Set the session's title (request body below) → `200` with the updated session info. |
 | `POST /v1/sessions/{id}/favorite` | Set the session's favorite flag (request body below) → `200` with the updated session info. |
+| `POST /v1/sessions/{id}/rewind` | Cut the session's log back to an earlier event (request body below) → `200` with the updated session info plus the IDs of every session the cascade deleted. |
 | `GET /v1/sessions/{id}/events`| The session's event log as an SSE stream: stored history, then live events. |
 | `POST /v1/sessions/{id}/stop` | Stop the session's in-flight run — no request body → `200` with the session info once the run has ended. Idempotent. |
 | `POST /v1/sessions/{id}/close`| Close the session's whole subagent tree; aborts in-flight work without recording its end, tears the environment down, keeps the stored logs. Idempotent. |
@@ -201,6 +202,30 @@ Rename and favorite each take a one-field body:
 {"title": "..."}
 {"favorite": true}
 ```
+
+So does rewind, naming the event that becomes the log's last
+conversation-bearing entry:
+
+```json
+{"sequenceId": 41}
+```
+
+A rewind is destructive: everything after the named event is deleted from
+the stored log permanently — no copy, no undo — and a
+`conversation_rewound` event is appended as the new tail (see *The event
+stream*). The session keeps its identity, environment and resume path, and
+is promptable the moment the call returns; rewinding a `closed` session
+leaves it closed, the next prompt resuming from the cut log. The whole
+tree must be idle — a run in flight anywhere in it is a `409` and nothing
+changes. Naming the log's last event is a no-op success; a sequence ID the
+log does not hold — one an earlier rewind deleted included — is a
+`400 invalid_request`. The cut may land mid-run: the appended event closes
+what remains of it, so a dangling `run_started` above the cut never reads
+as still running. One caveat worth knowing: the **workspace is not
+rewound** — files stay exactly as the deleted turns left them; the agent
+is not told, it simply no longer remembers. What a rewind does to spawned
+subagents — and which sessions the response's `deletedSessionIds` names —
+is under *Subagent sessions*.
 
 Session `status` is derived, never stored: `running` (a run is in
 flight), `idle` (live, nothing running), `closed` (no runtime attached;
@@ -249,7 +274,9 @@ turns used, elapsed) is the record, observed via the event stream. A run's
 it), `turns_exhausted`, `timeout`, or `error`. The one run without that
 record is one cut short by closing or deleting the session, or by a server
 shutdown — the log ends mid-run and the session's `status` is the
-indicator. A blank prompt is a `400 invalid_request`, a prompt while a run
+indicator. A rewind can also take the record away when its cut lands
+mid-run — see the rewind endpoint under *Endpoints (v1)*. A blank prompt
+is a `400 invalid_request`, a prompt while a run
 is active a `409 conflict`, and a session whose event log can no longer
 persist refuses new runs with a `500 event_log_failed`.
 
@@ -257,14 +284,23 @@ persist refuses new runs with a `500 event_log_failed`.
 
 `GET /v1/sessions/{id}/events` serves the stored event log verbatim as
 server-sent events: each frame's `id:` is the event's `sequenceId`
-(gapless, 0-based) and its `data:` is the event JSON exactly as stored —
-one serialized `AgentEvent` (its serialization is the wire contract —
-see `AgentEvent`'s KDoc). No `event:` name is used. The
-stream replays history — all of it, or strictly after the `Last-Event-ID`
-request header on reconnect — then stays open and follows live events.
-Any number of subscribers can follow one session, each at its own pace;
-subscribing to a `closed` session serves its history without resuming it.
-Deleting the session ends its streams.
+(0-based and strictly increasing — with gaps where a rewind deleted
+events, since sequence IDs are never reused) and its `data:` is the event
+JSON exactly as stored — one serialized `AgentEvent` (its serialization is
+the wire contract — see `AgentEvent`'s KDoc). No `event:` name is used.
+The stream replays history — all of it, or strictly after the
+`Last-Event-ID` request header on reconnect — then stays open and follows
+live events. Any number of subscribers can follow one session, each at its
+own pace; subscribing to a `closed` session serves its history without
+resuming it. Deleting the session ends its streams.
+
+A rewind announces itself on the stream as the `conversation_rewound`
+event it appends: it names the last surviving sequence ID and is itself
+numbered above everything deleted, so replaying subscribers, live tails,
+and `Last-Event-ID` reconnects from inside the deleted range all converge
+on it without reconnect gymnastics. It carries no conversation content and
+renders nothing; for what it does to a run the cut landed in, see the
+rewind endpoint under *Endpoints (v1)*.
 
 ### Subagent sessions
 
@@ -329,6 +365,18 @@ cascades only downward, into the child runs the stopped run is blocked on
 — each recording its own `stopped` end. A stopped parent-driven child
 hands its parent the same kind of error result any other unfinished child
 run does, and the parent runs on.
+
+A rewind of any member cascades along what its deleted range caused,
+recursively: a deleted `subagent_spawned` removes that child and its whole
+subtree exactly as a delete would — stored artifacts and all, the name
+free to spawn anew — with every removed session named in the response's
+`deletedSessionIds`; a deleted `prompt_subagent` call cuts the child's own
+log to strictly before the run that call drove, taking everything after it
+— runs a human prompted directly in between included. A descendant the
+deleted ranges never touch keeps its log untouched, and every cut log gets
+its own `conversation_rewound` tail. An attached tree is reloaded from the
+cut logs over the same environment: live descendants drop back to dormant,
+revived again on use.
 
 Prompting any dormant member — root or child — rebuilds the tree's runtime
 and revives just the chain from the root to the prompted session from the

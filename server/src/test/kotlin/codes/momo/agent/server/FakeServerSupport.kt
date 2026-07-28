@@ -42,6 +42,9 @@ internal fun withSessionServer(
     }
 }
 
+/** A store over the same data dir the servers above serve, for asserting on [tempDir]'s persisted logs. */
+internal fun sessionStore(tempDir: Path): SessionStore = SessionStore(tempDir.resolve("data"))
+
 /** Runs [block] against a full server over [tempDir] whose LLM is a [FakeLlm] over [rules]. */
 internal fun withFakeSessionServer(
     tempDir: Path,

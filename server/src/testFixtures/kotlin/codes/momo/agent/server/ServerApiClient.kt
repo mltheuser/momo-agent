@@ -153,6 +153,19 @@ internal suspend fun HttpClient.favoriteResponse(sessionId: String, favorite: Bo
         setBody(FavoriteRequest(favorite))
     }
 
+/** POSTs a rewind, asserting 200, and returns the session as cut plus the cascade's deletions. */
+internal suspend fun HttpClient.rewindSession(sessionId: String, sequenceId: Long): RewindResponse {
+    val response = rewindResponse(sessionId, sequenceId)
+    assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+    return response.body()
+}
+
+internal suspend fun HttpClient.rewindResponse(sessionId: String, sequenceId: Long): HttpResponse =
+    post("/v1/sessions/$sessionId/rewind") {
+        contentType(ContentType.Application.Json)
+        setBody(RewindRequest(sequenceId))
+    }
+
 /** POSTs a stop — no request body — whose response carries the session info as of the stop's return. */
 internal suspend fun HttpClient.stopResponse(sessionId: String): HttpResponse = post("/v1/sessions/$sessionId/stop")
 
@@ -186,11 +199,15 @@ internal data class SseEvent(val id: Long, val event: AgentEvent)
 /**
  * Subscribes to [sessionId]'s SSE event stream — strictly after
  * [afterSequenceId] when given, via `Last-Event-ID` — and collects until
- * [until] matches (that event included), then disconnects.
+ * [until] matches (that event included), then disconnects. A stream the
+ * server itself ends — the session deleted under it — returns whatever
+ * arrived instead. [onSubscribed] runs once the subscription is open, for
+ * a case that must not act until this stream is standing.
  */
 internal suspend fun HttpClient.streamEvents(
     sessionId: String,
     afterSequenceId: Long? = null,
+    onSubscribed: () -> Unit = {},
     until: (AgentEvent) -> Boolean = { it is AgentEvent.RunFinished },
 ): List<SseEvent> {
     val received = CopyOnWriteArrayList<SseEvent>()
@@ -199,6 +216,7 @@ internal suspend fun HttpClient.streamEvents(
             "/v1/sessions/$sessionId/events",
             request = { afterSequenceId?.let { header("Last-Event-ID", it.toString()) } },
         ) {
+            onSubscribed()
             incoming
                 .filter { it.data != null } // Heartbeat comment frames carry no data.
                 .map { frame ->

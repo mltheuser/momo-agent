@@ -37,6 +37,10 @@ internal class SessionConflictException(message: String) : RuntimeException(mess
 internal class EventLogFailedException(cause: IOException) :
     RuntimeException("The session's event log failed: ${cause.message}", cause)
 
+/** Thrown when a rewind names a sequence ID the session's own log does not hold. */
+internal class InvalidRewindPointException(id: String, sequenceId: Long) :
+    RuntimeException("Session $id has no event with sequence ID $sequenceId to rewind to.")
+
 /**
  * All sessions the server knows, live or dormant. A session *is* its stored
  * log and metadata (see [SessionStore]); the running agents of a subagent
@@ -309,16 +313,151 @@ internal class SessionRegistry(
         root.mutex.withLock {
             teardown(root)
             withContext(NonCancellable + Dispatchers.IO) {
-                // Leaves first: a removal cut short by process death leaves
-                // a consistent tree, never children orphaned by a missing
-                // parent link.
-                store.subtreeIds(id).asReversed().forEach { member ->
-                    val memberEntry = entries.remove(member)
-                    store.delete(member)
-                    memberEntry?.eventSignal?.value = SESSION_DELETED_SIGNAL
+                removeSubtree(id)
+            }
+        }
+    }
+
+    /**
+     * Removes [id]'s stored subtree — registry entries, stored artifacts,
+     * event streams ended — leaves first, so a removal cut short by process
+     * death leaves a consistent tree, never children orphaned by a missing
+     * parent link. Returns every removed session ID; the caller holds the
+     * root's mutex.
+     */
+    private fun removeSubtree(id: String): List<String> {
+        val members = store.subtreeIds(id)
+        members.asReversed().forEach { member ->
+            val memberEntry = entries.remove(member)
+            store.delete(member)
+            memberEntry?.eventSignal?.value = SESSION_DELETED_SIGNAL
+        }
+        return members
+    }
+
+    /**
+     * Rewinds [id]: cuts its stored log so the event carrying [sequenceId]
+     * becomes the last conversation-bearing entry, everything after it
+     * deleted permanently — no copy, no undo — under the appended
+     * [AgentEvent.ConversationRewound] tail, and cascades into descendants
+     * per [rewindPlan]'s rules — the returned IDs name every session the
+     * cascade removed. An attached tree is reloaded from the cut logs over
+     * the same environment, every live descendant dormant again and the
+     * session promptable on return; a dormant tree stays dormant, resumed
+     * from the cut logs by the next prompt. Naming the log's last event is
+     * a no-op success: nothing is deleted and nothing appended.
+     *
+     * @throws InvalidRewindPointException when [sequenceId] is not in
+     *   [id]'s own log — a sequence ID an earlier rewind deleted included.
+     * @throws SessionConflictException when a run is in flight anywhere in
+     *   the tree; nothing changes.
+     */
+    suspend fun rewind(id: String, sequenceId: Long): List<String> {
+        val (path, root) = treeOf(entries, store, id)
+        return root.mutex.withLock {
+            if (root.runtime?.hasRunInFlight() == true) {
+                throw SessionConflictException("A run is in flight in the session's tree.")
+            }
+            val events = eventsWithValidatedRewindPoint(id, sequenceId)
+            if (events.last().sequenceId == sequenceId) {
+                // The cut would keep everything: the log stays byte-identical.
+                emptyList()
+            } else {
+                executeRewind(root, rootId = path.first(), id = id, sequenceId = sequenceId)
+            }
+        }
+    }
+
+    /** [id]'s stored events with [sequenceId] verified present — any event of the session's own log is a valid cut. */
+    private suspend fun eventsWithValidatedRewindPoint(id: String, sequenceId: Long): List<AgentEvent> =
+        withContext(Dispatchers.IO) {
+            val events = try {
+                store.readEvents(id)
+            } catch (_: NoSuchFileException) {
+                throw UnknownSessionException(id) // Deleted while waiting on the mutex.
+            }
+            if (events.none { it.sequenceId == sequenceId }) {
+                throw InvalidRewindPointException(id, sequenceId)
+            }
+            events
+        }
+
+    /**
+     * The rewind's mutating half; the caller holds the root's mutex and has
+     * verified the tree idle and [sequenceId] present. Shielded like
+     * [teardown]: a caller's cancellation must not abandon a live
+     * environment or a half-applied plan.
+     */
+    private suspend fun executeRewind(
+        root: SessionEntry,
+        rootId: String,
+        id: String,
+        sequenceId: Long,
+    ): List<String> = withContext(NonCancellable + Dispatchers.IO) {
+        val plan = rewindPlan(id, sequenceId) { sessionId ->
+            try {
+                store.readEvents(sessionId)
+            } catch (_: NoSuchFileException) {
+                null
+            }
+        }
+        val runtime = root.runtime
+        if (runtime == null) applyPlan(plan) else rewindAttachedTree(root, rootId, runtime, plan)
+    }
+
+    /**
+     * Cuts an attached tree's logs per [plan] and reloads the tree from
+     * them over the same environment. A failure before the cut aborts the
+     * rewind with every log untouched, tearing the tree down to closed; a
+     * reload failure after it degrades the tree to closed with the rewind
+     * standing — the next prompt surfaces the failure through the resume
+     * path. Returns the deleted session IDs.
+     */
+    private suspend fun rewindAttachedTree(
+        root: SessionEntry,
+        rootId: String,
+        runtime: TreeRuntime,
+        plan: RewindPlan,
+    ): List<String> {
+        root.runtime = null
+        val harness: Harness
+        val deleted: List<String>
+        try {
+            runtime.abortRuns()
+            runtime.closeLogs() // The open writers hold the inode the cut replaces.
+            harness = Harness.load(Path.of(store.position(rootId).root.harnessPath))
+            deleted = applyPlan(plan)
+        } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
+            runCatching { runtime.environment.close() }
+            throw failure
+        }
+        try {
+            root.runtime = loadTree(root, rootId, harness, runtime.environment)
+        } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
+            runCatching { runtime.environment.close() }
+        }
+        return deleted
+    }
+
+    /**
+     * Deletions first, then the cuts — descendants before ancestors, the
+     * target's own cut last, so an application cut short by process death
+     * leaves every touched log parseable and no cut log referencing a child
+     * state that was never cut to match. Returns the deleted session IDs.
+     */
+    private fun applyPlan(plan: RewindPlan): List<String> {
+        val deleted = plan.deletedSubtreeRoots.flatMap { removeSubtree(it) }
+        val gone = deleted.toSet()
+        plan.cuts.reversed().forEach { (sessionId, lastSurviving) ->
+            if (sessionId !in gone) {
+                val rewound = store.rewindEvents(sessionId, lastSurviving)
+                entries[sessionId]?.let { entry ->
+                    entry.truncations.value += 1
+                    entry.eventSignal.value = rewound.sequenceId
                 }
             }
         }
+        return deleted
     }
 
     /**
@@ -357,8 +496,10 @@ internal class SessionRegistry(
      * Stream of [id]'s stored events via [SessionStore.tailEvents];
      * subscribing never attaches a dormant session.
      */
-    fun eventsAfter(id: String, afterSequenceId: Long): Flow<StoredEvent> =
-        store.tailEvents(id, entries.known(id).eventSignal, afterSequenceId)
+    fun eventsAfter(id: String, afterSequenceId: Long): Flow<StoredEvent> {
+        val entry = entries.known(id)
+        return store.tailEvents(id, entry.eventSignal, entry.truncations, afterSequenceId)
+    }
 
     /** @throws UnknownSessionException when [id] names no known session. */
     fun requireKnown(id: String) {
@@ -382,15 +523,23 @@ internal class SessionRegistry(
             throw UnknownSessionException(id) // Deleted while waiting on the mutex.
         }
         val harness = Harness.load(Path.of(metadata.harnessPath))
+        val environment = metadata.environment.build()
+        closingOnFailure(environment) { loadTree(entry, id, harness, environment) }
+    }
+
+    /** Loads the tree rooted at [id] from its stored log over [environment], with fresh open event logs. */
+    private fun loadTree(
+        entry: SessionEntry,
+        id: String,
+        harness: Harness,
+        environment: ExecutionEnvironment,
+    ): TreeRuntime {
         val events = store.readEvents(id)
         val eventLog = store.eventLogFor(id)
-        val environment = metadata.environment.build()
         val logs = ConcurrentHashMap<String, PersistedEventLog>()
         logs[id] = eventLog
-        val agent = closingOnFailure(environment) {
-            Agent.load(events, harness, client, environment, TreeMemberListener(logs, entry, eventLog, id))
-        }
-        TreeRuntime(agent, environment, logs)
+        val agent = Agent.load(events, harness, client, environment, TreeMemberListener(logs, entry, eventLog, id))
+        return TreeRuntime(agent, environment, logs)
     }
 
     /**
@@ -524,7 +673,10 @@ private inline fun <T> closingOnFailure(environment: ExecutionEnvironment, block
 /**
  * One registry slot. [eventSignal] carries the latest logged sequenceId as
  * the wake-up event tails wait on; it outlives the runtime so subscribers
- * of a dormant session see the events of a later reattachment. [runtime]
+ * of a dormant session see the events of a later reattachment.
+ * [truncations] counts the rewinds that replaced the stored log — the
+ * signal a tail reads to reopen a file shrunk under its open stream, which
+ * a size comparison alone could miss once the log grows again. [runtime]
  * and [mutex] matter on tree roots only: the runtime belongs to the whole
  * tree, and every tree lifecycle transition serializes on its root's mutex.
  */
@@ -533,6 +685,8 @@ private class SessionEntry {
     val mutex = Mutex()
 
     val eventSignal = MutableStateFlow(BEFORE_FIRST_EVENT)
+
+    val truncations = MutableStateFlow(0L)
 
     @Volatile
     var runtime: TreeRuntime? = null
@@ -573,6 +727,15 @@ private class TreeRuntime(
      */
     suspend fun isRunning(path: List<String>): Boolean =
         path.last() in activeRuns || liveAgentAt(path)?.isRunning == true
+
+    /**
+     * Whether any member of the whole tree has a run in flight. [activeRuns]
+     * alone is tree-complete: every server-started run is claimed before
+     * launch and unclaimed only after it fully ends, a parent-driven child
+     * run exists only inside its parent's claimed run, and starts serialize
+     * on the root mutex the caller already holds.
+     */
+    fun hasRunInFlight(): Boolean = activeRuns.isNotEmpty()
 
     private suspend fun liveAgentAt(path: List<String>): Agent? =
         path.drop(1).fold(rootAgent as Agent?) { agent, childId -> agent?.liveSubagentBySessionId(childId) }

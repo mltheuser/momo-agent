@@ -19,7 +19,12 @@ import kotlin.time.Duration
 @Serializable
 public sealed interface AgentEvent {
 
-    /** Position in the session's log: 0 for the first event, increasing by 1 per event. */
+    /**
+     * Identity and order in the session's log: 0 for the first event,
+     * strictly increasing per event — but not the log's line position,
+     * since a rewind deletes events without renumbering the survivors
+     * (see [ConversationRewound]).
+     */
     public val sequenceId: Long
 
     /** Wall-clock time of emission, as epoch milliseconds. */
@@ -167,6 +172,24 @@ public sealed interface AgentEvent {
         val type: String? = null,
         /** Model the parent's driven runs of this child use; null to inherit each driving run's. */
         val modelId: String? = null,
+    ) : AgentEvent
+
+    /**
+     * A rewind truncated the log: every event after
+     * [lastSurvivingSequenceId] was deleted permanently, and this event was
+     * appended as the new tail, numbered above the log's pre-cut maximum —
+     * so sequence IDs stay unique across the gap the deletion leaves. It
+     * carries no conversation content (transcript derivation ignores it)
+     * and closes any run the cut beheaded: a dangling [RunStarted] before
+     * it must not be read as a run still in flight.
+     */
+    @Serializable
+    @SerialName("conversation_rewound")
+    public data class ConversationRewound(
+        override val sequenceId: Long,
+        override val timestampMillis: Long,
+        /** Sequence ID of the last event the cut kept — the log's new last conversation-bearing entry. */
+        val lastSurvivingSequenceId: Long,
     ) : AgentEvent
 
     /** Budget accounting at a turn boundary. */

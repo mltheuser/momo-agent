@@ -4,6 +4,7 @@ import codes.momo.agent.AgentEvent
 import codes.momo.agent.AgentEventListener
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -84,12 +85,8 @@ internal class SessionStore(dataDir: Path) {
         }
 
     fun writeMetadata(id: String, metadata: SessionMetadata) {
-        // Written via atomic replace: concurrent readers hold no lock, so
-        // they must only ever see a complete file — old or new.
         val directory = directory(id).createDirectories()
-        val staging = Files.createTempFile(directory, METADATA_FILE, ".tmp")
-        staging.writeText(metadataJson.encodeToString(metadata))
-        Files.move(staging, directory.resolve(METADATA_FILE), StandardCopyOption.ATOMIC_MOVE)
+        replaceAtomically(directory.resolve(METADATA_FILE), metadataJson.encodeToString(metadata))
     }
 
     fun readMetadata(id: String): SessionMetadata = try {
@@ -98,48 +95,74 @@ internal class SessionStore(dataDir: Path) {
         throw CorruptSessionException(id, failure)
     }
 
-    /**
-     * The stored event log, oldest first. A trailing line torn by process
-     * death mid-write is dropped; corruption anywhere earlier propagates as
-     * [CorruptSessionException].
-     */
-    fun readEvents(id: String): List<AgentEvent> {
-        val lines = directory(id).resolve(EVENTS_FILE).readLines().filter { it.isNotBlank() }
-        return lines.mapIndexedNotNull { index, line ->
-            try {
-                Json.decodeFromString<AgentEvent>(line)
-            } catch (failure: SerializationException) {
-                if (index == lines.lastIndex) null else throw CorruptSessionException(id, failure)
-            }
-        }
-    }
+    /** The stored event log, oldest first, read with [parseLogLines]'s torn-tail tolerance. */
+    fun readEvents(id: String): List<AgentEvent> =
+        parseLogLines(id, directory(id).resolve(EVENTS_FILE)) { Json.decodeFromString(it) }
 
     /**
      * Tails [id]'s stored log as a cold flow: every event strictly after
      * [afterSequenceId], oldest first — the flushed history, then live
      * events as [signal] announces them — completing only when [signal]
-     * announces [SESSION_DELETED_SIGNAL]. Sequence IDs are the log's line
-     * positions, the same gapless numbering the events carry. Torn lines
-     * are never served — see [LineTail]; each subscriber reads the file
-     * independently at its own pace.
+     * announces [SESSION_DELETED_SIGNAL]. Each event's sequence ID is read
+     * from its own stored line, never counted from its position (rewinds
+     * leave gaps — see [AgentEvent.ConversationRewound]). When
+     * [truncations] changes — a rewind replaced the file under the tail's
+     * open stream, which still holds the replaced inode — the file is
+     * reopened and re-read from the start, serving only what this tail has
+     * not yet emitted; the [AgentEvent.ConversationRewound] the rewind
+     * appended is new to every tail by its numbering contract, so every
+     * subscriber converges on it. Torn lines are never served — see
+     * [LineTail]; each subscriber reads the file independently at its own
+     * pace.
      */
-    fun tailEvents(id: String, signal: StateFlow<Long>, afterSequenceId: Long): Flow<StoredEvent> = flow {
-        LineTail(directory(id).resolve(EVENTS_FILE)).use { tail ->
-            var sequenceId = 0L
+    fun tailEvents(
+        id: String,
+        signal: StateFlow<Long>,
+        truncations: StateFlow<Long>,
+        afterSequenceId: Long,
+    ): Flow<StoredEvent> = flow {
+        val file = directory(id).resolve(EVENTS_FILE)
+        var tail = LineTail(file)
+        try {
+            var generation = truncations.value
+            var lastEmitted = afterSequenceId
             signal.takeWhile { it != SESSION_DELETED_SIGNAL }.collect {
-                var line = tail.nextLine()
-                while (line != null) {
-                    if (line.isNotBlank()) {
-                        if (sequenceId > afterSequenceId) {
-                            emit(StoredEvent(sequenceId, line))
-                        }
-                        sequenceId++
-                    }
-                    line = tail.nextLine()
+                val current = truncations.value
+                if (current != generation) {
+                    generation = current
+                    tail.close()
+                    tail = LineTail(file)
                 }
+                lastEmitted = drainNewLines(tail, lastEmitted)
             }
+        } finally {
+            tail.close()
         }
     }.flowOn(Dispatchers.IO)
+
+    /**
+     * Cuts [id]'s stored log back to [lastSurvivingSequenceId] in one
+     * atomic replacement: every line after it is deleted and the returned
+     * [AgentEvent.ConversationRewound] — numbered as its own KDoc pins —
+     * becomes the new tail.
+     */
+    fun rewindEvents(id: String, lastSurvivingSequenceId: Long): AgentEvent.ConversationRewound {
+        val directory = directory(id)
+        val lines = storedLines(id, directory.resolve(EVENTS_FILE))
+        val rewound = AgentEvent.ConversationRewound(
+            sequenceId = lines.last().sequenceId + 1,
+            timestampMillis = System.currentTimeMillis(),
+            lastSurvivingSequenceId = lastSurvivingSequenceId,
+        )
+        replaceAtomically(
+            directory.resolve(EVENTS_FILE),
+            buildString {
+                lines.filter { it.sequenceId <= lastSurvivingSequenceId }.forEach { appendLine(it.json) }
+                appendLine(Json.encodeToString<AgentEvent>(rewound))
+            },
+        )
+        return rewound
+    }
 
     /** Listener persisting a fresh session's log; its `SessionStarted` event names the folder. */
     fun eventLogForNewSession(): PersistedEventLog = PersistedEventLog(sessionsDir, id = null)
@@ -160,8 +183,69 @@ internal class SessionStore(dataDir: Path) {
     private fun directory(id: String): Path = sessionsDir.resolve(id)
 }
 
-/** One stored event as the stream serves it: its position plus its log line verbatim. */
+/** One stored event as the stream serves it: its own sequence ID plus its log line verbatim. */
 internal data class StoredEvent(val sequenceId: Long, val json: String)
+
+/** The one field a stored line is read minimally for: the sequence ID the event carries. */
+@Serializable
+private data class StoredLinePosition(val sequenceId: Long)
+
+/** Reads only [StoredLinePosition] out of a stored event line, whatever else the event carries. */
+private val lineJson = Json { ignoreUnknownKeys = true }
+
+/** [id]'s stored log [file] as lines with their own sequence IDs, read with [parseLogLines]'s torn-tail tolerance. */
+private fun storedLines(id: String, file: Path): List<StoredEvent> = parseLogLines(id, file) { line ->
+    StoredEvent(lineJson.decodeFromString<StoredLinePosition>(line).sequenceId, line)
+}
+
+/**
+ * [id]'s stored log [file] as its non-blank lines, each decoded by [parse].
+ * A trailing line torn by process death mid-write fails to decode and is
+ * dropped; a decode failure anywhere earlier propagates as
+ * [CorruptSessionException].
+ */
+private fun <T : Any> parseLogLines(id: String, file: Path, parse: (String) -> T): List<T> {
+    val lines = file.readLines().filter { it.isNotBlank() }
+    return lines.mapIndexedNotNull { index, line ->
+        try {
+            parse(line)
+        } catch (failure: SerializationException) {
+            if (index == lines.lastIndex) null else throw CorruptSessionException(id, failure)
+        }
+    }
+}
+
+/**
+ * Replaces [target] with [content] via a temp file moved atomically over it:
+ * concurrent readers hold no lock, so they must only ever see a complete
+ * file — old or new.
+ */
+private fun replaceAtomically(target: Path, content: String) {
+    val staging = Files.createTempFile(target.parent, target.fileName.toString(), ".tmp")
+    staging.writeText(content)
+    Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE)
+}
+
+/**
+ * Emits every complete line [tail] holds beyond [lastEmitted] — reading
+ * each line's own sequence ID — and returns the newest ID served, so a
+ * reopened tail re-reading a rewound file repeats nothing.
+ */
+private suspend fun FlowCollector<StoredEvent>.drainNewLines(tail: LineTail, lastEmitted: Long): Long {
+    var newest = lastEmitted
+    var line = tail.nextLine()
+    while (line != null) {
+        if (line.isNotBlank()) {
+            val sequenceId = lineJson.decodeFromString<StoredLinePosition>(line).sequenceId
+            if (sequenceId > newest) {
+                emit(StoredEvent(sequenceId, line))
+                newest = sequenceId
+            }
+        }
+        line = tail.nextLine()
+    }
+    return newest
+}
 
 /** Wake-up signal value announcing the session's deletion: its tails complete instead of waiting on. */
 internal const val SESSION_DELETED_SIGNAL = Long.MIN_VALUE

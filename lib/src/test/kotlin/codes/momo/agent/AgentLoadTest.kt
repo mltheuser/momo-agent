@@ -111,6 +111,40 @@ class AgentLoadTest {
     }
 
     @Test
+    @DisplayName("A log rewound mid-run loads repaired, and new events number above the gap the cut left")
+    fun rewoundLogLoadsRepairedAndNumbersAboveTheGap() {
+        // The cut beheads the run right after its tool call started, and the
+        // rewound tail is numbered above the deleted events, gap included.
+        val logged = recordedSession()
+        val cutPoint = logged.first { it is AgentEvent.ToolCallStarted }
+        val rewound = logged.takeWhile { it.sequenceId <= cutPoint.sequenceId } +
+            AgentEvent.ConversationRewound(
+                sequenceId = logged.last().sequenceId + 1,
+                timestampMillis = cutPoint.timestampMillis,
+                lastSurvivingSequenceId = cutPoint.sequenceId,
+            )
+
+        val listener = CollectingEventListener()
+        FakeLlm(onOpeningTurn(assistantResponse(finishReason = "stop", text = "recovered"))).client().use { client ->
+            val agent = Agent.load(rewound, TEST_HARNESS, client, environment(), listener)
+
+            val result = runBlocking { agent.send("continue", TEST_RUN_SETTINGS) }
+
+            assertEquals(
+                listOf("system", "user", "assistant", "tool", "user", "assistant"),
+                result.transcript.map { it.role },
+                "the beheaded run's dangling call must be repaired, the rewound tail contributing nothing",
+            )
+            assertEquals(ABORTED_TOOL_RESULT_TEXT, result.transcript.single { it.role == "tool" }.text)
+        }
+        assertEquals(
+            rewound.last().sequenceId + 1,
+            listener.events.first().sequenceId,
+            "new events continue above the rewound tail, never re-using a deleted sequence ID",
+        )
+    }
+
+    @Test
     @DisplayName("A log holding two interrupted runs loads with the dangling call of each one repaired")
     fun everyInterruptedRunInTheLogIsRepaired() {
         // A turn budget of one ends each run at the LLM boundary with its
@@ -190,6 +224,7 @@ class AgentLoadTest {
                 "subagent_spawned",
                 "budget_updated",
                 "run_finished",
+                "conversation_rewound",
             ),
             Json.parseToJsonElement(json).jsonArray.map { it.jsonObject.getValue("type").jsonPrimitive.content },
         )
@@ -219,6 +254,7 @@ class AgentLoadTest {
                 eventKeys("name", "sessionId", "subagentType", "modelId"),
                 eventKeys("turnsUsed", "turnsRemaining", "elapsed"),
                 eventKeys("status", "finalMessage", "usage", "turnsUsed", "elapsed"),
+                eventKeys("lastSurvivingSequenceId"),
             ),
             Json.parseToJsonElement(json).jsonArray.map { it.jsonObject.keys },
         )
@@ -275,6 +311,7 @@ class AgentLoadTest {
                 turnsUsed = 1,
                 elapsed = 3.seconds,
             ),
+            AgentEvent.ConversationRewound(sequenceId = 11, timestampMillis = 12, lastSurvivingSequenceId = 4),
         )
     }
 

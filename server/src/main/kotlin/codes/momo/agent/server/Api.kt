@@ -61,6 +61,14 @@ internal data class RenameRequest(val title: String)
 @Serializable
 internal data class FavoriteRequest(val favorite: Boolean)
 
+/** Body of a rewind request: the sequence ID becoming the log's last conversation-bearing entry. */
+@Serializable
+internal data class RewindRequest(val sequenceId: Long)
+
+/** A rewind's response: the session as cut, plus every session the cascade deleted. */
+@Serializable
+internal data class RewindResponse(val session: SessionInfo, val deletedSessionIds: List<String>)
+
 /** Every failing response's body: a machine-readable [code] plus a human [message]. */
 @Serializable
 internal data class ApiError(val code: String, val message: String)
@@ -83,6 +91,9 @@ internal fun Application.agentServer(registry: SessionRegistry, client: AiRouter
         }
         exception<BadRequestException> { call, failure ->
             call.respondError(HttpStatusCode.BadRequest, "invalid_request", failure.rootMessage())
+        }
+        exception<InvalidRewindPointException> { call, failure ->
+            call.respondError(HttpStatusCode.BadRequest, "invalid_request", failure)
         }
         exception<ContentConvertException> { call, failure ->
             call.respondError(HttpStatusCode.BadRequest, "invalid_request", failure.rootMessage())
@@ -159,6 +170,12 @@ private fun Route.sessionRoutes(registry: SessionRegistry) {
             post("/favorite") {
                 val request = call.receive<FavoriteRequest>()
                 call.respond(registry.setFavorite(call.sessionId(), request.favorite))
+            }
+            post("/rewind") {
+                val request = call.receive<RewindRequest>()
+                val id = call.sessionId()
+                val deletedSessionIds = registry.rewind(id, request.sequenceId)
+                call.respond(RewindResponse(registry.info(id), deletedSessionIds))
             }
             eventStreamRoute(registry)
             post("/stop") {

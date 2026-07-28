@@ -23,11 +23,13 @@ Shared build conventions live in the root build script.
 - Comments and KDoc are minimal and purposeful: say only what naming and
   structure cannot, state each contract fact in exactly one place, and keep
   KDoc self-contained (no planning-doc or issue references).
-- `abort` and `stop` name different things and must never be swapped:
-  aborting is close/delete/shutdown cancelling a tree's runs, plus the
-  transcript repair for tool calls a run ended before answering; stopping
-  is the user's run-scoped command that records a `stopped` outcome. The
-  server's mocked cascade cases (`SubagentStopCascadeTest`) are where the
+- `abort`, `stop` and `rewind` name different things and must never be
+  swapped: aborting is close/delete/shutdown cancelling a tree's runs, plus
+  the transcript repair for tool calls a run ended before answering;
+  stopping is the user's run-scoped command that records a `stopped`
+  outcome; rewinding is the conversation moved back to an earlier point by
+  cutting the stored log — never `revert` or `reverse`. The server's mocked
+  cascade cases (`SubagentStopCascadeTest`) are where the stop/abort
   difference is pinned.
 - Three catch arms deliberately stay narrower than `Throwable` — the event
   emitter's, tool dispatch's, and the run loop's `Exception` arm — so
