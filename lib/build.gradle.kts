@@ -22,6 +22,15 @@ dependencies {
 
     testFixturesImplementation(libs.kotlinx.coroutines.core)
     testFixturesImplementation(libs.kotlin.test)
+    // The live tier hands the SDK its own Ktor client, so a wedged completion
+    // fails in seconds instead of the SDK default's ten minutes.
+    testFixturesImplementation(libs.ktor.client.core)
+    testFixturesImplementation(libs.ktor.client.cio)
+    testFixturesImplementation(libs.ktor.client.content.negotiation)
+    testFixturesImplementation(libs.ktor.serialization.kotlinx.json)
+    // The mocked tier hands the SDK a client whose engine is the fake router,
+    // so a scripted reply never crosses a socket.
+    testFixturesImplementation(libs.ktor.client.mock)
 }
 
 kotlin {
@@ -32,28 +41,19 @@ kotlin {
     }
 }
 
-// ─── Live integration tests ───────────────────────────────────────────
-//
-// The `liveTest` suite talks to a running local ai-router server. It is
-// deliberately NOT wired into `check`: `./gradlew build` must succeed
-// without a server. Run it explicitly with `./gradlew liveTest`.
+// Resolved once for the whole build — see the root build script.
+val aiRouterBaseUrl: String by rootProject.extra
+val aiRouterChatModel: String by rootProject.extra
 
-// Resolve a setting from a Gradle property, then an environment variable, then
-// the default. Blank/whitespace-only values (e.g. -PaiRouterBaseUrl= or an
-// exported-but-empty env var) are treated as unset. Resolving via `orNull` on
-// value-source providers keeps this configuration-cache safe.
-fun resolveLiveTestSetting(propertyName: String, envName: String, default: String): String =
-    providers.gradleProperty(propertyName).orNull?.takeIf { it.isNotBlank() }
-        ?: providers.environmentVariable(envName).orNull?.takeIf { it.isNotBlank() }
-        ?: default
-
-// NOTE: these defaults also appear in the README table — keep the two in sync
-// when changing them.
-val liveTestBaseUrl: String =
-    resolveLiveTestSetting("aiRouterBaseUrl", "AI_ROUTER_BASE_URL", "http://localhost:8787")
-
-val liveTestChatModel: String =
-    resolveLiveTestSetting("aiRouterChatModel", "AI_ROUTER_CHAT_MODEL", "gemma4:31b-it-qat:local@ollama")
+// A per-test ceiling orders of magnitude above what a tier legitimately
+// takes: JUnit enforces none of its own, so anything deadlocking below the
+// suites' own bounded waits would stall the test JVM with no output at all.
+// The thread mode is what makes it preemptive — a timeout enforced on the
+// test's own thread is only reported once the test returns, which is never.
+fun Test.hangBackstop(minutes: Int) {
+    systemProperty("junit.jupiter.execution.timeout.default", "${minutes}m")
+    systemProperty("junit.jupiter.execution.timeout.thread.mode.default", "SEPARATE_THREAD")
+}
 
 testing {
     suites {
@@ -67,13 +67,15 @@ testing {
             targets.all {
                 testTask.configure {
                     testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-                    outputs.upToDateWhen { false } // disable test result caching
+                    outputs.upToDateWhen { false } // always re-run: never UP-TO-DATE
+                    // Mocked and unit work is milliseconds, its own waits seconds.
+                    hangBackstop(minutes = 2)
                 }
             }
         }
 
-        // Shared shape of the opt-in integration suites — all deliberately NOT
-        // wired into `check`: `./gradlew build` must succeed without their backends.
+        // Shared shape of the suites that drive a real backend: both talk to a
+        // running ai-router, so both carry its coordinates.
         val integrationSuite: JvmTestSuite.() -> Unit = {
             useJUnitJupiter()
             dependencies {
@@ -92,30 +94,43 @@ testing {
                     // never restored FROM-CACHE (Test tasks are @CacheableTask).
                     outputs.upToDateWhen { false }
                     outputs.cacheIf { false }
-                }
-            }
-        }
-
-        register<JvmTestSuite>("liveTest") {
-            integrationSuite()
-            targets.all {
-                testTask.configure {
-                    description = "Runs the live integration tests against a running local ai-router."
-                    systemProperty("aiRouter.baseUrl", liveTestBaseUrl)
-                    systemProperty("aiRouter.chatModel", liveTestChatModel)
+                    systemProperty("aiRouter.baseUrl", aiRouterBaseUrl)
+                    systemProperty("aiRouter.chatModel", aiRouterChatModel)
                     // Disk fixtures resolve against the module folder, not the working directory.
                     systemProperty("momo.examplesDir", layout.projectDirectory.dir("examples").asFile.absolutePath)
                 }
             }
         }
 
+        // The live tier is the primary signal, so it runs in `check` — and with
+        // it `build` acquires everything that tier needs (TESTING.md).
+        register<JvmTestSuite>("liveTest") {
+            integrationSuite()
+            targets.all {
+                testTask.configure {
+                    description = "Runs the live integration tests against a running local ai-router."
+                    // Real model latency, and a case may chain two agent runs,
+                    // each carrying the fixtures' five-minute wall clock.
+                    hangBackstop(minutes = 15)
+                }
+            }
+        }
+
+        // Deliberately NOT wired into `check`: `build` must not acquire a
+        // dependency on a Docker daemon.
         register<JvmTestSuite>("containerTest") {
             integrationSuite()
             targets.all {
                 testTask.configure {
                     description = "Runs the container integration tests against a local Docker daemon."
+                    // Model latency on top of an image pull on a cold daemon.
+                    hangBackstop(minutes = 20)
                 }
             }
         }
     }
+}
+
+tasks.named("check") {
+    dependsOn(testing.suites.named("liveTest"))
 }

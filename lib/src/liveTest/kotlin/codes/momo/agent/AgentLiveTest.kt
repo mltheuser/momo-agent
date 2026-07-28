@@ -1,25 +1,23 @@
 package codes.momo.agent
 
-import ai.router.sdk.AiRouterClient
 import codes.momo.agent.environment.LocalExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
+import kotlin.io.path.deleteExisting
 import kotlin.io.path.writeText
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 
 /**
- * Exercises the whole agent loop against a live model: tool use followed by
- * a final answer, turn exhaustion, and multi-prompt continuation.
+ * Exercises the whole agent loop against a live model: tool use followed
+ * by a final answer, and multi-prompt continuation.
  */
 class AgentLiveTest {
 
@@ -40,9 +38,9 @@ class AgentLiveTest {
     @DisplayName("Tool-then-finish: the model reads a planted file through a tool, then answers")
     fun toolThenFinish() = runBlocking {
         workspace.resolve("token.txt").writeText("The token is: $TOKEN\n")
-        AiRouterClient(liveBaseUrl).use { client ->
+        liveAiRouterClient().use { client ->
             val environment = LocalExecutionEnvironment(workspace)
-            val agent = Agent(harness(), client, environment, "Live test session")
+            val agent = liveAgent(harness(), client, environment, "Live test session")
 
             val result = agent.send(
                 "Read the file ${environment.workspacePath}/token.txt with the bash tool " +
@@ -52,14 +50,10 @@ class AgentLiveTest {
 
             assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
             val finalMessage = assertNotNull(result.finalMessage)
-            assertTrue(
-                finalMessage.contains(TOKEN, ignoreCase = true),
-                "expected the planted token in the final message: $finalMessage",
-            )
+            assertContains(finalMessage, TOKEN, ignoreCase = true, message = "the planted token must reach the answer")
 
             val transcript = result.transcript
             assertEquals("system", transcript[0].role)
-            assertContains(transcript[0].text, environment.workspacePath)
             assertEquals("user", transcript[1].role)
             assertTrue(
                 transcript.any { it.role == "assistant" && !it.toolCalls.isNullOrEmpty() },
@@ -79,48 +73,13 @@ class AgentLiveTest {
     }
 
     @Test
-    @DisplayName("Turn exhaustion: a single-turn budget ends a tool-calling run as TURNS_EXHAUSTED, repaired")
-    fun turnExhaustion() = runBlocking {
-        workspace.resolve("data.txt").writeText("42\n")
-        AiRouterClient(liveBaseUrl).use { client ->
-            val agent = Agent(
-                harness = harness(),
-                client = client,
-                environment = LocalExecutionEnvironment(workspace),
-                eventListener = NoOpAgentEventListener,
-                budgets = RunBudgets(maxTurns = 1),
-                session = SessionState.Fresh("Live test session"),
-            )
-
-            val result = agent.send(
-                "You must inspect the workspace files with your tools before answering. " +
-                    "What is the content of data.txt?",
-                liveRunSettings,
-            )
-
-            // A model answering without any tool call is legal behaviour that
-            // just cannot demonstrate exhaustion; skip instead of flaking.
-            assumeTrue(
-                result.status != RunResult.Status.COMPLETED,
-                "model answered without calling a tool on its only turn",
-            )
-            assertEquals(RunResult.Status.TURNS_EXHAUSTED, result.status, "error: ${result.error}")
-            assertNull(result.finalMessage)
-            assertEquals(1, result.turnsUsed)
-            assertToolCallsAnswered(result.transcript)
-            val lastMessage = result.transcript.last()
-            assertEquals("tool", lastMessage.role)
-            assertEquals(ABORTED_TOOL_RESULT_TEXT, lastMessage.text)
-        }
-    }
-
-    @Test
     @DisplayName("Multi-prompt: a follow-up prompt continues the conversation with reset budget counters")
     fun multiPromptContinuation() = runBlocking {
-        workspace.resolve("token.txt").writeText("$TOKEN\n")
-        AiRouterClient(liveBaseUrl).use { client ->
+        val tokenFile = workspace.resolve("token.txt")
+        tokenFile.writeText("$TOKEN\n")
+        liveAiRouterClient().use { client ->
             val environment = LocalExecutionEnvironment(workspace)
-            val agent = Agent(harness(), client, environment, "Live test session")
+            val agent = liveAgent(harness(), client, environment, "Live test session")
 
             val first = agent.send(
                 "Read the file ${environment.workspacePath}/token.txt with the bash tool " +
@@ -129,17 +88,18 @@ class AgentLiveTest {
             )
             assertEquals(RunResult.Status.COMPLETED, first.status, "error: ${first.error}")
 
+            // Deleting the file leaves the conversation as the token's only
+            // remaining source: recalling it is what continuation means here.
+            tokenFile.deleteExisting()
+
             val second = agent.send(
-                "Repeat the exact token you found before. Answer from the conversation, without using any tool.",
+                "Remind me of the exact token you just read — you already have it in this conversation.",
                 liveRunSettings,
             )
 
             assertEquals(RunResult.Status.COMPLETED, second.status, "error: ${second.error}")
             val answer = assertNotNull(second.finalMessage)
-            assertTrue(
-                answer.contains(TOKEN, ignoreCase = true),
-                "expected the token recalled from the first run: $answer",
-            )
+            assertContains(answer, TOKEN, ignoreCase = true, message = "the token must be recalled from the first run")
             // The first run's transcript is a strict prefix of the second's.
             assertEquals(first.transcript, second.transcript.subList(0, first.transcript.size))
             assertTrue(second.transcript.size > first.transcript.size)

@@ -1,6 +1,5 @@
 package codes.momo.agent
 
-import ai.router.sdk.AiRouterClient
 import codes.momo.agent.environment.ExecResult
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.environment.runProcess
@@ -14,6 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
 
 /** Planted greeting no prompt contains — only asking the user can reveal it. */
@@ -36,16 +36,16 @@ private const val CANNED_ANSWER: String = "The script must print exactly this me
  * it — and asserts everything except the workspace outcome, which the
  * caller checks host-side via [assertToyTaskWorkspace].
  */
-internal fun runToyTaskScenario(environment: ExecutionEnvironment) {
+public fun runToyTaskScenario(environment: ExecutionEnvironment) {
     val harness = Harness.load(Path.of(examplesDir, "coder"))
     val listener = CollectingEventListener()
     runBlocking {
-        AiRouterClient(liveBaseUrl).use { client ->
-            val agent = Agent(harness, client, environment, "E2E acceptance session", listener)
+        liveAiRouterClient().use { client ->
+            val agent = liveAgent(harness, client, environment, "E2E acceptance session", listener)
 
             val asked = agent.send(TASK_PROMPT, liveRunSettings)
             assertEquals(RunResult.Status.COMPLETED, asked.status, "error: ${asked.error}")
-            assertGreetingUnknown(environment)
+            assertOnlyAsked(environment)
 
             val finished = agent.send(CANNED_ANSWER, liveRunSettings)
             assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
@@ -59,21 +59,40 @@ internal fun runToyTaskScenario(environment: ExecutionEnvironment) {
 }
 
 /**
- * The greeting must be unobtainable without asking: after the first run the
- * workspace must not contain the planted token anywhere, or the agent
- * delivered by guessing instead of ending its turn with the question.
+ * The first run must have ended by asking rather than delivering: no script
+ * yet — the non-prose proxy for the question being its final message — and
+ * the planted token nowhere in the workspace, since only the user can reveal
+ * it. Both checks run in the environment, which may be a container.
  */
-private suspend fun assertGreetingUnknown(environment: ExecutionEnvironment) {
-    val grep = environment.exec(
-        listOf("grep", "-r", GREETING_TOKEN, environment.workspacePath),
-        timeout = 30.seconds,
+private suspend fun assertOnlyAsked(environment: ExecutionEnvironment) {
+    environment.assertNotFound(
+        listOf("bash", "-c", "test -e '${environment.workspacePath}/$SCRIPT_NAME'"),
+        found = "$SCRIPT_NAME already existed after the run that was to end with the agent's question",
     )
-    val completed = assertIs<ExecResult.Completed>(grep, "the workspace grep timed out")
-    assertEquals(1, completed.exitCode, "the greeting appeared in the workspace before the user revealed it")
+    environment.assertNotFound(
+        listOf("grep", "-r", GREETING_TOKEN, environment.workspacePath),
+        found = "the greeting appeared in the workspace before the user revealed it",
+    )
+}
+
+/**
+ * Runs [command] as the question "is it there?", where exit 1 is the no both
+ * `grep` and `test` report and 0 their yes. Every other code is the check
+ * itself having failed — an unreadable directory, a symlink loop, a workspace
+ * an agent wrote as root — and must never be read as a yes.
+ */
+private suspend fun ExecutionEnvironment.assertNotFound(command: List<String>, found: String) {
+    val result = exec(command, timeout = 30.seconds)
+    val completed = assertIs<ExecResult.Completed>(result, "$command timed out")
+    when (completed.exitCode) {
+        1 -> Unit
+        0 -> fail(found)
+        else -> fail("$command could not answer, exit ${completed.exitCode}: ${completed.stderr}")
+    }
 }
 
 /** Isolation check for the container variant: the script has not reached the host yet. */
-internal fun assertToyTaskAbsent(workspace: Path) {
+public fun assertToyTaskAbsent(workspace: Path) {
     assertFalse(
         workspace.resolve(SCRIPT_NAME).exists(),
         "the container workspace must reach the host only on close()",
@@ -81,7 +100,7 @@ internal fun assertToyTaskAbsent(workspace: Path) {
 }
 
 /** Host-side mechanical check: the script exists, runs clean, and prints the planted greeting. */
-internal fun assertToyTaskWorkspace(workspace: Path) {
+public fun assertToyTaskWorkspace(workspace: Path) {
     val script = workspace.resolve(SCRIPT_NAME)
     assertTrue(script.isRegularFile(), "expected the agent to create $script")
     val run = runBlocking {

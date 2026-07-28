@@ -11,6 +11,26 @@ plugins {
     alias(libs.plugins.detekt) apply false
 }
 
+// ─── Live-suite configuration ─────────────────────────────────────────
+//
+// Resolved once here so both modules' live suites share one set of
+// defaults. Each setting comes from a Gradle property, then an environment
+// variable, then the default; blank values (e.g. -PaiRouterBaseUrl= or an
+// exported-but-empty variable) count as unset. Resolving via `orNull` on
+// value-source providers keeps this configuration-cache safe.
+fun resolveLiveSetting(propertyName: String, envName: String, default: String): String =
+    providers.gradleProperty(propertyName).orNull?.takeIf { it.isNotBlank() }
+        ?: providers.environmentVariable(envName).orNull?.takeIf { it.isNotBlank() }
+        ?: default
+
+val aiRouterBaseUrl: String by extra(
+    resolveLiveSetting("aiRouterBaseUrl", "AI_ROUTER_BASE_URL", "http://localhost:8787"),
+)
+
+val aiRouterChatModel: String by extra(
+    resolveLiveSetting("aiRouterChatModel", "AI_ROUTER_CHAT_MODEL", "claude-sonnet-5:cloud@anthropic"),
+)
+
 subprojects {
     group = "codes.momo"
     version = "0.1.0"

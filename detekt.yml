@@ -28,9 +28,10 @@ complexity:
     excludes: ['**/test/**', '**/testFixtures/**', '**/liveTest/**', '**/containerTest/**']
 
 performance:
-  # The scripted-server fixture forwards its vararg replies; the array copy is
-  # irrelevant at test scale. The bundled default already excludes the plain
-  # test source sets — extend the same relaxation to the shared fixtures.
+  # A test hands its scripted rules on as a vararg — `FakeLlm(*rules)` and the
+  # harnesses wrapping it — and the array copy is irrelevant at test scale. The
+  # bundled default already excludes the plain test source sets — extend the
+  # same relaxation to the shared fixtures.
   SpreadOperator:
     excludes: ['**/test/**', '**/testFixtures/**', '**/liveTest/**', '**/containerTest/**']
 

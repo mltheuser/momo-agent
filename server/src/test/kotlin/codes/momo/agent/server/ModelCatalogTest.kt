@@ -4,12 +4,11 @@ import ai.router.sdk.models.Capability
 import ai.router.sdk.models.ModelInfo
 import ai.router.sdk.models.ModelList
 import ai.router.sdk.models.ProviderType
-import codes.momo.agent.ScriptedReply
+import codes.momo.agent.FakeLlm
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
-import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -51,8 +50,7 @@ class ModelCatalogTest {
                 ),
             ),
         )
-        val reply = ScriptedReply.Raw(statusCode = 200, body = Json.encodeToString(ModelList.serializer(), catalog))
-        withScriptedSessionServer(tempDir, reply) { http ->
+        withFakeSessionServer(tempDir, FakeLlm(catalog)) { http ->
             val response = http.get("/v1/models")
 
             assertEquals(HttpStatusCode.OK, response.status)

@@ -1,29 +1,29 @@
 package codes.momo.agent
 
-import ai.router.sdk.AiRouterClient
 import ai.router.sdk.dsl.chatRequest
-import ai.router.sdk.models.ChatMessage
-import ai.router.sdk.models.ContentPart
-import ai.router.sdk.models.ContentPartType
 import codes.momo.agent.environment.LocalExecutionEnvironment
 import codes.momo.agent.tool.BashTool
 import codes.momo.agent.tool.ToolRegistry
 import codes.momo.agent.tool.ToolResult
 import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import kotlin.io.path.writeText
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
-import kotlin.test.assertTrue
+import kotlin.test.assertNotNull
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
- * Verifies the bash tool round-trips through a live model: definition →
- * tool call → dispatched execution over a real workspace → tool message →
- * follow-up answer.
+ * The bash tool's own definition, judged by a live model: the description
+ * and schema the library generates are ones a real model calls, and the
+ * arguments it produces dispatch through the registry onto a real
+ * workspace. What the model does with the result afterwards belongs to the
+ * agent loop's case, not this one.
  */
 class BashToolLiveTest {
 
@@ -31,63 +31,58 @@ class BashToolLiveTest {
     lateinit var workspace: Path
 
     @Test
-    @DisplayName("Tool round-trip: the model calls bash, the registry executes it, and the model answers")
+    @DisplayName("Tool round-trip: the model calls bash and the registry runs its command over the workspace")
     fun bashToolRoundTrip() = runBlocking {
-        workspace.resolve("notes.txt").writeText("the magic word is plugh\n")
+        workspace.resolve(NOTES).writeText("the magic word is $TOKEN\n")
         val environment = LocalExecutionEnvironment(workspace)
         val registry = ToolRegistry(listOf(BashTool(environment.workspacePath, environment.privilege)))
 
-        AiRouterClient(liveBaseUrl).use { client ->
+        liveAiRouterClient().use { client ->
             // The DSL's ToolsBuilder.addTool(ToolDefinition) is internal, so
             // pre-built definitions travel via the ChatRequest data class.
             val request = chatRequest(liveChatModel) {
                 messages {
-                    system { text("You are a coding agent working in a workspace.") }
-                    user { text("What is the content of notes.txt in the workspace? Check with the bash tool.") }
+                    system {
+                        text(
+                            "You are a coding agent working in a project workspace. Reach for your bash " +
+                                "tool to inspect files, then say briefly what you found.",
+                        )
+                    }
+                    user { text("Run this command with the bash tool and tell me its output: cat $NOTES") }
                 }
             }.copy(tools = registry.definitions(listOf("bash")))
 
-            val first = client.chat(request)
-            val toolCall = first.message.toolCalls?.firstOrNull()
-            // Local models occasionally decline to call the tool; report a JUnit
-            // skip rather than silently passing or flaking the test.
-            assumeTrue(
-                toolCall != null,
-                "model produced no tool call (finish_reason=${first.finishReason})",
-            )
-            requireNotNull(toolCall)
+            val response = client.chat(request)
 
-            // Hard assertions from here: the prompt directs the model to the
-            // bash tool, and any bash command over the workspace completes as
-            // Success (non-zero exits included) — a hallucinated tool name or
-            // rejected arguments must fail red, not skip.
-            assertEquals("bash", toolCall.function.name)
-            val toolResult = registry.execute(toolCall.function.name, toolCall.function.arguments, environment).result
-            assertIs<ToolResult.Success>(toolResult, "dispatch did not succeed, result text: ${toolResult.text}")
-
-            val followUp = client.chat(
-                request.copy(
-                    messages = request.messages + first.message + toolMessage(toolCall.id, toolResult.text),
-                ),
+            val call = assertNotNull(
+                response.message.toolCalls?.firstOrNull(),
+                "expected a bash tool call (finish_reason=${response.finishReason}, text='${response.textContent}')",
             )
+            assertEquals("bash", call.function.name)
 
-            // A model that reacts to the result by chaining another tool call
-            // (with no text) is valid agentic behaviour, not a wiring failure.
-            assumeTrue(
-                followUp.message.toolCalls.isNullOrEmpty() || followUp.textContent.isNotBlank(),
-                "model chained another tool call instead of answering (finish_reason=${followUp.finishReason})",
-            )
-            assertTrue(
-                followUp.textContent.isNotBlank(),
-                "expected a non-empty follow-up reply (finish_reason=${followUp.finishReason})",
+            val result = registry
+                .execute(call.function.name, call.function.arguments, environment, TOOL_TIMEOUT)
+                .result
+
+            assertIs<ToolResult.Success>(result, "dispatch did not succeed, result text: ${result.text}")
+            assertContains(
+                result.text,
+                TOKEN,
+                message = "the model's command must have read the planted file: ${call.function.arguments}",
             )
         }
     }
-
-    private fun toolMessage(callId: String, text: String): ChatMessage =
-        ChatMessage(
-            role = "tool",
-            content = listOf(ContentPart(type = ContentPartType.TEXT, text = text)),
-            toolCallId = callId,
-        )
 }
+
+/**
+ * This case dispatches without an agent, so it bounds the command itself:
+ * the registry's own default is the library's day-long ceiling, and what
+ * runs is whatever the model wrote — a `cat` missing its argument reads
+ * stdin forever.
+ */
+private val TOOL_TIMEOUT: Duration = 60.seconds
+
+private const val NOTES: String = "notes.txt"
+
+/** The planted needle only a command that really ran can produce. */
+private const val TOKEN: String = "plugh-3312"

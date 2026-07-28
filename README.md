@@ -15,8 +15,8 @@ Two Gradle modules:
 The build includes the ai-router Kotlin SDK as a Gradle composite build, so a
 local checkout of the ai-router repository is **required** — even for a plain
 `./gradlew build`. The SDK path is hardcoded in `settings.gradle.kts` to
-`~/Development/open source/ai-router/SDKs/kotlin`; if your checkout lives
-elsewhere, edit the path there.
+`~/Develop/Private/ai-router/SDKs/kotlin`; if your checkout lives elsewhere,
+edit the path there.
 
 The checkout must be current: momo-agent relies on SDK changes made
 alongside it, and a stale checkout fails compilation — update both
@@ -26,37 +26,21 @@ If the directory does not exist (or contains no build file), the build
 fails immediately during settings evaluation with an error naming the
 expected path.
 
+That same checkout is also the router `./gradlew build` talks to, since the
+build runs the live tier — one checkout, both roles. The full list of what a
+fresh checkout needs, including the API key and the trap that stops a fresh
+ai-router clone from building at all, is in [TESTING.md](TESTING.md).
+
 ## Building
 
 ```sh
 ./gradlew build
 ```
 
-Runs compilation, detekt (with detekt-formatting) and the unit test suites
-of both modules. It does **not** run the live or container integration
-tests and does not require a running ai-router server — only the checkout
-on disk.
-
-### Flaky 30-second test timeouts
-
-The server suite fails intermittently — usually exactly one test per run, a
-different one each time, always `TimeoutCancellationException: Timed out
-waiting for 30000 ms`. The budget is `STREAM_TIMEOUT_MILLIS` in
-`ServerTestSupport.kt`, shared by `streamEvents`, `awaitRunStart` and both
-`awaitRunEnd` helpers, so the blast radius is every test that waits on a
-run — not only the streaming ones. A/B-verified against an unmodified
-`main` repeatedly, most recently 2026-07-26.
-
-The identity of the failing test carries no signal. Neither does the
-invocation: on 2026-07-26 `build` failed 3/3, `check` 2/2, `:lib:test
-:server:test` 2/2, and `:server:test` alone 1/2, on a 16-core machine with
-no memory pressure — so this is not load, and no command is reliably clean.
-The rule that does hold: a lone 30-second timeout, on a different test each
-run, is noise. A failure that reproduces on the *same* test, or that is not
-a 30-second timeout, is yours.
-
-Being unable to trust the suite is not acceptable long-term; the root cause
-is tracked in [server-test-timeout-flake](../planning/issues/agent-lib/server-test-timeout-flake.md).
+Runs compilation, detekt (with detekt-formatting) and — of both modules —
+the default suites plus the live tier. It does not run the container
+integration tests. What the live tier needs of the machine, and what the
+whole thing costs, is in [TESTING.md](TESTING.md).
 
 ## Linting & formatting
 
@@ -69,29 +53,25 @@ Both scripts wrap detekt (with detekt-formatting) and cover all source sets:
 
 ## Live integration tests
 
-The `liveTest` suite (`lib/src/liveTest/kotlin`) exercises the real wiring
-against a **running** local ai-router server. It is not part of `build` or
-`check`; run it explicitly:
+The `liveTest` suites — `lib/src/liveTest/kotlin` driving the real `Agent`
+and `server/src/liveTest/kotlin` driving the packaged server as a real
+process — are the primary test tier and run inside `build` and `check`. Run
+them on their own with:
 
 ```sh
 ./gradlew liveTest
 ```
 
-Start a server from the ai-router checkout (see its README; currently
-`./bin/ai-router serve`); the configured model must be available locally
-(e.g. pulled in Ollama).
-
-The suite includes the end-to-end acceptance tests, which run the
-`lib/examples/coder` harness through a full toy task; the container variant
-additionally needs Docker (see the platform section below).
+What the tier is for, what it refuses to do, what it needs running and how it
+relates to the other two is in [TESTING.md](TESTING.md).
 
 Configuration (Gradle property takes precedence over the environment
 variable, which takes precedence over the default):
 
-| Setting  | Gradle property     | Environment variable   | Default                          |
-| -------- | ------------------- | ---------------------- | -------------------------------- |
-| Base URL | `aiRouterBaseUrl`   | `AI_ROUTER_BASE_URL`   | `http://localhost:8787`          |
-| Model    | `aiRouterChatModel` | `AI_ROUTER_CHAT_MODEL` | `gemma4:31b-it-qat:local@ollama` |
+| Setting  | Gradle property     | Environment variable   | Default                           |
+| -------- | ------------------- | ---------------------- | --------------------------------- |
+| Base URL | `aiRouterBaseUrl`   | `AI_ROUTER_BASE_URL`   | `http://localhost:8787`           |
+| Model    | `aiRouterChatModel` | `AI_ROUTER_CHAT_MODEL` | `claude-sonnet-5:cloud@anthropic` |
 
 Example with overrides:
 
@@ -99,7 +79,10 @@ Example with overrides:
 ./gradlew liveTest -PaiRouterBaseUrl=http://localhost:9999 -PaiRouterChatModel=some-model@provider
 ```
 
-Live-test results are never cached; each invocation hits the server again.
+The default model is a cloud one reached *through* the local router, so the
+router needs the matching provider key and a build costs API spend — see
+[TESTING.md](TESTING.md) for why, and for what substituting a local model
+costs in reliability.
 
 ## Container-backed execution
 
@@ -129,15 +112,18 @@ docker rm -f $(docker ps -aq --filter label=codes.momo.agent)
 The `containerTest` suites — `lib/src/containerTest/kotlin` exercising
 `ContainerExecutionEnvironment` and `server/src/containerTest/kotlin`
 exercising container-backed sessions — run against a local Docker daemon.
-They are not part of `build` or `check`; run them explicitly:
+One of them is the live end-to-end acceptance case run inside a container, so
+it needs a **running ai-router** on top of Docker. They are deliberately not
+part of `build` or `check`, so the build needs no Docker; run them
+explicitly:
 
 ```sh
 ./gradlew containerTest
 ```
 
 The first run pulls the pinned test images (`debian:12-slim`, `node:12`,
-`alpine:3.20`) and is slow; results are never cached. Docker requirements
-are in the platform section below.
+`alpine:3.20`) and is slow. Docker requirements are in the platform section
+below.
 
 ## Agent server
 

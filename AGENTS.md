@@ -7,18 +7,12 @@ Shared build conventions live in the root build script.
 
 ## Build & verify
 
-- `./gradlew build` — compile + detekt + unit tests of both modules (needs
-  the ai-router checkout on disk — see README). The server suite flakes:
-  roughly one test per run dies on a 30-second timeout, a different one
-  each time, on every invocation including an untouched `main` — re-run,
-  and never infer anything about a change from it (README, *Flaky
-  30-second test timeouts*).
+- `./gradlew build` — compile + detekt + the default and live suites of both
+  modules. The live tier runs inside `check`, so a `build` needs everything
+  [TESTING.md](TESTING.md) lists for a fresh checkout.
 - `./lint.sh` / `./fmt.sh` — detekt check / auto-fix formatting.
-- `./gradlew liveTest` — live tests against a running local ai-router
-  server; the e2e container variant also needs Docker (not in
-  `build`/`check`).
-- `./gradlew containerTest` — container integration tests of both modules
-  against local Docker (not in `build`/`check`).
+- Running one tier at a time, what each needs and what the whole thing costs:
+  TESTING.md, Running them.
 
 ## Conventions
 
@@ -34,7 +28,9 @@ Shared build conventions live in the root build script.
 - `abort` and `stop` name different things and must never be swapped:
   aborting is close/delete/shutdown cancelling a tree's runs, plus the
   transcript repair for tool calls a run ended before answering; stopping
-  is the user's run-scoped command that records a `stopped` outcome.
+  is the user's run-scoped command that records a `stopped` outcome. The
+  server's mocked cascade cases (`SubagentStopCascadeTest`) are where the
+  difference is pinned.
 - Stored session state is a persisted format: the `@SerialName`s on
   `AgentEvent` and `RunResult.Status`, and the `SessionMetadata` variant
   names in `session.json`, are a compatibility contract — never change them
@@ -42,12 +38,16 @@ Shared build conventions live in the root build script.
   stored). `session.json` tolerates unknown keys so a file can outlive its
   schema; the event log deliberately does not. Details in the event KDoc;
   storage layout in README, Sessions.
-- Test compilations are `associateWith`-bound for `internal` access (see
-  the module build scripts): the lib's suites and `testFixtures` to its
-  main, the server's `containerTest` to its main and test.
-- Shared test helpers live once, in the lib's `testFixtures` source set
-  (`lib/src/testFixtures/kotlin`), consumed by every lib suite and by the
-  server's tests — no per-suite fixture copies.
+- Test compilations are `associateWith`-bound for `internal` access (see the
+  module build scripts): every suite and every `testFixtures` set to its own
+  module's main; the server's three suites to the server's `testFixtures` as
+  well, whose helpers are `internal` because the API types they carry are;
+  and its `containerTest` to its `test` on top of that.
+- Shared test helpers live once, in a `testFixtures` source set: the lib's
+  (`lib/src/testFixtures/kotlin`) for everything about agents and the fake
+  router, consumed by every lib suite and by the server's too; the server's
+  for the HTTP shape of its API, consumed by all three of its suites. No
+  per-suite fixture copies.
 - Control characters in source files are written as visible escapes
   (`\u0007`), never raw bytes — editors strip raw bytes silently and
   diffs don't show it.
@@ -58,8 +58,11 @@ Shared build conventions live in the root build script.
 
 ## Docs
 
-- [README.md](README.md) — read when setting up the build, running the
-  live/container test suites, running or configuring the agent server,
+- [TESTING.md](TESTING.md) — read before adding, moving or deleting a test:
+  the three tiers, the rule deciding which one a test belongs to, how to run
+  each, and what a fresh checkout needs to get `build` green.
+- [README.md](README.md) — read when setting up the build, pointing the live
+  tier at another router or model, running or configuring the agent server,
   working on or against its HTTP API (endpoints and wire format),
   working with container-backed execution, granting or explaining the
   host's command privileges (sudoers), or checking platform assumptions.

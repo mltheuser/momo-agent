@@ -4,7 +4,7 @@ import ai.router.sdk.models.ChatMessage
 import kotlin.test.assertTrue
 
 /** Every tool call in [transcript] must be answered by a later tool-role message. */
-internal fun assertToolCallsAnswered(transcript: List<ChatMessage>) {
+public fun assertToolCallsAnswered(transcript: List<ChatMessage>) {
     transcript.forEachIndexed { index, message ->
         message.toolCalls.orEmpty().forEach { call ->
             assertTrue(

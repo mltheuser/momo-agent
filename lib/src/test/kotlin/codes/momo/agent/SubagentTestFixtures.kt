@@ -11,10 +11,6 @@ import java.nio.file.Path
 /** [TEST_HARNESS] plus a self-referencing `self` subagent type, so children run the same harness. */
 internal val SUBAGENT_HARNESS: Harness = selfReferencingHarness()
 
-/** The tools [SUBAGENT_HARNESS] offers the LLM below the depth cap: its own plus the implied subagent tools. */
-internal val SUBAGENT_OFFERED_TOOLS: List<String> =
-    TEST_HARNESS.tools + listOf("spawn_subagent", "prompt_subagent")
-
 private fun selfReferencingHarness(): Harness {
     val self = SubagentType("An agent just like this one.")
     return Harness(
@@ -49,16 +45,19 @@ internal fun Path.agent(
     session = SessionState.Fresh("Test session", depth = depth),
 )
 
-/** Runs one "go" prompt against a scripted LLM shared by the whole agent tree on this workspace. */
-internal fun Path.runScripted(
+/** Runs one prompt against a [FakeLlm] shared by the whole agent tree on this workspace. */
+internal fun Path.runAgainstFake(
     listener: AgentEventListener,
-    vararg replies: ScriptedReply,
+    vararg rules: FakeLlmRule,
     budgets: RunBudgets = RunBudgets(),
+    harness: Harness = SUBAGENT_HARNESS,
+    settings: RunSettings = TEST_RUN_SETTINGS,
 ): RunResult =
-    scriptedServer(*replies).use { server ->
-        AiRouterClient(server.baseUrl).use { client ->
-            runBlocking { agent(client, listener, budgets).send("go", TEST_RUN_SETTINGS) }
-        }
+    FakeLlm(*rules).client().use { client ->
+        runBlocking { agent(client, listener, budgets, harness = harness).send(OPENING_PROMPT, settings) }
     }
+
+/** The user message every [runAgainstFake] run opens with. */
+internal const val OPENING_PROMPT: String = "go"
 
 internal fun List<ChatMessage>.toolTexts(): List<String> = filter { it.role == "tool" }.map { it.text }

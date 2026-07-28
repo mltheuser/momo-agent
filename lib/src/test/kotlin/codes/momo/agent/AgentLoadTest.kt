@@ -1,15 +1,20 @@
 package codes.momo.agent
 
-import ai.router.sdk.AiRouterClient
+import ai.router.sdk.models.ReasoningEffort
 import ai.router.sdk.models.ToolCall
 import ai.router.sdk.models.ToolCallFunction
 import codes.momo.agent.environment.LocalExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -17,7 +22,6 @@ import java.nio.file.Path
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 class AgentLoadTest {
@@ -29,75 +33,25 @@ class AgentLoadTest {
 
     private fun environment(): LocalExecutionEnvironment = LocalExecutionEnvironment(workspace)
 
-    /**
-     * The event log recorded by sending [prompts] in order under [budgets],
-     * consuming [replies] across runs, with [after] applied to the agent
-     * once the sends finished.
-     */
+    /** The event log recorded by one "first question" send against a [FakeLlm] over [rules]. */
     private fun recordedSession(
-        replies: List<ScriptedReply> = listOf(
-            toolCallResponse(bashCall(id = "call-1", command = "echo hi")).asReply(),
-            assistantResponse(finishReason = "stop", text = "first answer").asReply(),
+        vararg rules: FakeLlmRule = arrayOf(
+            onOpeningTurn(toolCallResponse(bashCall(id = "call-1", command = "echo hi"))),
+            onToolResults(assistantResponse(finishReason = "stop", text = "first answer")),
         ),
-        prompts: List<String> = listOf("first question"),
-        budgets: RunBudgets = RunBudgets(),
-        after: (Agent) -> Unit = {},
+    ): List<AgentEvent> = recordedSession(RunBudgets(), listOf("first question"), rules.toList())
+
+    /** The event log recorded by sending each of [prompts] in turn, under [budgets], against [rules]. */
+    private fun recordedSession(
+        budgets: RunBudgets,
+        prompts: List<String>,
+        rules: List<FakeLlmRule>,
     ): List<AgentEvent> {
         val listener = CollectingEventListener()
-        scriptedServer(*replies.toTypedArray()).use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                val agent = Agent(
-                    TEST_HARNESS,
-                    client,
-                    environment(),
-                    listener,
-                    budgets,
-                    SessionState.Fresh("Recorded session"),
-                )
-                runBlocking { prompts.forEach { agent.send(it, TEST_RUN_SETTINGS) } }
-                after(agent)
-            }
+        workspace.withFakeAgent(*rules.toTypedArray(), budgets = budgets, listener = listener) { agent ->
+            prompts.forEach { agent.send(it, TEST_RUN_SETTINGS) }
         }
         return listener.events.toList()
-    }
-
-    // ─── Continuing a loaded session ──────────────────────────────────
-
-    @Test
-    @DisplayName("A loaded session continues the conversation with continuous history and sequence IDs")
-    fun loadContinuesConversationAndSequenceIds() {
-        val logged = recordedSession()
-
-        val listener = CollectingEventListener()
-        scriptedServer(assistantResponse(finishReason = "stop", text = "second answer")).use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                val agent = Agent.load(logged, TEST_HARNESS, client, environment(), listener)
-
-                assertEquals((logged.first() as AgentEvent.SessionStarted).sessionId, agent.sessionId)
-                assertEquals("Recorded session", agent.title)
-                assertTrue(listener.events.isEmpty(), "loading must emit nothing")
-
-                val result = runBlocking { agent.send("second question", TEST_RUN_SETTINGS) }
-
-                assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
-                assertEquals("second answer", result.finalMessage)
-                // The recorded conversation, verbatim, under the current harness's system prompt.
-                assertEquals(
-                    listOf("system", "user", "assistant", "tool", "assistant", "user", "assistant"),
-                    result.transcript.map { it.role },
-                )
-                assertContains(result.transcript[0].text, "Unit-test instructions.")
-                assertEquals("first question", result.transcript[1].text)
-                assertEquals("call-1", result.transcript[3].toolCallId)
-                assertContains(result.transcript[3].text, "hi")
-                assertEquals("first answer", result.transcript[4].text)
-
-                // The stored log plus the new events forms one gaplessly numbered log again.
-                val combined = logged + listener.events
-                assertEquals(List(combined.size) { it.toLong() }, combined.map { it.sequenceId })
-                assertTrue(listener.events.none { it is AgentEvent.SessionStarted })
-            }
-        }
     }
 
     // ─── Tool validation ──────────────────────────────────────────────
@@ -108,7 +62,7 @@ class AgentLoadTest {
         val logged = recordedSession()
         val slim = Harness(tools = listOf("extra_tool"), instructions = TEST_HARNESS.instructions)
 
-        withUnusedClient { client ->
+        unusedAiRouterClient().use { client ->
             val failure = assertFailsWith<HarnessValidationException> {
                 Agent.load(logged, slim, client, environment())
             }
@@ -120,20 +74,20 @@ class AgentLoadTest {
     @DisplayName("A hallucinated tool call the run answered with an error does not block loading")
     fun hallucinatedToolCallDoesNotBlockLoading() {
         val logged = recordedSession(
-            replies = listOf(
+            onOpeningTurn(
                 toolCallResponse(
                     ToolCall(id = "call-1", function = ToolCallFunction("teleport", buildJsonObject { })),
-                ).asReply(),
-                assistantResponse(finishReason = "stop", text = "ok").asReply(),
+                ),
             ),
+            onToolResults(assistantResponse(finishReason = "stop", text = "ok")),
         )
 
-        withUnusedClient { client ->
+        unusedAiRouterClient().use { client ->
             Agent.load(logged, TEST_HARNESS, client, environment())
         }
     }
 
-    // ─── Repair, title, and log validation ────────────────────────────
+    // ─── Repair and log validation ────────────────────────────────────
 
     @Test
     @DisplayName("A log cut mid-run loads with the dangling tool call repaired")
@@ -141,90 +95,50 @@ class AgentLoadTest {
         val logged = recordedSession()
         val cut = logged.subList(0, logged.indexOfFirst { it is AgentEvent.ToolCallStarted } + 1)
 
-        scriptedServer(assistantResponse(finishReason = "stop", text = "recovered")).use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                val agent = Agent.load(cut, TEST_HARNESS, client, environment())
+        FakeLlm(onOpeningTurn(assistantResponse(finishReason = "stop", text = "recovered"))).client().use { client ->
+            val agent = Agent.load(cut, TEST_HARNESS, client, environment())
 
-                val result = runBlocking { agent.send("continue", TEST_RUN_SETTINGS) }
+            val result = runBlocking { agent.send("continue", TEST_RUN_SETTINGS) }
 
-                assertEquals(
-                    listOf("system", "user", "assistant", "tool", "user", "assistant"),
-                    result.transcript.map { it.role },
-                )
-                val aborted = result.transcript.single { it.role == "tool" }
-                assertEquals("call-1", aborted.toolCallId)
-                assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.text)
-            }
+            assertEquals(
+                listOf("system", "user", "assistant", "tool", "user", "assistant"),
+                result.transcript.map { it.role },
+            )
+            val aborted = result.transcript.single { it.role == "tool" }
+            assertEquals("call-1", aborted.toolCallId)
+            assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.text)
         }
     }
 
     @Test
-    @DisplayName("An interrupted run's repaired tool call stays at that run's end after load")
-    fun interruptedRunRepairsAtItsBoundaryAfterLoad() {
+    @DisplayName("A log holding two interrupted runs loads with the dangling call of each one repaired")
+    fun everyInterruptedRunInTheLogIsRepaired() {
+        // A turn budget of one ends each run at the LLM boundary with its
+        // requested call unexecuted, so the log carries two dangling calls —
+        // one at its tail, one buried behind a later run.
         val logged = recordedSession(
-            replies = listOf(
-                toolCallResponse(bashCall(id = "call-1", command = "echo hi")).asReply(),
-                assistantResponse(finishReason = "stop", text = "second answer").asReply(),
-            ),
-            prompts = listOf("first question", "second question"),
             budgets = RunBudgets(maxTurns = 1),
-        )
-
-        scriptedServer(assistantResponse(finishReason = "stop", text = "third answer")).use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                val agent = Agent.load(logged, TEST_HARNESS, client, environment())
-
-                val result = runBlocking { agent.send("third question", TEST_RUN_SETTINGS) }
-
-                assertEquals(
-                    listOf("system", "user", "assistant", "tool", "user", "assistant", "user", "assistant"),
-                    result.transcript.map { it.role },
-                )
-                assertEquals("call-1", result.transcript[3].toolCallId)
-                assertEquals(ABORTED_TOOL_RESULT_TEXT, result.transcript[3].text)
-            }
-        }
-    }
-
-    @Test
-    @DisplayName("Every interrupted run is repaired on load, not just the last one")
-    fun everyInterruptedRunIsRepairedOnLoad() {
-        val logged = recordedSession(
-            replies = listOf(
-                toolCallResponse(bashCall(id = "call-1", command = "echo one")).asReply(),
-                toolCallResponse(bashCall(id = "call-2", command = "echo two")).asReply(),
-            ),
             prompts = listOf("first question", "second question"),
-            budgets = RunBudgets(maxTurns = 1),
+            rules = listOf(
+                onOpeningTurn(toolCallResponse(bashCall(id = "call-1", command = "echo one")), saying = "first"),
+                onOpeningTurn(toolCallResponse(bashCall(id = "call-2", command = "echo two")), saying = "second"),
+            ),
         )
+        assertEquals(2, logged.filterIsInstance<AgentEvent.RunStarted>().size)
 
-        scriptedServer(assistantResponse(finishReason = "stop", text = "done")).use { server ->
-            AiRouterClient(server.baseUrl).use { client ->
-                val agent = Agent.load(logged, TEST_HARNESS, client, environment())
-
-                val result = runBlocking { agent.send("third question", TEST_RUN_SETTINGS) }
-
-                assertEquals(
-                    listOf("system", "user", "assistant", "tool", "user", "assistant", "tool", "user", "assistant"),
-                    result.transcript.map { it.role },
-                )
-                assertEquals("call-1", result.transcript[3].toolCallId)
-                assertEquals(ABORTED_TOOL_RESULT_TEXT, result.transcript[3].text)
-                assertEquals("call-2", result.transcript[6].toolCallId)
-                assertEquals(ABORTED_TOOL_RESULT_TEXT, result.transcript[6].text)
-            }
-        }
-    }
-
-    @Test
-    @DisplayName("Loading recovers the latest title")
-    fun loadRecoversLatestTitle() {
-        val logged = recordedSession(after = { it.title = "Renamed session" })
-
-        withUnusedClient { client ->
+        FakeLlm(onOpeningTurn(assistantResponse(finishReason = "stop", text = "recovered"))).client().use { client ->
             val agent = Agent.load(logged, TEST_HARNESS, client, environment())
 
-            assertEquals("Renamed session", agent.title)
+            val result = runBlocking { agent.send("continue", TEST_RUN_SETTINGS) }
+
+            assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+            assertEquals(
+                listOf("system", "user", "assistant", "tool", "user", "assistant", "tool", "user", "assistant"),
+                result.transcript.map { it.role },
+            )
+            val aborted = result.transcript.filter { it.role == "tool" }
+            assertEquals(listOf("call-1", "call-2"), aborted.map { it.toolCallId })
+            aborted.forEach { assertEquals(ABORTED_TOOL_RESULT_TEXT, it.text) }
         }
     }
 
@@ -233,7 +147,7 @@ class AgentLoadTest {
     fun logWithoutSessionStartedIsRejected() {
         val logged = recordedSession()
 
-        withUnusedClient { client ->
+        unusedAiRouterClient().use { client ->
             assertFailsWith<IllegalArgumentException> {
                 Agent.load(emptyList(), TEST_HARNESS, client, environment())
             }
@@ -248,12 +162,88 @@ class AgentLoadTest {
     @Test
     @DisplayName("Every event type survives a kotlinx JSON round trip")
     fun everyEventTypeRoundTripsThroughJson() {
+        val events = everyEventType()
+
+        val decoded = Json.decodeFromString<List<AgentEvent>>(Json.encodeToString(events))
+
+        assertEquals(events, decoded)
+    }
+
+    @Test
+    @DisplayName("Every stored wire name is pinned: a rename fails here instead of orphaning stored logs")
+    fun everyStoredWireNameIsPinned() {
+        // The round trip above is symmetric and so blind to a rename; these
+        // literals are the stored-log compatibility contract itself. Reading
+        // the enums off `entries` also fails on a value added without a pin.
+        val json = Json.encodeToString(everyEventType())
+
+        assertEquals(
+            listOf(
+                "session_started",
+                "session_renamed",
+                "run_started",
+                "llm_call_started",
+                "llm_call_retried",
+                "llm_call_finished",
+                "tool_call_started",
+                "tool_call_finished",
+                "subagent_spawned",
+                "budget_updated",
+                "run_finished",
+            ),
+            Json.parseToJsonElement(json).jsonArray.map { it.jsonObject.getValue("type").jsonPrimitive.content },
+        )
+        assertEquals(
+            listOf("completed", "stopped", "turns_exhausted", "timeout", "error"),
+            RunResult.Status.entries.map { wireName(RunResult.Status.serializer(), it) },
+        )
+        assertEquals(
+            listOf("success", "error", "timed_out"),
+            AgentEvent.ToolCallFinished.Outcome.entries
+                .map { wireName(AgentEvent.ToolCallFinished.Outcome.serializer(), it) },
+        )
+        // Field names are the other half of it, so every event's whole key set
+        // is pinned: a rename, or a field added without a decision, fails here
+        // too. The discriminator owns `type`, which is why the spawn's own type
+        // travels as `subagentType`.
+        assertEquals(
+            listOf(
+                eventKeys("sessionId", "title", "depth"),
+                eventKeys("title"),
+                eventKeys("userMessage", "model", "reasoningEffort"),
+                eventKeys("turn"),
+                eventKeys("cause", "attempt", "backoff"),
+                eventKeys("message", "usage", "finishReason"),
+                eventKeys("callId", "toolName", "arguments"),
+                eventKeys("callId", "resultText", "outcome", "duration", "truncated"),
+                eventKeys("name", "sessionId", "subagentType", "modelId"),
+                eventKeys("turnsUsed", "turnsRemaining", "elapsed"),
+                eventKeys("status", "finalMessage", "usage", "turnsUsed", "elapsed"),
+            ),
+            Json.parseToJsonElement(json).jsonArray.map { it.jsonObject.keys },
+        )
+    }
+
+    /** The `@SerialName` of [value], as a stored log carries it. */
+    private fun <T> wireName(serializer: KSerializer<T>, value: T): String =
+        Json.encodeToJsonElement(serializer, value).jsonPrimitive.content
+
+    /** The keys every stored event carries — the discriminator and the [AgentEvent] fields — plus [own]. */
+    private fun eventKeys(vararg own: String): Set<String> =
+        setOf("type", "sequenceId", "timestampMillis", *own)
+
+    /**
+     * One event of every type, for the round trip and the wire-name pins.
+     * Every defaulted field carries a non-default value, since a defaulted
+     * one is left out of the encoding and so pins nothing.
+     */
+    private fun everyEventType(): List<AgentEvent> {
         val assistant = toolCallResponse(bashCall(id = "call-1", command = "echo hi"))
         val arguments = assistant.message.toolCalls!!.single().function.arguments
-        val events: List<AgentEvent> = listOf(
-            AgentEvent.SessionStarted(0, 1, "session-1", "Untitled"),
+        return listOf(
+            AgentEvent.SessionStarted(0, 1, "session-1", "Untitled", depth = 1),
             AgentEvent.SessionRenamed(1, 2, "Renamed"),
-            AgentEvent.RunStarted(2, 3, "question"),
+            AgentEvent.RunStarted(2, 3, "question", model = "test-model", reasoningEffort = ReasoningEffort.HIGH),
             AgentEvent.LlmCallStarted(3, 4, turn = 1),
             AgentEvent.LlmCallRetried(4, 5, cause = "HTTP 503", attempt = 1, backoff = 1.seconds),
             AgentEvent.LlmCallFinished(5, 6, assistant.message, assistant.usage, "tool_calls"),
@@ -285,31 +275,7 @@ class AgentLoadTest {
                 turnsUsed = 1,
                 elapsed = 3.seconds,
             ),
-            // A second run end, for the stopped status's own wire string.
-            AgentEvent.RunFinished(
-                sequenceId = 11,
-                timestampMillis = 12,
-                status = RunResult.Status.STOPPED,
-                finalMessage = null,
-                usage = ZERO_USAGE,
-                turnsUsed = 2,
-                elapsed = 4.seconds,
-            ),
         )
-
-        val json = Json.encodeToString(events)
-        val decoded = Json.decodeFromString<List<AgentEvent>>(json)
-
-        assertEquals(events, decoded)
-        // The wire strings are the stored-log compatibility contract: a
-        // rename that changes them must fail here, not corrupt stored logs.
-        assertContains(json, "\"type\":\"run_finished\"")
-        assertContains(json, "\"type\":\"subagent_spawned\"")
-        assertContains(json, "\"subagentType\":\"self\"")
-        assertContains(json, "\"modelId\":\"pinned-model\"")
-        assertContains(json, "\"status\":\"timeout\"")
-        assertContains(json, "\"status\":\"stopped\"")
-        assertContains(json, "\"outcome\":\"timed_out\"")
     }
 
     @Test
