@@ -7,12 +7,10 @@ Shared build conventions live in the root build script.
 
 ## Build & verify
 
-- `./gradlew build` — compile + detekt + the default and live suites of both
-  modules. The live tier runs inside `check`, so a `build` needs everything
-  [TESTING.md](TESTING.md) lists for a fresh checkout.
+- `./gradlew build` — compile, detekt and every test tier but the container
+  one. The live tier runs inside `check`, so a `build` needs a running
+  ai-router and costs API spend.
 - `./lint.sh` / `./fmt.sh` — detekt check / auto-fix formatting.
-- Running one tier at a time, what each needs and what the whole thing costs:
-  TESTING.md, Running them.
 
 ## Conventions
 
@@ -38,16 +36,9 @@ Shared build conventions live in the root build script.
   stored). `session.json` tolerates unknown keys so a file can outlive its
   schema; the event log deliberately does not. Details in the event KDoc;
   storage layout in README, Sessions.
-- Test compilations are `associateWith`-bound for `internal` access (see the
-  module build scripts): every suite and every `testFixtures` set to its own
-  module's main; the server's three suites to the server's `testFixtures` as
-  well, whose helpers are `internal` because the API types they carry are;
-  and its `containerTest` to its `test` on top of that.
-- Shared test helpers live once, in a `testFixtures` source set: the lib's
-  (`lib/src/testFixtures/kotlin`) for everything about agents and the fake
-  router, consumed by every lib suite and by the server's too; the server's
-  for the HTTP shape of its API, consumed by all three of its suites. No
-  per-suite fixture copies.
+- Shared test helpers live once, in a `testFixtures` source set — never a
+  per-suite copy. Which set, and how the suites are bound for `internal`
+  access: [TESTING.md](TESTING.md), Source sets and fixtures.
 - Control characters in source files are written as visible escapes
   (`\u0007`), never raw bytes — editors strip raw bytes silently and
   diffs don't show it.
@@ -58,9 +49,10 @@ Shared build conventions live in the root build script.
 
 ## Docs
 
-- [TESTING.md](TESTING.md) — read before adding, moving or deleting a test:
-  the three tiers, the rule deciding which one a test belongs to, how to run
-  each, and what a fresh checkout needs to get `build` green.
+- [TESTING.md](TESTING.md) — read when adding, moving or deleting a test,
+  running one tier at a time, or getting a fresh checkout's `build` green: the
+  three tiers, the rule deciding which one a test belongs to, and what each
+  needs.
 - [README.md](README.md) — read when setting up the build, pointing the live
   tier at another router or model, running or configuring the agent server,
   working on or against its HTTP API (endpoints and wire format),

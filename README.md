@@ -27,9 +27,18 @@ fails immediately during settings evaluation with an error naming the
 expected path.
 
 That same checkout is also the router `./gradlew build` talks to, since the
-build runs the live tier — one checkout, both roles. The full list of what a
-fresh checkout needs, including the API key and the trap that stops a fresh
-ai-router clone from building at all, is in [TESTING.md](TESTING.md).
+build runs the live tier — one checkout, both roles. The rest of what a fresh
+checkout needs to get `build` green, including the API key, is in
+[TESTING.md](TESTING.md).
+
+### A fresh ai-router clone does not build
+
+Worth knowing before losing an hour to it: ai-router's `.gitignore` carries a
+bare `ai-router` pattern with no leading slash, which git matches at any
+depth — so the clone silently omits `cmd/ai-router/`, the directory holding
+the entry point, and `make build` fails on a missing directory. The fix is to
+recreate `cmd/ai-router/main.go` as a `package main` calling `cli.Execute()`.
+Upstream bug in another repo; recorded here because it blocks this build.
 
 ## Building
 
@@ -37,10 +46,9 @@ ai-router clone from building at all, is in [TESTING.md](TESTING.md).
 ./gradlew build
 ```
 
-Runs compilation, detekt (with detekt-formatting) and — of both modules —
-the default suites plus the live tier. It does not run the container
-integration tests. What the live tier needs of the machine, and what the
-whole thing costs, is in [TESTING.md](TESTING.md).
+Runs compilation, detekt (with detekt-formatting) and the test tiers that do
+not need Docker. What it runs, what it needs of the machine and what it costs:
+[TESTING.md](TESTING.md).
 
 ## Linting & formatting
 
@@ -53,10 +61,7 @@ Both scripts wrap detekt (with detekt-formatting) and cover all source sets:
 
 ## Live integration tests
 
-The `liveTest` suites — `lib/src/liveTest/kotlin` driving the real `Agent`
-and `server/src/liveTest/kotlin` driving the packaged server as a real
-process — are the primary test tier and run inside `build` and `check`. Run
-them on their own with:
+The `liveTest` suites run inside `build`, and on their own with:
 
 ```sh
 ./gradlew liveTest

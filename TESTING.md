@@ -12,11 +12,17 @@ Three tiers, and one rule deciding which tier a test belongs to:
 > here means one thing: a fake router that could hang. Nothing else is a test
 > we keep.
 
-| Tier             | Source sets                               | In `build`?       |
-| ---------------- | ----------------------------------------- | ----------------- |
-| Live             | `lib/src/liveTest`, `server/src/liveTest` | yes               |
-| Mocked and units | `lib/src/test`, `server/src/test`         | yes               |
-| Container        | `*/src/containerTest`                     | no — needs Docker |
+| Tier             | Source sets                               | In `build`?       | Hang ceiling |
+| ---------------- | ----------------------------------------- | ----------------- | ------------ |
+| Live             | `lib/src/liveTest`, `server/src/liveTest` | yes               | 15 min       |
+| Mocked and units | `lib/src/test`, `server/src/test`         | yes               | 2 min        |
+| Container        | `*/src/containerTest`                     | no — needs Docker | 20 min       |
+
+The ceiling is a preemptive JUnit timeout on every suite, needing
+`thread.mode.default = SEPARATE_THREAD`, because Jupiter otherwise reports an
+overrun only once the test returns — which a hang never does. It is a
+backstop, never a budget: a case that wants more than its tier's ceiling is a
+case to reconsider.
 
 ## The live tier — the primary signal
 
@@ -45,6 +51,10 @@ What the tier holds itself to:
 - **An unreachable or wrong-model router fails the run**, once per JVM, with
   a message naming the URL, the model, the models the router does offer, and
   the command that starts one.
+- **Its runs are bounded by the fixture, not the library.** The library's own
+  defaults are day-scale, and here it is a real model writing the commands
+  that run — so every live case builds its agent through `liveAgent`, which
+  carries 20 turns, a 5-minute wall clock and a 60-second tool timeout.
 - **One case depends on backend latency**, and that is a property of the
   tier rather than something it enforces: the 409 a prompt during a run draws
   needs the second prompt to land inside the first LLM call. A cloud round
@@ -69,13 +79,17 @@ about ai-router's contract and will keep passing after that belief goes
 stale — so the tier stays small and cannot hang. A request its script cannot
 answer draws a non-retryable HTTP 400 carrying what arrived and what the
 rules were still willing to answer: a direct SDK call throws it, and a run
-driving the call ends `ERROR` with that text as its error and a
-`RunFinished` like any other outcome — so a test waiting on that run fails
-in about a second instead of waiting out its stream ceiling. A run the
-server started is nobody's return value, so `withFakeSessionServer`
-re-attaches the diagnostic to whatever then fails. `FakeLlmTest` pins the
-in-process half inside a bound only an actual wait can breach, and
-`FakeLlmServerTest` the half over the registry.
+driving the call ends `ERROR` with that text as its error and a `RunFinished`
+like any other outcome. So a test waiting on that run fails in about a second
+instead of waiting out its stream ceiling. A run the server started is
+nobody's return value, so `withFakeSessionServer` re-attaches the diagnostic
+to whatever then fails — and refuses the opposite failure too, failing a case
+that leaves a request unanswered even when its own assertions held, so a
+script that has drifted from the run it serves cannot look green.
+`FakeLlmTest` pins the in-process half of all this inside a bound only an
+actual wait can breach, and `FakeLlmServerTest` the half over the registry —
+the sole opt-out from the unanswered check, being the case whose subject *is*
+an unanswerable request.
 
 What the rule admits here, and all it admits: the LLM failure taxonomy
 (transient retry, terminal failure, a reported `finish_reason` of `error`,
@@ -114,16 +128,29 @@ They guard a platform capability, not a model's mood.
 
 ## The container tier
 
-`lib/src/containerTest` exercises `ContainerExecutionEnvironment` and
-`server/src/containerTest` container-backed sessions, both against a local
-Docker daemon. Deliberately outside `build`: the build must not acquire a
-dependency on a Docker daemon.
+Both suites run against a local Docker daemon, and sit deliberately outside
+`build`: it must not acquire a dependency on one. What they cover, and what
+Docker needs of the machine, is in [README.md](README.md) — Container
+integration tests.
 
-One case needs more than that daemon: `EndToEndAcceptanceContainerTest`,
-which runs the live tier's toy task inside a container and therefore needs a
-**running ai-router as well** — which is why `lib`'s `containerTest` shares
-the `liveTest` suite's configuration (router coordinates and
-`momo.examplesDir`) in the module build script.
+One case needs more than the daemon: `EndToEndAcceptanceContainerTest` runs
+the live tier's toy task inside a container and so needs a **running
+ai-router** as well, which is why `lib`'s `containerTest` shares the
+`liveTest` suite's configuration (router coordinates and `momo.examplesDir`)
+in the module build script.
+
+## Source sets and fixtures
+
+Test compilations are `associateWith`-bound for `internal` access (see the
+module build scripts): every suite and every `testFixtures` set to its own
+module's main; the server's three suites to the server's `testFixtures` as
+well, whose helpers are `internal` because the API types they carry are; and
+its `containerTest` to its `test` on top of that.
+
+Shared helpers live once in a `testFixtures` source set, never as per-suite
+copies: the lib's for everything about agents and the fake router, consumed by
+every lib suite and by the server's too; the server's for the HTTP shape of
+its API, consumed by all three of its suites.
 
 ## Running them
 
@@ -142,10 +169,9 @@ cached and never `UP-TO-DATE`: every invocation hits the backend again.
 `./gradlew build` runs the live tier, so it needs a **running ai-router** —
 and it will never silently skip past a missing one.
 
-1. **An ai-router checkout on disk**, current: momo-agent tracks SDK changes
-   made alongside it, and a stale checkout fails compilation. One checkout
-   serves both roles — the SDK the build compiles against and the router the
-   live tier talks to. Path in [README.md](README.md), Prerequisites.
+1. **An ai-router checkout on disk**, current — a stale one fails
+   compilation. Its path, and why one checkout serves both roles:
+   [README.md](README.md), Prerequisites.
 2. **That router running**, started from the checkout with:
 
    ```sh
@@ -164,12 +190,5 @@ and it will never silently skip past a missing one.
 4. **Docker**, for `containerTest` only — whose one end-to-end case wants the
    running router of 2 and 3 on top of it.
 
-### A fresh ai-router clone does not build
-
-Worth knowing before losing an hour to it: ai-router's `.gitignore` carries
-a bare `ai-router` pattern with no leading slash, which git matches at any
-depth — so the clone silently omits `cmd/ai-router/`, the directory holding
-the entry point, and `make build` fails on a missing directory. The fix is
-to recreate `cmd/ai-router/main.go` as a `package main` calling
-`cli.Execute()`. Upstream bug in another repo; recorded here because it
-blocks this build.
+A freshly cloned ai-router does not build, for a reason worth knowing before
+losing an hour to it — see [README.md](README.md), Prerequisites.
