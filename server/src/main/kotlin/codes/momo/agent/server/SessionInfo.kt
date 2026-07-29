@@ -32,7 +32,11 @@ internal data class SessionInfo(
     val createdAtMillis: Long,
     /** The last logged event's timestamp — recency for client-side ordering. */
     val updatedAtMillis: Long,
-    /** Consumption of the current (or last) run; null before the first run. */
+    /**
+     * Consumption of the current (or last) run; null whenever the log holds
+     * no run — before the first one, and again after a rewind whose cut took
+     * every run the log had.
+     */
     val lastRun: RunStats?,
 )
 

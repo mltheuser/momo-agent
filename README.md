@@ -203,29 +203,37 @@ Rename and favorite each take a one-field body:
 {"favorite": true}
 ```
 
-So does rewind, naming the event that becomes the log's last
-conversation-bearing entry:
+So does rewind, naming the first event the cut deletes:
 
 ```json
-{"sequenceId": 41}
+{"firstDeletedSequenceId": 42}
 ```
 
-A rewind is destructive: everything after the named event is deleted from
-the stored log permanently — no copy, no undo — and a
+A rewind is destructive: the named event and the conversation after it are
+deleted from the stored log permanently — no copy, no undo — and a
 `conversation_rewound` event is appended as the new tail (see *The event
-stream*). The session keeps its identity, environment and resume path, and
-is promptable the moment the call returns; rewinding a `closed` session
-leaves it closed, the next prompt resuming from the cut log. The whole
-tree must be idle — a run in flight anywhere in it is a `409` and nothing
-changes. Naming the log's last event is a no-op success; a sequence ID the
-log does not hold — one an earlier rewind deleted included — is a
-`400 invalid_request`. The cut may land mid-run: the appended event closes
-what remains of it, so a dangling `run_started` above the cut never reads
-as still running. One caveat worth knowing: the **workspace is not
-rewound** — files stay exactly as the deleted turns left them; the agent
-is not told, it simply no longer remembers. What a rewind does to spawned
-subagents — and which sessions the response's `deletedSessionIds` names —
-is under *Subagent sessions*.
+stream*). One kind of event survives the cut wherever it sits: a
+`session_renamed` stays in the log with its original sequence ID, so a
+rewind never changes the session's title. The session keeps its identity,
+environment and resume path, and is promptable the moment the call returns;
+rewinding a `closed` session leaves it closed, the next prompt resuming
+from the cut log. The whole tree must be idle — a run in flight anywhere
+in it is a `409` and nothing changes. A sequence ID the log does not hold —
+one an earlier rewind deleted included — is a `400 invalid_request`, and so
+is the log's first event: every read of a log derives from the
+`session_started` opening it, so no cut may delete it. An event the cut
+would preserve is a `400` too: what a cut keeps cannot be what it cuts
+from, or the call would delete nothing at all. Cutting back to the very
+start *is* allowed, by naming the log's first `run_started` — every run
+goes and the conversation is left empty: a session whose history is the
+`session_started` and the announcement above it, reporting no last run at
+all and promptable as if fresh. The cut may land mid-run: the appended
+event closes what remains of it, so a dangling `run_started` above the cut
+never reads as still running. One caveat worth knowing: the **workspace is
+not rewound** — files stay exactly as the deleted turns left them; the
+agent is not told, it simply no longer remembers. What a rewind does to
+spawned subagents — and which sessions the response's `deletedSessionIds`
+names — is under *Subagent sessions*.
 
 Session `status` is derived, never stored: `running` (a run is in
 flight), `idle` (live, nothing running), `closed` (no runtime attached;
@@ -240,9 +248,10 @@ timestamp, for ordering by recency — and `favorite`, stored as root
 metadata (see Sessions): toggling it logs nothing (so `updatedAtMillis`
 stays put) and never attaches a runtime, and through a child's ID it sets
 the root's flag — the one every tree member reports. A rename, by
-contrast, is conversation history: its `session_renamed` event lands in
-the log — appended directly for a `closed` session, which stays closed. A
-blank title is a `400 invalid_request`.
+contrast, is logged: its `session_renamed` event lands in the log —
+appended directly for a `closed` session, which stays closed — and the
+title is derived from the last such event. A blank title is a
+`400 invalid_request`.
 
 Errors are structured JSON — `{"code": "...", "message": "..."}` — with
 `400` for invalid harness/environment/request, `404` for an unknown
@@ -298,9 +307,14 @@ A rewind announces itself on the stream as the `conversation_rewound`
 event it appends: it names the last surviving sequence ID and is itself
 numbered above everything deleted, so replaying subscribers, live tails,
 and `Last-Event-ID` reconnects from inside the deleted range all converge
-on it without reconnect gymnastics. It carries no conversation content and
-renders nothing; for what it does to a run the cut landed in, see the
-rewind endpoint under *Endpoints (v1)*.
+on it without reconnect gymnastics. Other frames can stand above the cut
+point too: a `session_renamed` the cut kept (see the rewind endpoint) holds
+its original sequence ID, and a subscriber is served it before the
+announcement — so a client that reacts to the announcement by dropping
+state numbered past the cut would discard a rename it has just been handed.
+The announcement carries no conversation content and renders nothing; for
+what it does to a run the cut landed in, see the rewind endpoint under
+*Endpoints (v1)*.
 
 ### Subagent sessions
 

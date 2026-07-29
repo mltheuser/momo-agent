@@ -153,17 +153,20 @@ internal suspend fun HttpClient.favoriteResponse(sessionId: String, favorite: Bo
         setBody(FavoriteRequest(favorite))
     }
 
-/** POSTs a rewind, asserting 200, and returns the session as cut plus the cascade's deletions. */
-internal suspend fun HttpClient.rewindSession(sessionId: String, sequenceId: Long): RewindResponse {
-    val response = rewindResponse(sessionId, sequenceId)
+/**
+ * POSTs a rewind cutting from [firstDeletedSequenceId] on, asserting 200, and
+ * returns the session as cut plus the cascade's deletions.
+ */
+internal suspend fun HttpClient.rewindSession(sessionId: String, firstDeletedSequenceId: Long): RewindResponse {
+    val response = rewindResponse(sessionId, firstDeletedSequenceId)
     assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
     return response.body()
 }
 
-internal suspend fun HttpClient.rewindResponse(sessionId: String, sequenceId: Long): HttpResponse =
+internal suspend fun HttpClient.rewindResponse(sessionId: String, firstDeletedSequenceId: Long): HttpResponse =
     post("/v1/sessions/$sessionId/rewind") {
         contentType(ContentType.Application.Json)
-        setBody(RewindRequest(sequenceId))
+        setBody(RewindRequest(firstDeletedSequenceId))
     }
 
 /** POSTs a stop — no request body — whose response carries the session info as of the stop's return. */

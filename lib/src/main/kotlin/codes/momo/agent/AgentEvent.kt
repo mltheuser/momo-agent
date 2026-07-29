@@ -175,20 +175,21 @@ public sealed interface AgentEvent {
     ) : AgentEvent
 
     /**
-     * A rewind truncated the log: every event after
-     * [lastSurvivingSequenceId] was deleted permanently, and this event was
-     * appended as the new tail, numbered above the log's pre-cut maximum —
-     * so sequence IDs stay unique across the gap the deletion leaves. It
-     * carries no conversation content (transcript derivation ignores it)
-     * and closes any run the cut beheaded: a dangling [RunStarted] before
-     * it must not be read as a run still in flight.
+     * A rewind truncated the log: the conversation after
+     * [lastSurvivingSequenceId] was deleted permanently and this event was
+     * appended as the new tail, numbered above the log's pre-cut maximum.
+     * Other events can survive above the cut point, so a reader must not
+     * treat everything above it as deleted. This event carries no
+     * conversation content (transcript derivation ignores it) and closes
+     * any run the cut beheaded: a dangling [RunStarted] before it must not
+     * be read as a run still in flight.
      */
     @Serializable
     @SerialName("conversation_rewound")
     public data class ConversationRewound(
         override val sequenceId: Long,
         override val timestampMillis: Long,
-        /** Sequence ID of the last event the cut kept — the log's new last conversation-bearing entry. */
+        /** The cut point: the sequence ID the conversation was cut back to, whatever survives above it. */
         val lastSurvivingSequenceId: Long,
     ) : AgentEvent
 

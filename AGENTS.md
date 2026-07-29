@@ -58,7 +58,8 @@ Shared build conventions live in the root build script.
 - [TESTING.md](TESTING.md) — read when adding, moving or deleting a test,
   running one tier at a time, or getting a fresh checkout's `build` green: the
   three tiers, the rule deciding which one a test belongs to, what each needs,
-  and where a shared helper lives.
+  the wait a case commanding a running session has to use, and where a shared
+  helper lives.
 - [README.md](README.md) — read when setting up the build, pointing the live
   tier at another router or model, running or configuring the agent server,
   working on or against its HTTP API (endpoints and wire format),

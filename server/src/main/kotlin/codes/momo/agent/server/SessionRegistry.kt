@@ -37,9 +37,8 @@ internal class SessionConflictException(message: String) : RuntimeException(mess
 internal class EventLogFailedException(cause: IOException) :
     RuntimeException("The session's event log failed: ${cause.message}", cause)
 
-/** Thrown when a rewind names a sequence ID the session's own log does not hold. */
-internal class InvalidRewindPointException(id: String, sequenceId: Long) :
-    RuntimeException("Session $id has no event with sequence ID $sequenceId to rewind to.")
+/** Thrown when a rewind names a sequence ID its session's log cannot start a cut at. */
+internal class InvalidRewindPointException(message: String) : RuntimeException(message)
 
 /**
  * All sessions the server knows, live or dormant. A session *is* its stored
@@ -336,65 +335,87 @@ internal class SessionRegistry(
     }
 
     /**
-     * Rewinds [id]: cuts its stored log so the event carrying [sequenceId]
-     * becomes the last conversation-bearing entry, everything after it
-     * deleted permanently — no copy, no undo — under the appended
+     * Rewinds [id]: cuts its stored log so the event carrying
+     * [firstDeletedSequenceId] and everything after it are deleted
+     * permanently — no copy, no undo — under the appended
      * [AgentEvent.ConversationRewound] tail, and cascades into descendants
      * per [rewindPlan]'s rules — the returned IDs name every session the
      * cascade removed. An attached tree is reloaded from the cut logs over
      * the same environment, every live descendant dormant again and the
      * session promptable on return; a dormant tree stays dormant, resumed
-     * from the cut logs by the next prompt. Naming the log's last event is
-     * a no-op success: nothing is deleted and nothing appended.
+     * from the cut logs by the next prompt.
      *
-     * @throws InvalidRewindPointException when [sequenceId] is not in
-     *   [id]'s own log — a sequence ID an earlier rewind deleted included.
+     * @throws InvalidRewindPointException when [firstDeletedSequenceId] is
+     *   not in [id]'s own log — a sequence ID an earlier rewind deleted
+     *   included — names an event a cut preserves, or is that log's first
+     *   event, which no cut may delete.
      * @throws SessionConflictException when a run is in flight anywhere in
      *   the tree; nothing changes.
      */
-    suspend fun rewind(id: String, sequenceId: Long): List<String> {
+    suspend fun rewind(id: String, firstDeletedSequenceId: Long): List<String> {
         val (path, root) = treeOf(entries, store, id)
         return root.mutex.withLock {
             if (root.runtime?.hasRunInFlight() == true) {
                 throw SessionConflictException("A run is in flight in the session's tree.")
             }
-            val events = eventsWithValidatedRewindPoint(id, sequenceId)
-            if (events.last().sequenceId == sequenceId) {
-                // The cut would keep everything: the log stays byte-identical.
-                emptyList()
-            } else {
-                executeRewind(root, rootId = path.first(), id = id, sequenceId = sequenceId)
-            }
+            val lastSurviving = lastSurvivorOfCutFrom(id, firstDeletedSequenceId)
+            executeRewind(root, rootId = path.first(), id = id, lastSurviving = lastSurviving)
         }
     }
 
-    /** [id]'s stored events with [sequenceId] verified present — any event of the session's own log is a valid cut. */
-    private suspend fun eventsWithValidatedRewindPoint(id: String, sequenceId: Long): List<AgentEvent> =
-        withContext(Dispatchers.IO) {
-            val events = try {
-                store.readEvents(id)
-            } catch (_: NoSuchFileException) {
-                throw UnknownSessionException(id) // Deleted while waiting on the mutex.
-            }
-            if (events.none { it.sequenceId == sequenceId }) {
-                throw InvalidRewindPointException(id, sequenceId)
-            }
-            events
+    /**
+     * Translates a cut starting at [firstDeletedSequenceId] into the last
+     * surviving sequence ID every layer below takes: the greatest ID [id]'s
+     * own log holds below it — read as the last entry below it, a stored log
+     * ascending by sequence ID throughout.
+     *
+     * The log must hold the named event, and the event must be one a cut can
+     * delete: an event a cut preserves would survive the very call naming it
+     * first deleted, and the log's first event is the
+     * [AgentEvent.SessionStarted] every read model over a log derives from,
+     * so no cut may delete it.
+     */
+    private suspend fun lastSurvivorOfCutFrom(id: String, firstDeletedSequenceId: Long): Long {
+        val events = storedEvents(id)
+        val named = events.firstOrNull { it.sequenceId == firstDeletedSequenceId }
+        val below = events.filter { it.sequenceId < firstDeletedSequenceId }
+        val refusal = when {
+            named == null -> "Session $id has no event with sequence ID $firstDeletedSequenceId to cut from."
+            named.isPreservedByACut() ->
+                "Sequence ID $firstDeletedSequenceId names an event a cut preserves in session $id's log, " +
+                    "so it cannot be an event to cut from."
+            below.isEmpty() ->
+                "Sequence ID $firstDeletedSequenceId opens session $id's log, and a cut must leave it standing."
+            else -> null
         }
+        if (refusal != null) {
+            throw InvalidRewindPointException(refusal)
+        }
+        return below.last().sequenceId
+    }
+
+    /** [id]'s stored events, off the caller's thread. */
+    private suspend fun storedEvents(id: String): List<AgentEvent> = withContext(Dispatchers.IO) {
+        try {
+            store.readEvents(id)
+        } catch (_: NoSuchFileException) {
+            throw UnknownSessionException(id) // Deleted while waiting on the mutex.
+        }
+    }
 
     /**
      * The rewind's mutating half; the caller holds the root's mutex and has
-     * verified the tree idle and [sequenceId] present. Shielded like
-     * [teardown]: a caller's cancellation must not abandon a live
-     * environment or a half-applied plan.
+     * verified the tree idle and translated the request's cut point into
+     * [lastSurviving]. Shielded like [teardown]: a caller's cancellation
+     * must not abandon a live environment or a half-applied plan.
      */
     private suspend fun executeRewind(
         root: SessionEntry,
         rootId: String,
         id: String,
-        sequenceId: Long,
+        lastSurviving: Long,
     ): List<String> = withContext(NonCancellable + Dispatchers.IO) {
-        val plan = rewindPlan(id, sequenceId) { sessionId ->
+        val plan = rewindPlan(id, lastSurviving) { sessionId ->
             try {
                 store.readEvents(sessionId)
             } catch (_: NoSuchFileException) {

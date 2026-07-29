@@ -61,9 +61,9 @@ internal data class RenameRequest(val title: String)
 @Serializable
 internal data class FavoriteRequest(val favorite: Boolean)
 
-/** Body of a rewind request: the sequence ID becoming the log's last conversation-bearing entry. */
+/** Body of a rewind request: the sequence ID of the first event the cut deletes. */
 @Serializable
-internal data class RewindRequest(val sequenceId: Long)
+internal data class RewindRequest(val firstDeletedSequenceId: Long)
 
 /** A rewind's response: the session as cut, plus every session the cascade deleted. */
 @Serializable
@@ -174,7 +174,7 @@ private fun Route.sessionRoutes(registry: SessionRegistry) {
             post("/rewind") {
                 val request = call.receive<RewindRequest>()
                 val id = call.sessionId()
-                val deletedSessionIds = registry.rewind(id, request.sequenceId)
+                val deletedSessionIds = registry.rewind(id, request.firstDeletedSequenceId)
                 call.respond(RewindResponse(registry.info(id), deletedSessionIds))
             }
             eventStreamRoute(registry)

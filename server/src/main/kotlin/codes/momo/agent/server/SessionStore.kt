@@ -13,6 +13,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.serializer
 import java.io.BufferedInputStream
 import java.io.BufferedWriter
 import java.io.ByteArrayOutputStream
@@ -142,7 +143,8 @@ internal class SessionStore(dataDir: Path) {
 
     /**
      * Cuts [id]'s stored log back to [lastSurvivingSequenceId] in one
-     * atomic replacement: every line after it is deleted and the returned
+     * atomic replacement: every line after it is deleted bar the
+     * [PRESERVED_EVENT_TYPES] ones, and the returned
      * [AgentEvent.ConversationRewound] — numbered as its own KDoc pins —
      * becomes the new tail.
      */
@@ -150,14 +152,14 @@ internal class SessionStore(dataDir: Path) {
         val directory = directory(id)
         val lines = storedLines(id, directory.resolve(EVENTS_FILE))
         val rewound = AgentEvent.ConversationRewound(
-            sequenceId = lines.last().sequenceId + 1,
+            sequenceId = lines.last().header.sequenceId + 1,
             timestampMillis = System.currentTimeMillis(),
             lastSurvivingSequenceId = lastSurvivingSequenceId,
         )
         replaceAtomically(
             directory.resolve(EVENTS_FILE),
             buildString {
-                lines.filter { it.sequenceId <= lastSurvivingSequenceId }.forEach { appendLine(it.json) }
+                lines.filter { it.survivesCut(lastSurvivingSequenceId) }.forEach { appendLine(it.json) }
                 appendLine(Json.encodeToString<AgentEvent>(rewound))
             },
         )
@@ -186,17 +188,61 @@ internal class SessionStore(dataDir: Path) {
 /** One stored event as the stream serves it: its own sequence ID plus its log line verbatim. */
 internal data class StoredEvent(val sequenceId: Long, val json: String)
 
-/** The one field a stored line is read minimally for: the sequence ID the event carries. */
+/** A stored line's place in its log: the sequence ID the event carries. */
 @Serializable
 private data class StoredLinePosition(val sequenceId: Long)
 
-/** Reads only [StoredLinePosition] out of a stored event line, whatever else the event carries. */
+/** A stored line's header: its sequence ID and the stored wire name of its type. */
+@Serializable
+private data class StoredLineHeader(val sequenceId: Long, val type: String)
+
+/** Reads a stored event line down to a [StoredLinePosition] or [StoredLineHeader], whatever else it carries. */
 private val lineJson = Json { ignoreUnknownKeys = true }
 
-/** [id]'s stored log [file] as lines with their own sequence IDs, read with [parseLogLines]'s torn-tail tolerance. */
-private fun storedLines(id: String, file: Path): List<StoredEvent> = parseLogLines(id, file) { line ->
-    StoredEvent(lineJson.decodeFromString<StoredLinePosition>(line).sequenceId, line)
+/** One line of a log a rewind cuts: its [StoredLineHeader], plus the line verbatim. */
+private data class StoredLine(val header: StoredLineHeader, val json: String)
+
+/**
+ * [id]'s stored log [file] as lines with their headers, read with
+ * [parseLogLines]'s torn-tail tolerance. A complete line whose header does
+ * not read fails the rewind as [CorruptSessionException] rather than being
+ * dropped: refusing to cut a log we cannot read in full beats deleting
+ * from it.
+ */
+private fun storedLines(id: String, file: Path): List<StoredLine> = parseLogLines(id, file) { line ->
+    StoredLine(lineJson.decodeFromString(line), line)
 }
+
+/** Whether a cut back to [lastSurvivingSequenceId] keeps this line. */
+private fun StoredLine.survivesCut(lastSurvivingSequenceId: Long): Boolean =
+    header.sequenceId <= lastSurvivingSequenceId || header.type in PRESERVED_EVENT_TYPES
+
+/**
+ * The events a cut keeps wherever they sit in the log. Each is a derivation
+ * input for user metadata the log happens to carry rather than conversation,
+ * and a rewind edits only the conversation. A preserved line keeps its own
+ * sequence ID, so it stands above the cut point, inside the gap the deletion
+ * leaves. Another metadata event type joins by adding one [preservedEvent]
+ * entry — the two views below both derive from this list, so neither can
+ * name a type the other does not.
+ */
+private val PRESERVED_EVENTS: List<PreservedEvent> = listOf(preservedEvent<AgentEvent.SessionRenamed>())
+
+/** One preserved event type: the wire name its stored line carries, and whether a decoded event is one. */
+private class PreservedEvent(val storedType: String, val matches: (AgentEvent) -> Boolean)
+
+/**
+ * [T]'s [PRESERVED_EVENTS] entry, its wire name read off [T]'s own serializer
+ * so a changed `@SerialName` cannot silently break the filter.
+ */
+private inline fun <reified T : AgentEvent> preservedEvent(): PreservedEvent =
+    PreservedEvent(serializer<T>().descriptor.serialName) { it is T }
+
+/** Stored wire names of [PRESERVED_EVENTS], for reading a log line's type discriminator. */
+internal val PRESERVED_EVENT_TYPES: Set<String> = PRESERVED_EVENTS.mapTo(mutableSetOf()) { it.storedType }
+
+/** Whether a cut keeps [this] wherever it sits, for a caller holding decoded events rather than log lines. */
+internal fun AgentEvent.isPreservedByACut(): Boolean = PRESERVED_EVENTS.any { it.matches(this) }
 
 /**
  * [id]'s stored log [file] as its non-blank lines, each decoded by [parse].

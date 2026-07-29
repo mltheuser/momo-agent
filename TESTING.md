@@ -57,15 +57,23 @@ What the tier holds itself to:
   defaults are day-scale, and here it is a real model writing the commands
   that run — so every live case builds its agent through `liveAgent`, which
   carries 20 turns, a 5-minute wall clock and a 60-second tool timeout.
-- **One case depends on backend latency**, and that is a property of the
-  tier rather than something it enforces: the 409 a prompt during a run draws
-  needs the second prompt to land inside the first LLM call. A cloud round
-  trip leaves a comfortable window, the trade deliberately taken when the
-  pausable fake was deleted — but a backend fast or cached enough to answer
-  inside the prompt's flight would turn it into a flake rather than a
-  failure. The stop and the close mid-run carry no such dependency: each
-  waits for its run's tool call to start, so its command lands inside a
-  five-second `sleep` rather than wherever latency happens to put it.
+
+What it depends on and does not enforce — properties of the tier, each
+carried by a single case:
+
+- **Backend latency.** The 409 a prompt during a run draws needs the second
+  prompt to land inside the first LLM call. A cloud round trip leaves a
+  comfortable window, the trade deliberately taken when the pausable fake was
+  deleted — but a backend fast or cached enough to answer inside the prompt's
+  flight would turn it into a flake rather than a failure. The stop and the
+  close mid-run carry no such dependency: each waits for its run's tool call to
+  start, so its command lands inside a five-second `sleep` rather than wherever
+  latency happens to put it.
+- **The provider coalescing consecutive same-role turns.** One rewind case
+  leaves the conversation ending in a user message, so the next prompt sends a
+  second user turn behind it. The library does not merge them; ai-router's
+  Anthropic provider does. A provider enforcing strict role alternation would
+  surface here first.
 
 ## The mocked tier — the exception, not the rule
 
@@ -148,6 +156,21 @@ ai-router** as well, which is why `lib`'s `containerTest` shares the
 `liveTest` suite's configuration (router coordinates and `momo.examplesDir`)
 in the module build script.
 
+## Wait for the run, not for its last frame
+
+A case that prompts and then issues a command the in-flight guards reject —
+another prompt, a stop, a rewind — has to wait on **registry state**, via
+`awaitRunEnd` (over HTTP in `ServerApiClient`, over the registry in
+`FakeServerSupport`). Waiting on the `RunFinished` frame off the event stream
+returns sooner: the server's claim on the run outlives the terminal frame, so a
+command sent on that frame's heels can still draw a `409`. `assertRunEndsAtOnce`
+already folds the wait in — cases going through it need nothing further.
+
+The window is small enough that such a case usually passes inside its class and
+fails alone, once nothing ahead of it has warmed the JVM. So a suspect case is
+worth running in isolation and more than once, which is what
+[Running them](#running-them) covers.
+
 ## Source sets and fixtures
 
 Test compilations are `associateWith`-bound for `internal` access (see the
@@ -172,10 +195,15 @@ fixtures, so each suite that wants the fake router asks for it directly.
 ./gradlew :lib:test :server:test   # the units and mocks alone — the one combination needing no router
 ./gradlew liveTest                 # the live tier alone
 ./gradlew containerTest            # the container tier
+
+# One case, alone and uncached — the only way to catch an order-dependent pass
+./gradlew :server:test --tests '*RewindTest.namingTheLastEventDeletesJustThatEvent*' --rerun-tasks
 ```
 
 `build` takes ~85–90 s end to end. Live and container results are never
 cached and never `UP-TO-DATE`: every invocation hits the backend again.
+`--rerun-tasks` matters for the last form: without it a green cached result
+answers instead of the run you asked for.
 
 ## What a fresh checkout needs
 

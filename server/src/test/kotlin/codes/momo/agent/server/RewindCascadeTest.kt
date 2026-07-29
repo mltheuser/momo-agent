@@ -57,14 +57,16 @@ class RewindCascadeTest {
             val rootId = http.createSession(subagentHarness(tempDir), localWorkspace(tempDir)).id
             http.prompt(rootId, SPAWN_PROMPT)
             val helperId = spawnedChildId(http, rootId)
-            val firstRunEnd = http.streamEvents(rootId).last().id
+            http.awaitRunEnd(rootId)
             http.prompt(rootId, SECOND_SPAWN)
             http.awaitRunEnd(rootId)
-            val otherId = sessionStore(tempDir).readEvents(rootId).filterIsInstance<AgentEvent.SubagentSpawned>()
+            val rootLog = sessionStore(tempDir).readEvents(rootId)
+            val secondRunStart = rootLog.filterIsInstance<AgentEvent.RunStarted>().last().sequenceId
+            val otherId = rootLog.filterIsInstance<AgentEvent.SubagentSpawned>()
                 .single { it.name == "other" }.sessionId
             val helperLog = sessionStore(tempDir).readEvents(helperId)
 
-            val rewound = http.rewindSession(rootId, firstRunEnd)
+            val rewound = http.rewindSession(rootId, secondRunStart)
 
             // The deleted spawn takes its child's subtree, named in the
             // response so clients can close its panels; the earlier sibling
@@ -113,7 +115,7 @@ class RewindCascadeTest {
             // Root run 1 spawns and primes the helper (child run 1)...
             http.prompt(rootId, SPAWN_PROMPT)
             val childId = spawnedChildId(http, rootId)
-            val firstRunEnd = http.streamEvents(rootId).last().id
+            http.awaitRunEnd(rootId)
             // ...a human drives child run 2 directly...
             http.prompt(childId, HUMAN_FOLLOW_UP)
             http.awaitRunEnd(childId)
@@ -121,11 +123,13 @@ class RewindCascadeTest {
             // ...root run 2 drives child run 3, and a human drives child run 4.
             http.prompt(rootId, DRIVE_AGAIN)
             http.awaitRunEnd(rootId)
+            val drivingRunStart = sessionStore(tempDir).readEvents(rootId)
+                .filterIsInstance<AgentEvent.RunStarted>().last().sequenceId
             http.prompt(childId, LATER_HUMAN_PROMPT)
             http.awaitRunEnd(childId)
             assertEquals(4, sessionStore(tempDir).readEvents(childId).count { it is AgentEvent.RunStarted })
 
-            val rewound = http.rewindSession(rootId, firstRunEnd)
+            val rewound = http.rewindSession(rootId, drivingRunStart)
 
             // Nothing is deleted outright — the helper's spawn survives; its
             // log is cut strictly before the run the deleted call drove,
@@ -150,6 +154,24 @@ class RewindCascadeTest {
         }
     }
 
+    @Test
+    @DisplayName("Naming the spawn event itself deletes the child it announced: the named event is the first casualty")
+    fun namingTheSpawnDeletesTheChildItAnnounced() {
+        withSpawnedChild(tempDir) { http, rootId, childId ->
+            val rootLog = sessionStore(tempDir).readEvents(rootId)
+            val spawn = rootLog.filterIsInstance<AgentEvent.SubagentSpawned>().single()
+            val lastSurvivor = rootLog.last { it.sequenceId < spawn.sequenceId }.sequenceId
+
+            val rewound = http.rewindSession(rootId, spawn.sequenceId)
+
+            assertEquals(listOf(childId), rewound.deletedSessionIds)
+            assertEquals(HttpStatusCode.NotFound, http.get("/v1/sessions/$childId").status)
+            val events = sessionStore(tempDir).readEvents(rootId)
+            assertEquals(lastSurvivor, assertIs<AgentEvent.ConversationRewound>(events.last()).lastSurvivingSequenceId)
+            assertTrue(events.none { it is AgentEvent.SubagentSpawned }, "the named spawn went with the cut")
+        }
+    }
+
     // ─── A child as the rewind's target ───────────────────────────────
 
     @Test
@@ -169,13 +191,13 @@ class RewindCascadeTest {
             val childId = spawnedChildId(http, rootId)
             http.awaitRunEnd(rootId)
             val primedRunEnd = sessionStore(tempDir).readEvents(childId).last().sequenceId
-            // ...then a human drives child run 2 directly.
+            // ...then a human drives child run 2 directly — the run the cut names.
             http.prompt(childId, HUMAN_FOLLOW_UP)
-            http.awaitRunEnd(childId)
-            val childPreCutMax = sessionStore(tempDir).readEvents(childId).last().sequenceId
+            val humanRun = http.streamEvents(childId, afterSequenceId = primedRunEnd)
+            val childPreCutMax = humanRun.last().id
             val rootLog = sessionStore(tempDir).readEvents(rootId)
 
-            val rewound = http.rewindSession(childId, primedRunEnd)
+            val rewound = http.rewindSession(childId, humanRun.first().id)
 
             // The cut lands on the child alone — the guard and the reload
             // ran on the root, whose own log the rewind never touches.
@@ -205,6 +227,9 @@ class RewindCascadeTest {
     @DisplayName("A rewind deleting a child ends the child's open event stream instead of leaving it parked")
     fun cascadeDeletionEndsTheChildsOpenStream() {
         withSpawnedChild(tempDir) { http, rootId, childId ->
+            // Naming the root's only run deletes it whole, the spawn included.
+            val rootRunStart = sessionStore(tempDir).readEvents(rootId)
+                .first { it is AgentEvent.RunStarted }.sequenceId
             coroutineScope {
                 val subscribed = CompletableDeferred<Unit>()
                 // Collects until the server itself ends the stream: nothing
@@ -214,7 +239,7 @@ class RewindCascadeTest {
                 }
                 subscribed.await()
 
-                val rewound = http.rewindSession(rootId, 0)
+                val rewound = http.rewindSession(rootId, rootRunStart)
 
                 assertEquals(listOf(childId), rewound.deletedSessionIds)
                 val seen = watcher.await()
@@ -242,11 +267,13 @@ class RewindCascadeTest {
             val rootId = http.createSession(subagentHarness(tempDir), localWorkspace(tempDir)).id
             http.prompt(rootId, SPAWN_PROMPT)
             val childId = spawnedChildId(http, rootId)
-            val firstRunEnd = http.streamEvents(rootId).last().id
+            http.awaitRunEnd(rootId)
             val childRunOneEnd = sessionStore(tempDir).readEvents(childId).last().sequenceId
             // Root run 2 drives child run 2 — the run the rewind will cut.
             http.prompt(rootId, DRIVE_AGAIN)
             http.awaitRunEnd(rootId)
+            val drivingRunStart = sessionStore(tempDir).readEvents(rootId)
+                .filterIsInstance<AgentEvent.RunStarted>().last().sequenceId
             val childPreCutMax = sessionStore(tempDir).readEvents(childId).last().sequenceId
 
             coroutineScope {
@@ -262,7 +289,7 @@ class RewindCascadeTest {
                 }
                 subscribed.await()
 
-                http.rewindSession(rootId, firstRunEnd)
+                http.rewindSession(rootId, drivingRunStart)
 
                 // ...so the one event it can receive is the child's own
                 // rewound tail, arriving without a reconnect.
