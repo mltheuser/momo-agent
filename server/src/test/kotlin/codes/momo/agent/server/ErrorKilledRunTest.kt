@@ -1,5 +1,6 @@
 package codes.momo.agent.server
 
+import codes.momo.agent.AgentEvent
 import codes.momo.agent.FakeLlm
 import codes.momo.agent.FakeLlmReply
 import codes.momo.agent.PlantedError
@@ -10,6 +11,9 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 
 /**
  * A run an `Error` kills still records its outcome. Nobody holds the run's
@@ -41,6 +45,11 @@ class ErrorKilledRunTest {
             http.prompt(id, "go")
 
             http.assertRunEndsAtOnce(id, RunResult.Status.ERROR)
+
+            // The outcome names its reason: the planted message, on the
+            // stored RunFinished the stream just served.
+            val finished = assertIs<AgentEvent.RunFinished>(sessionStore(tempDir).readEvents(id).last())
+            assertEquals("planted in the reply of a server-started run", assertNotNull(finished.error).message)
         }
     }
 }

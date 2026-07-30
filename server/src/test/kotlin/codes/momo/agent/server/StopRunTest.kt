@@ -15,6 +15,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 
 /**
  * The ordering [codes.momo.agent.Agent.stop] promises: it returns once the
@@ -49,6 +50,7 @@ class StopRunTest {
                     // The stop's own return already saw the run's end logged.
                     val logged = assertIs<AgentEvent.RunFinished>(store.readEvents(id).last())
                     assertEquals(RunResult.Status.STOPPED, logged.status)
+                    assertNull(logged.error)
 
                     // Idle, not closed: the runtime and its one environment
                     // stayed attached. Awaited, since the server's own claim

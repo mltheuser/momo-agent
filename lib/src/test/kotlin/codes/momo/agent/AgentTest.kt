@@ -255,22 +255,29 @@ class AgentTest {
     // ─── Budgets and abrupt exits ─────────────────────────────────────
 
     @Test
-    @DisplayName("Turn exhaustion leaves the pending tool calls unexecuted and repairs the transcript")
-    fun turnExhaustionLeavesPendingCallsUnexecuted() = workspace.withFakeAgent(
-        onOpeningTurn(toolCallResponse(bashCall(id = "call-1", command = "echo never-run"))),
-        budgets = RunBudgets(maxTurns = 1),
-    ) { agent ->
-        val result = agent.send("go", TEST_RUN_SETTINGS)
+    @DisplayName("Turn exhaustion leaves pending tool calls unexecuted, repairs the transcript, and records no error")
+    fun turnExhaustionLeavesPendingCallsUnexecuted() {
+        val log = CollectingEventListener()
+        workspace.withFakeAgent(
+            onOpeningTurn(toolCallResponse(bashCall(id = "call-1", command = "echo never-run"))),
+            budgets = RunBudgets(maxTurns = 1),
+            listener = log,
+        ) { agent ->
+            val result = agent.send("go", TEST_RUN_SETTINGS)
 
-        assertEquals(RunResult.Status.TURNS_EXHAUSTED, result.status)
-        assertNull(result.finalMessage)
-        assertEquals(1, result.turnsUsed)
-        assertEquals(listOf("system", "user", "assistant", "tool"), result.transcript.map { it.role })
-        val aborted = result.transcript.last()
-        assertEquals("call-1", aborted.toolCallId)
-        // The aborted text also proves the call never ran: an executed echo
-        // would have produced its output here.
-        assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.text)
+            assertEquals(RunResult.Status.TURNS_EXHAUSTED, result.status)
+            assertNull(result.finalMessage)
+            assertEquals(1, result.turnsUsed)
+            assertEquals(listOf("system", "user", "assistant", "tool"), result.transcript.map { it.role })
+            val aborted = result.transcript.last()
+            assertEquals("call-1", aborted.toolCallId)
+            // The aborted text also proves the call never ran: an executed echo
+            // would have produced its output here.
+            assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.text)
+        }
+        val finished = assertIs<AgentEvent.RunFinished>(log.events.last())
+        assertEquals(RunResult.Status.TURNS_EXHAUSTED, finished.status)
+        assertNull(finished.error)
     }
 
     @Test
@@ -346,6 +353,7 @@ class AgentTest {
             val finished = listener.events.filterIsInstance<AgentEvent.RunFinished>().single()
             assertEquals(RunResult.Status.COMPLETED, finished.status)
             assertEquals(result.finalMessage, finished.finalMessage)
+            assertNull(finished.error)
         }
     }
 }

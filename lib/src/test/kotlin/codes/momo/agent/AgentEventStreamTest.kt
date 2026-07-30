@@ -7,6 +7,7 @@ import java.nio.file.Path
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -54,5 +55,53 @@ class AgentEventStreamTest {
         val finished = assertIs<AgentEvent.RunFinished>(listener.events.last())
         assertEquals(RunResult.Status.TIMEOUT, finished.status)
         assertNull(finished.finalMessage)
+        assertNull(finished.error)
+    }
+
+    // ─── Failures on RunFinished ──────────────────────────────────────
+
+    @Test
+    @DisplayName("A terminal router failure puts its message, type and status on RunFinished verbatim")
+    fun terminalFailureCarriesTheErrorOnRunFinished() {
+        val listener = CollectingEventListener()
+
+        val result = workspace.runAgainstFake(
+            listener,
+            onAnyTurn(
+                reply = FakeLlmReply.Failure(statusCode = 404, message = "model not found"),
+                expectation = "any turn, failing terminally",
+            ),
+            harness = TEST_HARNESS,
+        )
+
+        assertEquals(RunResult.Status.ERROR, result.status)
+        val error = assertNotNull(assertIs<AgentEvent.RunFinished>(listener.events.last()).error)
+        assertEquals("$FAKE_ERROR_TYPE: model not found", error.message)
+        assertEquals(FAKE_ERROR_TYPE, error.type)
+        assertEquals(404, error.statusCode)
+    }
+
+    @Test
+    @DisplayName("A failure whose message is null falls back to the throwable's class name, never blank")
+    fun nullMessageFailureFallsBackToClassName() {
+        val listener = CollectingEventListener()
+
+        val result = workspace.runAgainstFake(
+            listener,
+            onAnyTurn(
+                reply = FakeLlmReply.Thrown { MessagelessFailure() },
+                expectation = "any turn, raising an exception carrying no message",
+            ),
+            harness = TEST_HARNESS,
+        )
+
+        assertEquals(RunResult.Status.ERROR, result.status)
+        val error = assertNotNull(assertIs<AgentEvent.RunFinished>(listener.events.last()).error)
+        assertEquals(MessagelessFailure::class.java.name, error.message)
+        assertNull(error.type)
+        assertNull(error.statusCode)
     }
 }
+
+/** No message and no message-carrying constructor, so no propagation step can give it one. */
+private class MessagelessFailure : RuntimeException()

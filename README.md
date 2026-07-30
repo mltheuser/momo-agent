@@ -150,7 +150,9 @@ variable, then the default:
 | ai-router base URL | `--ai-router-base-url` | `AI_ROUTER_BASE_URL` | `http://localhost:8787` |
 
 The server always binds `127.0.0.1`. There is no auth: remote access is
-out of scope for v1.
+out of scope for v1. It logs warnings and errors to stderr (slf4j-simple;
+level in `server/src/main/resources/simplelogger.properties`), so a run
+ending in `error` names its reason without a client attached.
 
 ### Sessions
 
@@ -278,7 +280,8 @@ uses only its own prompt's settings.
 Prompting a `closed` session rebuilds its tree's runtime first — that is
 the resume path (see Subagent sessions). No endpoint returns the run's
 outcome: its `run_finished` event (status, final message verbatim, usage,
-turns used, elapsed) is the record, observed via the event stream. A run's
+turns used, elapsed, and — on an `error` status — a structured error naming
+what failed) is the record, observed via the event stream. A run's
 `status` there is one of `completed`, `stopped` (the stop endpoint ended
 it), `turns_exhausted`, `timeout`, or `error`. The one run without that
 record is one cut short by closing or deleting the session, or by a server

@@ -22,6 +22,7 @@ import java.nio.file.Path
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.time.Duration.Companion.seconds
 
 class AgentLoadTest {
@@ -253,10 +254,18 @@ class AgentLoadTest {
                 eventKeys("callId", "resultText", "outcome", "duration", "truncated"),
                 eventKeys("name", "sessionId", "subagentType", "modelId"),
                 eventKeys("turnsUsed", "turnsRemaining", "elapsed"),
-                eventKeys("status", "finalMessage", "usage", "turnsUsed", "elapsed"),
+                eventKeys("status", "finalMessage", "usage", "turnsUsed", "elapsed", "error"),
                 eventKeys("lastSurvivingSequenceId"),
             ),
             Json.parseToJsonElement(json).jsonArray.map { it.jsonObject.keys },
+        )
+        // The nested error object is decoded field by field by the client, and
+        // the pin above sees only `error` itself, so its keys are pinned too.
+        assertEquals(
+            setOf("message", "type", "statusCode"),
+            Json.parseToJsonElement(json).jsonArray
+                .single { it.jsonObject.getValue("type").jsonPrimitive.content == "run_finished" }
+                .jsonObject.getValue("error").jsonObject.keys,
         )
     }
 
@@ -305,14 +314,77 @@ class AgentLoadTest {
             AgentEvent.RunFinished(
                 sequenceId = 10,
                 timestampMillis = 11,
-                status = RunResult.Status.TIMEOUT,
+                status = RunResult.Status.ERROR,
                 finalMessage = null,
                 usage = ZERO_USAGE,
                 turnsUsed = 1,
                 elapsed = 3.seconds,
+                error = AgentEvent.RunFinished.Error(
+                    message = "fake_router: boom",
+                    type = "fake_router",
+                    statusCode = 503,
+                ),
             ),
             AgentEvent.ConversationRewound(sequenceId = 11, timestampMillis = 12, lastSurvivingSequenceId = 4),
         )
+    }
+
+    @Test
+    @DisplayName("A stored run_finished predating the error field still deserializes, with a null error")
+    fun runFinishedWithoutErrorStillDeserializes() {
+        val stored = """
+            {"type":"run_finished","sequenceId":10,"timestampMillis":11,"status":"error","finalMessage":null,
+            "usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"reasoning_tokens":0,
+            "cache_read_tokens":0},"turnsUsed":0,"elapsed":"PT1S"}
+        """.trimIndent()
+
+        val decoded = Json.decodeFromString<AgentEvent>(stored)
+
+        assertEquals(
+            AgentEvent.RunFinished(
+                sequenceId = 10,
+                timestampMillis = 11,
+                status = RunResult.Status.ERROR,
+                finalMessage = null,
+                usage = ZERO_USAGE,
+                turnsUsed = 0,
+                elapsed = 1.seconds,
+                error = null,
+            ),
+            decoded,
+        )
+    }
+
+    @Test
+    @DisplayName("A non-ERROR run_finished stores no error key, and a plain Error no type or statusCode")
+    fun runFinishedOmitsAbsentErrorAndItsAbsentFields() {
+        // Absent, not null: the default Json's encodeDefaults=false is what
+        // keeps these keys out, and the store writes with the same instance,
+        // so a flip that starts storing `"error":null` everywhere fails here.
+        val errored = AgentEvent.RunFinished(
+            sequenceId = 10,
+            timestampMillis = 11,
+            status = RunResult.Status.ERROR,
+            finalMessage = null,
+            usage = ZERO_USAGE,
+            turnsUsed = 1,
+            elapsed = 3.seconds,
+            error = AgentEvent.RunFinished.Error(
+                message = "fake_router: boom",
+                type = "fake_router",
+                statusCode = 503,
+            ),
+        )
+
+        val completed = Json.encodeToJsonElement<AgentEvent>(
+            errored.copy(status = RunResult.Status.COMPLETED, error = null),
+        ).jsonObject
+        val plain = Json.encodeToJsonElement<AgentEvent>(
+            errored.copy(error = AgentEvent.RunFinished.Error(message = "boom")),
+        ).jsonObject
+
+        assertFalse("error" in completed.keys)
+        assertEquals(setOf("message"), plain.getValue("error").jsonObject.keys)
     }
 
     @Test

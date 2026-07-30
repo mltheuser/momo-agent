@@ -31,10 +31,11 @@ Shared build conventions live in the root build script.
   cutting the stored log — never `revert` or `reverse`. The server's mocked
   cascade cases (`SubagentStopCascadeTest`) are where the stop/abort
   difference is pinned.
-- Three catch arms deliberately stay narrower than `Throwable` — the event
-  emitter's, tool dispatch's, and the run loop's `Exception` arm — so
-  widening one in a tidy-up silently converts a failed JVM into a run that
-  merely errored. Contract in `Agent.send`'s KDoc.
+- Four catch arms deliberately stay narrower than `Throwable` — the event
+  emitter's, tool dispatch's, the run loop's `Exception` arm, and
+  `executeRun`'s run-end error-log guard — so widening one in a tidy-up
+  silently converts a failed JVM into a run that merely errored. Contract
+  in `Agent.send`'s KDoc.
 - Stored session state is a persisted format: the `@SerialName`s on
   `AgentEvent` and `RunResult.Status`, and the `SessionMetadata` variant
   names in `session.json`, are a compatibility contract — never change them

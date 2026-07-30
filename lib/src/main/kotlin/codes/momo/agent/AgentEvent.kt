@@ -1,5 +1,6 @@
 package codes.momo.agent
 
+import ai.router.sdk.models.AiRouterException
 import ai.router.sdk.models.ChatMessage
 import ai.router.sdk.models.ChatUsage
 import ai.router.sdk.models.ReasoningEffort
@@ -83,7 +84,40 @@ public sealed interface AgentEvent {
         val usage: ChatUsage,
         val turnsUsed: Int,
         val elapsed: Duration,
-    ) : AgentEvent
+        /** What failed; absent for every non-ERROR status and for logs predating the field. */
+        val error: Error? = null,
+    ) : AgentEvent {
+
+        /**
+         * The failure behind an ERROR outcome, forwarded verbatim — never
+         * reworded or re-classified. [type] and [statusCode] are present
+         * only when the failure was an
+         * [ai.router.sdk.models.AiRouterException].
+         */
+        @Serializable
+        public data class Error(
+            /** The throwable's message, or its class name when that was null or blank — never empty. */
+            val message: String,
+            /** ai-router's error type. */
+            val type: String? = null,
+            /** The HTTP status ai-router reported. */
+            val statusCode: Int? = null,
+        ) {
+
+            internal companion object {
+
+                /** [failure] as the event carries it. */
+                fun from(failure: Throwable): Error {
+                    val routerFailure = failure as? AiRouterException
+                    return Error(
+                        message = failure.message?.takeUnless { it.isBlank() } ?: failure::class.java.name,
+                        type = routerFailure?.apiError?.type,
+                        statusCode = routerFailure?.statusCode,
+                    )
+                }
+            }
+        }
+    }
 
     /** An LLM call went out for the 1-based [turn] of the current run. */
     @Serializable

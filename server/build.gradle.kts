@@ -21,6 +21,10 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.core)
 
+    // The SLF4J provider the packaged server binds, configured by
+    // simplelogger.properties in resources.
+    runtimeOnly(libs.slf4j.simple)
+
     // The fixtures drive the API as a client; main is only ever the server.
     // Its own `implementation` dependencies do not reach an associated
     // compilation, so the fixtures name what they use.

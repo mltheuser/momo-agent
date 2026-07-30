@@ -20,6 +20,9 @@ dependencies {
     // Coroutine primitives for the suspend-based execution seam.
     implementation(libs.kotlinx.coroutines.core)
 
+    // The run-failure error log; binding a provider stays with the embedder.
+    implementation(libs.slf4j.api)
+
     testFixturesImplementation(libs.kotlinx.coroutines.core)
     testFixturesImplementation(libs.kotlin.test)
     // The live tier hands the SDK its own Ktor client, so a wedged completion

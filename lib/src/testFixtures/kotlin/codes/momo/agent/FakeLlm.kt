@@ -183,6 +183,9 @@ public sealed interface FakeLlmReply {
     public class Thrown(public val raise: () -> Throwable) : FakeLlmReply
 }
 
+/** [ApiError.type] of every failure this fake serves; it prefixes the SDK's exception message. */
+public const val FAKE_ERROR_TYPE: String = "fake_router"
+
 // ─── Rules ────────────────────────────────────────────────────────────
 
 /**
@@ -308,9 +311,6 @@ private const val CHAT_COMPLETIONS_PATH: String = "/v1/chat/completions"
 private const val MODELS_PATH: String = "/v1/models"
 
 private const val HTTP_SERVICE_UNAVAILABLE: Int = 503
-
-/** [ApiError.type] of every failure this fake serves; it prefixes the SDK's exception message. */
-private const val FAKE_ERROR_TYPE: String = "fake_router"
 
 /** How much of a message's text a failure message quotes. */
 private const val EXPECTATION_TEXT: Int = 120

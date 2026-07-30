@@ -21,6 +21,8 @@ import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration
@@ -208,8 +210,7 @@ public class Agent internal constructor(
             run.failure = failure
             RunResult.Status.ERROR
         } catch (@Suppress("TooGenericExceptionCaught") raised: Throwable) {
-            // No RunFinished carries an error: the rethrow is this
-            // throwable's only delivery.
+            run.failure = raised
             fatal = raised
             RunResult.Status.ERROR
         } finally {
@@ -226,6 +227,17 @@ public class Agent internal constructor(
             elapsed = run.elapsed,
             error = run.failure,
         )
+        if (result.status == RunResult.Status.ERROR) {
+            try {
+                // The one place a run ending ERROR logs its reason.
+                logger.error("A run on session $sessionId ended in error.", result.error)
+            } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
+                // An embedder-supplied provider that throws must not replace
+                // the terminal RunFinished below — and a broken logger leaves
+                // nowhere to report itself. An Error still propagates, like
+                // the emitter's arm.
+            }
+        }
         if (fatal == null) {
             emitter.emitRunFinished(result)
             return result
@@ -425,7 +437,7 @@ public class Agent internal constructor(
         var turnsUsed: Int = 0
         var usage: ChatUsage = ZERO_USAGE
         var finalMessage: String? = null
-        var failure: Exception? = null
+        var failure: Throwable? = null
 
         /** Time spent blocked on child runs. */
         var blocked: Duration = Duration.ZERO
@@ -474,6 +486,8 @@ public class Agent internal constructor(
         ): Agent = Agent(harness, client, environment, eventListener, RunBudgets(), restoredSession(events, harness))
     }
 }
+
+private val logger: Logger = LoggerFactory.getLogger(Agent::class.java)
 
 /**
  * Cancellation cause marking an [Agent.stop]: the one cancellation a run
@@ -548,6 +562,7 @@ private fun AgentEventEmitter.emitRunFinished(result: RunResult) {
             usage = result.usage,
             turnsUsed = result.turnsUsed,
             elapsed = result.elapsed,
+            error = result.error?.let(AgentEvent.RunFinished.Error::from),
         )
     }
 }
