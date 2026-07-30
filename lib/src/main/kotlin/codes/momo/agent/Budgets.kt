@@ -14,7 +14,7 @@ import kotlin.time.Duration.Companion.hours
 public object Budgets {
 
     /** Maximum number of turns per run (a turn = one LLM call). */
-    public const val MAX_TURNS: Int = 40
+    public const val MAX_TURNS: Int = 99
 
     /** Maximum wall-clock time per run. */
     public val MAX_WALL_CLOCK: Duration = 3.days
