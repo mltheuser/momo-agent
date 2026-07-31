@@ -15,8 +15,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -65,6 +69,34 @@ internal class SessionRegistry(
 
     private val entries = ConcurrentHashMap<String, SessionEntry>()
 
+    /**
+     * Buffered by one and dropping the oldest, so [announceChange] never
+     * suspends and never fails: every caller announces from a `finally`,
+     * where a cancelled coroutine has no room to suspend at all. Dropping the
+     * oldest — never the newest — costs nothing, because every signal says
+     * the same thing: a subscriber too slow for a burst still receives the
+     * last of it, and that one stands for all the rest.
+     */
+    private val changes = MutableSharedFlow<Unit>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /**
+     * Signalled whenever a listed session's identity or state changes: one
+     * created or deleted, a title, a favorite flag, and a [SessionStatus] —
+     * so twice per run, as it starts and as it ends. What an in-flight run
+     * keeps moving is deliberately not signalled: a subscriber following
+     * [SessionInfo.updatedAtMillis] or [SessionInfo.lastRun] as they climb
+     * follows the session's own event stream.
+     *
+     * A signal is a hint to re-read, never a record of what changed: it is
+     * unnumbered, unreplayed and carries no state, and it stands behind the
+     * change it reports, so a read taken on its heels already accounts for
+     * that change. A missed signal costs nothing but the wait for the next.
+     */
+    val sessionsChanged: SharedFlow<Unit> = changes.asSharedFlow()
+
     init {
         store.sessionIds().forEach { entries[it] = SessionEntry() }
     }
@@ -80,31 +112,33 @@ internal class SessionRegistry(
      *   the environment cannot be built.
      */
     suspend fun create(harnessPath: String, spec: EnvironmentSpec, title: String? = null): SessionInfo =
-        withContext(Dispatchers.IO) {
-            val path = Path.of(harnessPath)
-            val harness = Harness.load(path)
-            val eventLog = store.eventLogForNewSession()
-            val environment = spec.build()
-            val entry = SessionEntry()
-            val logs = ConcurrentHashMap<String, PersistedEventLog>()
-            val agent = closingOnFailure(environment) {
-                val listener = TreeMemberListener(logs, entry, eventLog, sessionId = null)
-                Agent(harness, client, environment, title ?: path.fileName.toString(), listener)
+        announcingChange {
+            withContext(Dispatchers.IO) {
+                val path = Path.of(harnessPath)
+                val harness = Harness.load(path)
+                val eventLog = store.eventLogForNewSession()
+                val environment = spec.build()
+                val entry = SessionEntry()
+                val logs = ConcurrentHashMap<String, PersistedEventLog>()
+                val agent = closingOnFailure(environment) {
+                    val listener = TreeMemberListener(logs, entry, eventLog, sessionId = null)
+                    Agent(harness, client, environment, title ?: path.fileName.toString(), listener)
+                }
+                logs[agent.sessionId] = eventLog
+                try {
+                    store.writeMetadata(agent.sessionId, SessionMetadata.Root(harnessPath, spec))
+                } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
+                    // Without metadata the session can never be rebuilt: discard
+                    // every artifact instead of leaking the live environment.
+                    runCatching { eventLog.close() }
+                    runCatching { environment.close() }
+                    runCatching { store.delete(agent.sessionId) }
+                    throw failure
+                }
+                entry.runtime = TreeRuntime(agent, environment, logs, ::announceChange)
+                entries[agent.sessionId] = entry
+                info(agent.sessionId)
             }
-            logs[agent.sessionId] = eventLog
-            try {
-                store.writeMetadata(agent.sessionId, SessionMetadata.Root(harnessPath, spec))
-            } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
-                // Without metadata the session can never be rebuilt: discard
-                // every artifact instead of leaking the live environment.
-                runCatching { eventLog.close() }
-                runCatching { environment.close() }
-                runCatching { store.delete(agent.sessionId) }
-                throw failure
-            }
-            entry.runtime = TreeRuntime(agent, environment, logs)
-            entries[agent.sessionId] = entry
-            info(agent.sessionId)
         }
 
     /** Root sessions only: children are discovered through their parent's `subagent_spawned` events. */
@@ -204,13 +238,15 @@ internal class SessionRegistry(
      */
     suspend fun rename(id: String, title: String): SessionInfo {
         val (path, root) = treeOf(entries, store, id)
-        root.mutex.withLock {
-            val runtime = root.runtime
-            if (runtime == null) {
-                appendRenamed(id, title)
-            } else {
-                val agent = runtime.agentAt(path) ?: throw UnknownSessionException(id)
-                withContext(Dispatchers.IO) { agent.title = title }
+        announcingChange {
+            root.mutex.withLock {
+                val runtime = root.runtime
+                if (runtime == null) {
+                    appendRenamed(id, title)
+                } else {
+                    val agent = runtime.agentAt(path) ?: throw UnknownSessionException(id)
+                    withContext(Dispatchers.IO) { agent.title = title }
+                }
             }
         }
         return info(id)
@@ -222,15 +258,17 @@ internal class SessionRegistry(
      */
     suspend fun setFavorite(id: String, favorite: Boolean): SessionInfo {
         val (path, root) = treeOf(entries, store, id)
-        root.mutex.withLock {
-            withContext(Dispatchers.IO) {
-                val rootId = path.first()
-                val metadata = try {
-                    store.position(rootId).root
-                } catch (_: NoSuchFileException) {
-                    throw UnknownSessionException(id) // Deleted while waiting on the mutex.
+        announcingChange {
+            root.mutex.withLock {
+                withContext(Dispatchers.IO) {
+                    val rootId = path.first()
+                    val metadata = try {
+                        store.position(rootId).root
+                    } catch (_: NoSuchFileException) {
+                        throw UnknownSessionException(id) // Deleted while waiting on the mutex.
+                    }
+                    store.writeMetadata(rootId, metadata.copy(favorite = favorite))
                 }
-                store.writeMetadata(rootId, metadata.copy(favorite = favorite))
             }
         }
         return info(id)
@@ -267,7 +305,9 @@ internal class SessionRegistry(
      */
     suspend fun close(id: String) {
         val (_, root) = treeOf(entries, store, id)
-        root.mutex.withLock { teardown(root) }
+        announcingChange {
+            root.mutex.withLock { teardown(root) }
+        }
     }
 
     /**
@@ -309,10 +349,12 @@ internal class SessionRegistry(
                 target
             }
         }
-        root.mutex.withLock {
-            teardown(root)
-            withContext(NonCancellable + Dispatchers.IO) {
-                removeSubtree(id)
+        announcingChange {
+            root.mutex.withLock {
+                teardown(root)
+                withContext(NonCancellable + Dispatchers.IO) {
+                    removeSubtree(id)
+                }
             }
         }
     }
@@ -354,12 +396,14 @@ internal class SessionRegistry(
      */
     suspend fun rewind(id: String, firstDeletedSequenceId: Long): List<String> {
         val (path, root) = treeOf(entries, store, id)
-        return root.mutex.withLock {
-            if (root.runtime?.hasRunInFlight() == true) {
-                throw SessionConflictException("A run is in flight in the session's tree.")
+        return announcingChange {
+            root.mutex.withLock {
+                if (root.runtime?.hasRunInFlight() == true) {
+                    throw SessionConflictException("A run is in flight in the session's tree.")
+                }
+                val lastSurviving = lastSurvivorOfCutFrom(id, firstDeletedSequenceId)
+                executeRewind(root, rootId = path.first(), id = id, lastSurviving = lastSurviving)
             }
-            val lastSurviving = lastSurvivorOfCutFrom(id, firstDeletedSequenceId)
-            executeRewind(root, rootId = path.first(), id = id, lastSurviving = lastSurviving)
         }
     }
 
@@ -527,6 +571,30 @@ internal class SessionRegistry(
         entries.known(id)
     }
 
+    /** Raises one [sessionsChanged] signal; never suspends, never throws. */
+    private fun announceChange() {
+        changes.tryEmit(Unit)
+    }
+
+    /**
+     * Runs [block], raising one [announceChange] signal as it leaves —
+     * whether it returned, threw, or was cancelled.
+     *
+     * The `finally` is the point: the mutations this wraps outlive their
+     * caller, [teardown] and [executeRewind] shielding themselves with
+     * [NonCancellable] precisely so a client disconnecting mid-request cannot
+     * abandon a live environment. An announcement after the call would be the
+     * one part such a disconnect skips, leaving a session closed or deleted
+     * with nobody told and no later signal standing for the missed one.
+     * Announcing a mutation that failed instead costs a subscriber one
+     * re-read finding nothing changed, which is what every signal invites.
+     */
+    private suspend fun <T> announcingChange(block: suspend () -> T): T = try {
+        block()
+    } finally {
+        announceChange()
+    }
+
     /** Closes every live tree; the stored sessions stay for the next process. */
     override fun close() {
         runBlocking {
@@ -560,7 +628,7 @@ internal class SessionRegistry(
         val logs = ConcurrentHashMap<String, PersistedEventLog>()
         logs[id] = eventLog
         val agent = Agent.load(events, harness, client, environment, TreeMemberListener(logs, entry, eventLog, id))
-        return TreeRuntime(agent, environment, logs)
+        return TreeRuntime(agent, environment, logs, ::announceChange)
     }
 
     /**
@@ -722,6 +790,7 @@ private class TreeRuntime(
     private val rootAgent: Agent,
     val environment: ExecutionEnvironment,
     private val logs: ConcurrentHashMap<String, PersistedEventLog>,
+    private val announceChange: () -> Unit,
 ) {
 
     private val job = SupervisorJob()
@@ -770,11 +839,15 @@ private class TreeRuntime(
     fun startRun(agent: Agent, prompt: String, settings: RunSettings) {
         logs[agent.sessionId]?.failure?.let { throw EventLogFailedException(it) }
         claimRun(agent)
+        // Behind the claim, and at the end behind its release: the ordering
+        // sessionsChanged promises.
+        announceChange()
         scope.launch {
             try {
                 agent.send(prompt, settings)
             } finally {
                 activeRuns.remove(agent.sessionId)
+                announceChange()
             }
         }
     }

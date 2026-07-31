@@ -22,16 +22,19 @@ import io.ktor.http.content.TextContent
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.util.AttributeKey
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transformWhile
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.io.path.createDirectories
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.fail
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -172,6 +175,15 @@ internal suspend fun HttpClient.rewindResponse(sessionId: String, firstDeletedSe
 /** POSTs a stop — no request body — whose response carries the session info as of the stop's return. */
 internal suspend fun HttpClient.stopResponse(sessionId: String): HttpResponse = post("/v1/sessions/$sessionId/stop")
 
+/**
+ * POSTs a close and abandons the request mid-flight, as a client that
+ * disconnects does — the server finishes the close regardless, so what a case
+ * over this asserts is what survives the caller going away.
+ */
+internal suspend fun HttpClient.abandonedClose(sessionId: String) {
+    withTimeoutOrNull(ABANDON_AFTER) { closeResponse(sessionId) }
+}
+
 /** POSTs a close, asserting 200, and returns the parked session info. */
 internal suspend fun HttpClient.closeSession(sessionId: String): SessionInfo {
     val response = closeResponse(sessionId)
@@ -193,6 +205,66 @@ internal suspend fun HttpClient.awaitRunEnd(sessionId: String) {
     }
     if (ended == null) {
         failWait(sessionId, "the run never ended")
+    }
+}
+
+/**
+ * An open subscription to the change stream, counting the frames it has
+ * received. Frames carry nothing to tell apart, so counting them is all a
+ * subscriber can do — see [ChangeStream.awaitFrames].
+ */
+internal class ChangeStream(private val received: () -> Int, private val ceiling: Duration) {
+
+    /** How many frames have arrived so far, the stream's opening one included. */
+    val frames: Int get() = received()
+
+    /**
+     * Waits for the frame count to reach [count], failing if it does not — or
+     * if it overshoots, which is how a case pins one mutation to one frame
+     * rather than only checking a total.
+     */
+    suspend fun awaitFrames(count: Int) {
+        val reached = withTimeoutOrNull(ceiling) {
+            while (received() < count) {
+                delay(POLL_INTERVAL)
+            }
+            true
+        }
+        if (reached == null) {
+            fail("only ${received()} of $count change frames arrived within $ceiling")
+        }
+        assertEquals(count, received(), "more change frames arrived than the case expected")
+    }
+}
+
+/**
+ * Runs [block] with a subscription to the change stream open, disconnecting
+ * as it returns. The stream's own opening frame has arrived before [block]
+ * starts — it is emitted with the subscription, so waiting for it is what puts
+ * a case's mutations behind the subscribe instead of racing it, and it counts
+ * as the first frame.
+ */
+internal suspend fun HttpClient.withChangeStream(block: suspend (ChangeStream) -> Unit) {
+    val received = CopyOnWriteArrayList<String>()
+    coroutineScope {
+        val subscription = launch {
+            sse("/v1/sessions/changes") {
+                incoming
+                    .filter { it.event != null } // Heartbeat comment frames name no event.
+                    .collect { frame ->
+                        assertNull(frame.data, "a change frame carries no data")
+                        assertNull(frame.id, "a change frame carries no id")
+                        received += checkNotNull(frame.event)
+                    }
+            }
+        }
+        val stream = ChangeStream({ received.size }, waitCeiling)
+        stream.awaitFrames(1) // The opening frame: the subscription is registered.
+        try {
+            block(stream)
+        } finally {
+            subscription.cancel()
+        }
     }
 }
 
@@ -268,3 +340,10 @@ private val WAIT_CEILING: AttributeKey<Duration> = AttributeKey("momo.waitCeilin
 private val CONNECT_TIMEOUT: Duration = 10.seconds
 
 private const val EVENT_TAIL: Int = 10
+
+/**
+ * How long an abandoned request is left in flight: long enough to reach the
+ * server and start its work, short enough to be gone well before that work
+ * ends. A close tears an environment down, which is orders of magnitude more.
+ */
+private val ABANDON_AFTER: Duration = 1.milliseconds

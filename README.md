@@ -180,6 +180,7 @@ the host and is removed) and keeps the stored log.
 | `POST /v1/sessions/{id}/rename` | Set the session's title (request body below) → `200` with the updated session info. |
 | `POST /v1/sessions/{id}/favorite` | Set the session's favorite flag (request body below) → `200` with the updated session info. |
 | `POST /v1/sessions/{id}/rewind` | Cut the session's log back to an earlier event (request body below) → `200` with the updated session info plus the IDs of every session the cascade deleted. |
+| `GET /v1/sessions/changes`    | An SSE stream signalling that the session listing is worth re-reading (below). |
 | `GET /v1/sessions/{id}/events`| The session's event log as an SSE stream: stored history, then live events. |
 | `POST /v1/sessions/{id}/stop` | Stop the session's in-flight run — no request body → `200` with the session info once the run has ended. Idempotent. |
 | `POST /v1/sessions/{id}/close`| Close the session's whole subagent tree; aborts in-flight work without recording its end, tears the environment down, keeps the stored logs. Idempotent. |
@@ -318,6 +319,32 @@ state numbered past the cut would discard a rename it has just been handed.
 The announcement carries no conversation content and renders nothing; for
 what it does to a run the cut landed in, see the rewind endpoint under
 *Endpoints (v1)*.
+
+### The change stream
+
+`GET /v1/sessions/changes` is a notification channel for a client that
+renders the session listing: a `change` frame every time a listed session's
+identity or state changes — one created or deleted, a title, a favorite
+flag, and a `status`, so twice per run, as it starts and as it ends. What an
+in-flight run keeps moving is deliberately not signalled: a client following
+`updatedAtMillis` or `lastRun` as they climb follows the session's own event
+stream.
+
+Every frame means the one thing — re-read the listing — and carries no state
+at all, not even which session changed, so the only way to answer one is to
+read. That is what frees the stream of a replay contract: frames carry no
+`id:`, `Last-Event-ID` is not read, and missed signals cost nothing a fresh
+read does not restore. Each connection opens with a frame of its own, before
+anything has changed, so a client re-reads on every connect and reconnect —
+which is exactly the recovery for whatever it missed while away. A frame
+stands behind the change it reports: a read taken on its heels already
+accounts for that change, so a `status` read on a run's closing frame sees
+the run over.
+
+Signals are dropped rather than queued when a subscriber cannot keep up:
+every frame says the same thing, so a subscriber too slow for a burst loses
+only frames a later one already stands for. Any number of subscribers can
+follow the stream.
 
 ### Subagent sessions
 

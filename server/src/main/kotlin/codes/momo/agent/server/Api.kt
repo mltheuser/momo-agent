@@ -31,6 +31,7 @@ import io.ktor.server.routing.routing
 import io.ktor.server.sse.SSE
 import io.ktor.server.sse.heartbeat
 import io.ktor.server.sse.sse
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -142,6 +143,7 @@ private fun Route.modelRoutes(client: AiRouterClient) {
 
 private fun Route.sessionRoutes(registry: SessionRegistry) {
     route("/v1/sessions") {
+        changeStreamRoute(registry)
         post {
             val request = call.receive<CreateSessionRequest>()
             val info = registry.create(request.harnessPath, request.environment, request.title)
@@ -190,6 +192,30 @@ private fun Route.sessionRoutes(registry: SessionRegistry) {
                 registry.delete(call.sessionId())
                 call.respond(HttpStatusCode.NoContent)
             }
+        }
+    }
+}
+
+/**
+ * `GET /v1/sessions/changes`: one data-less `change` frame per
+ * [SessionRegistry.sessionsChanged] signal, whose KDoc carries what a
+ * subscriber may read into one.
+ *
+ * The opening frame is emitted from `onSubscription`, so it stands after the
+ * subscription is registered: a client re-reads on every connect, and a
+ * signal raised from then on cannot fall into the gap behind it.
+ *
+ * A constant path segment outranks `/{id}` whatever the registration order,
+ * so `changes` can never name a session — as no generated session ID could
+ * be that string anyway.
+ */
+private fun Route.changeStreamRoute(registry: SessionRegistry) {
+    route("/changes") {
+        sse {
+            // A dead peer only surfaces on a failed write, and this stream can
+            // sit idle for hours: the comment frame reclaims its subscribers.
+            heartbeat()
+            registry.sessionsChanged.onSubscription { emit(Unit) }.collect { send(event = CHANGE_EVENT) }
         }
     }
 }
@@ -248,3 +274,6 @@ private fun Throwable.rootMessage(): String {
     val root = generateSequence(this) { it.cause }.last()
     return root.message ?: root.javaClass.simpleName
 }
+
+/** The change stream's one frame name; its frames carry no data. */
+private const val CHANGE_EVENT: String = "change"
