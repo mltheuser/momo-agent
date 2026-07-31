@@ -135,7 +135,7 @@ public class ToolRegistry(tools: List<Tool<*>>) {
          * [ExecutionEnvironment.MAX_CAPTURED_BYTES] protects the JVM
          * heap, this far smaller bound protects the model's context.
          */
-        public const val MAX_RESULT_CHARS: Int = 32 * 1024
+        public const val MAX_RESULT_CHARS: Int = 96 * 1024
 
         /** Appended to capped text so the model knows output was cut short. */
         public const val TRUNCATION_MARKER: String =
