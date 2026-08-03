@@ -3,8 +3,6 @@ package codes.momo.agent.server
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
 import io.ktor.client.HttpClient
-import io.ktor.client.call.body
-import io.ktor.client.request.get
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -49,7 +47,7 @@ class ServerRestartLiveTest {
 
         LiveServerProcess.start(dataDir).use { server ->
             liveHttpClient(server.baseUrl).use { http ->
-                runBlocking { http.recallTheToken(before) }
+                runBlocking { http.recallTheToken(before, workspace) }
             }
         }
     }
@@ -74,9 +72,9 @@ private suspend fun HttpClient.readTheToken(
 }
 
 /** Second process over the same data directory: the session is listed, dormant, and resumable. */
-private suspend fun HttpClient.recallTheToken(before: FirstProcessOutcome) {
+private suspend fun HttpClient.recallTheToken(before: FirstProcessOutcome, workspace: EnvironmentSpec) {
     assertTrue(
-        get("/v1/sessions").body<List<SessionInfo>>().any { it.id == before.id },
+        sessions(workspace).any { it.id == before.id },
         "the restarted server must still list the stored session",
     )
     val reloaded = sessionInfo(before.id)

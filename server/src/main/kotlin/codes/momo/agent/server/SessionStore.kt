@@ -36,10 +36,12 @@ import kotlin.io.path.writeText
 
 /**
  * What the event log deliberately omits about a session: everything needed
- * to rebuild its runtime, plus [Root.favorite] — the one stored fact that
- * is user metadata rather than a rebuild input. Stored once per fact — a
- * root owns the tree-wide facts, a child only its place in the tree; a
- * child's harness and environment resolve through its root.
+ * to rebuild its runtime. Stored once per fact — a root owns the tree-wide
+ * facts, a child only its place in the tree; a child's harness and
+ * environment resolve through its root. The root's environment spec doubles
+ * as the session's scope: its workspace is what
+ * [SessionRegistry.list] filters on and what
+ * [SessionRegistry.requireInWorkspace] compares against.
  */
 @Serializable
 internal sealed interface SessionMetadata {
@@ -49,7 +51,6 @@ internal sealed interface SessionMetadata {
     data class Root(
         val harnessPath: String,
         val environment: EnvironmentSpec,
-        val favorite: Boolean = false,
     ) : SessionMetadata
 
     @Serializable

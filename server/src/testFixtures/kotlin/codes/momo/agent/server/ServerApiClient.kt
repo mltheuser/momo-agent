@@ -12,6 +12,7 @@ import io.ktor.client.plugins.sse.SSE
 import io.ktor.client.plugins.sse.sse
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
@@ -127,8 +128,23 @@ internal suspend fun HttpClient.rawPromptResponse(sessionId: String, body: Strin
 internal suspend fun HttpClient.sessionInfo(sessionId: String): SessionInfo =
     get("/v1/sessions/$sessionId").body()
 
-/** The server's root-session listing. */
-internal suspend fun HttpClient.sessions(): List<SessionInfo> = get("/v1/sessions").body()
+/** GETs one session scoped to [workspace] — a session outside it answers 404, not 403. */
+internal suspend fun HttpClient.sessionInfoResponse(sessionId: String, workspace: String): HttpResponse =
+    get("/v1/sessions/$sessionId") {
+        parameter("workspace", workspace)
+    }
+
+/** The server's root-session listing for [workspace], the scope the route requires. */
+internal suspend fun HttpClient.sessions(workspace: EnvironmentSpec): List<SessionInfo> =
+    sessions(workspace.workspace)
+
+internal suspend fun HttpClient.sessions(workspace: String): List<SessionInfo> =
+    sessionsResponse(workspace).body()
+
+internal suspend fun HttpClient.sessionsResponse(workspace: String?): HttpResponse =
+    get("/v1/sessions") {
+        if (workspace != null) parameter("workspace", workspace)
+    }
 
 /** POSTs a rename, asserting 200, and returns the updated session info. */
 internal suspend fun HttpClient.renameSession(sessionId: String, title: String): SessionInfo {
@@ -141,19 +157,6 @@ internal suspend fun HttpClient.renameResponse(sessionId: String, title: String)
     post("/v1/sessions/$sessionId/rename") {
         contentType(ContentType.Application.Json)
         setBody(RenameRequest(title))
-    }
-
-/** POSTs a favorite flag, asserting 200, and returns the updated session info. */
-internal suspend fun HttpClient.setFavorite(sessionId: String, favorite: Boolean): SessionInfo {
-    val response = favoriteResponse(sessionId, favorite)
-    assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
-    return response.body()
-}
-
-internal suspend fun HttpClient.favoriteResponse(sessionId: String, favorite: Boolean): HttpResponse =
-    post("/v1/sessions/$sessionId/favorite") {
-        contentType(ContentType.Application.Json)
-        setBody(FavoriteRequest(favorite))
     }
 
 /**

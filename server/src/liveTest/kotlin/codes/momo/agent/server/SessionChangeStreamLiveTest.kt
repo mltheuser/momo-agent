@@ -49,32 +49,30 @@ class SessionChangeStreamLiveTest {
     }
 
     @Test
-    @DisplayName("Create, rename, favorite, close and delete each signal once; reading the listing signals nothing")
+    @DisplayName("Create, rename, close and delete each signal once; reading the listing signals nothing")
     fun everyListingMutationSignalsOnce() {
         withLiveServer { http ->
             http.withChangeStream { stream ->
                 // One mutation at a time, each awaited before the next: a
                 // signal that stopped arriving, and one arriving twice, both
                 // fail here rather than cancelling out in a total.
-                val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "listed")).id
+                val workspace = localWorkspace(tempDir, "listed")
+                val id = http.createSession(harnessPath(tempDir), workspace).id
                 stream.awaitFrames(2)
 
                 http.renameSession(id, "named")
                 stream.awaitFrames(3)
 
-                http.setFavorite(id, true)
+                http.closeSession(id)
                 stream.awaitFrames(4)
 
-                http.closeSession(id)
-                stream.awaitFrames(5)
-
-                http.sessions()
+                http.sessions(workspace)
                 http.sessionInfo(id)
 
                 http.delete("/v1/sessions/$id")
                 // The reads above signalled nothing: their frames would have
                 // filled this count early, leaving the delete's own stranded.
-                stream.awaitFrames(6)
+                stream.awaitFrames(5)
             }
         }
     }

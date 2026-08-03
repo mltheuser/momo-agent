@@ -14,7 +14,6 @@ import kotlin.io.path.isDirectory
 import kotlin.io.path.writeText
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 
 /**
  * What a fresh server process makes of state an earlier one left behind.
@@ -27,12 +26,12 @@ class StoredStateRecoveryLiveTest {
     lateinit var tempDir: Path
 
     @Test
-    @DisplayName("A session's renamed title and favorite flag survive a restart on a dormant session")
-    fun titleAndFavoriteSurviveARestart() {
+    @DisplayName("A session's renamed title survives a restart on a dormant session")
+    fun theTitleSurvivesARestart() {
         val dataDir = tempDir.resolve("data")
         val harness = harnessPath(tempDir)
 
-        // First process: rename and favorite, then die outright — a crash, not
+        // First process: rename, then die outright — a crash, not
         // a clean stop, so `use` is not what ends it. The kill still has to be
         // unconditional: an orphaned server outlives the whole Gradle build,
         // holding its port and its data directory.
@@ -42,7 +41,6 @@ class StoredStateRecoveryLiveTest {
                 runBlocking {
                     val created = http.createSession(harness, localWorkspace(tempDir))
                     http.renameSession(created.id, "Kept title")
-                    http.setFavorite(created.id, true)
                     created.id
                 }
             }
@@ -56,7 +54,6 @@ class StoredStateRecoveryLiveTest {
                 runBlocking {
                     val info = http.sessionInfo(id)
                     assertEquals("Kept title", info.title)
-                    assertTrue(info.favorite)
                     assertEquals(SessionStatus.CLOSED, info.status)
                 }
             }

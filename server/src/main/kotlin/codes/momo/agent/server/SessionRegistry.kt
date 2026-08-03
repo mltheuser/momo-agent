@@ -84,9 +84,9 @@ internal class SessionRegistry(
 
     /**
      * Signalled whenever a listed session's identity or state changes: one
-     * created or deleted, a title, a favorite flag, and a [SessionStatus] —
-     * so twice per run, as it starts and as it ends. What an in-flight run
-     * keeps moving is deliberately not signalled: a subscriber following
+     * created or deleted, a title, and a [SessionStatus] — so twice per run,
+     * as it starts and as it ends. What an in-flight run keeps moving is
+     * deliberately not signalled: a subscriber following
      * [SessionInfo.updatedAtMillis] or [SessionInfo.lastRun] as they climb
      * follows the session's own event stream.
      *
@@ -141,19 +141,33 @@ internal class SessionRegistry(
             }
         }
 
-    /** Root sessions only: children are discovered through their parent's `subagent_spawned` events. */
-    suspend fun list(): List<SessionInfo> = entries.keys.mapNotNull { id ->
-        try {
-            when (withContext(Dispatchers.IO) { store.readMetadata(id) }) {
-                is SessionMetadata.Root -> info(id)
-                is SessionMetadata.Child -> null
+    /**
+     * The root sessions whose workspace is [workspace] — children are
+     * discovered through their parent's `subagent_spawned` events, and every
+     * other workspace's sessions are somebody else's listing.
+     *
+     * The filter reads the stored metadata and stops there for a session it
+     * rejects: [info] parses that session's whole event log, and this listing
+     * is re-read on every change frame in every window, so paying that per
+     * session on the machine would grow with every project ever touched.
+     */
+    suspend fun list(workspace: String): List<SessionInfo> {
+        val scope = normalizedWorkspace(workspace)
+        return entries.keys.mapNotNull { id ->
+            try {
+                val metadata = withContext(Dispatchers.IO) { store.readMetadata(id) }
+                when {
+                    metadata !is SessionMetadata.Root -> null
+                    normalizedWorkspace(metadata.environment.workspace) != scope -> null
+                    else -> info(id)
+                }
+            } catch (_: UnknownSessionException) {
+                null // Deleted while listing.
+            } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
+                null // Unreadable stored state must not hide the healthy sessions; get(id) reports it.
             }
-        } catch (_: UnknownSessionException) {
-            null // Deleted while listing.
-        } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
-            null // Unreadable stored state must not hide the healthy sessions; get(id) reports it.
-        }
-    }.sortedBy { it.createdAtMillis }
+        }.sortedBy { it.createdAtMillis }
+    }
 
     suspend fun info(id: String): SessionInfo = withContext(Dispatchers.IO) {
         entries.known(id)
@@ -181,7 +195,6 @@ internal class SessionRegistry(
                 runtime.isRunning(position.path) -> SessionStatus.RUNNING
                 else -> SessionStatus.IDLE
             },
-            favorite = position.root.favorite,
             createdAtMillis = events.sessionCreatedAtMillis(),
             updatedAtMillis = events.sessionUpdatedAtMillis(),
             lastRun = events.lastRunStats(),
@@ -246,28 +259,6 @@ internal class SessionRegistry(
                 } else {
                     val agent = runtime.agentAt(path) ?: throw UnknownSessionException(id)
                     withContext(Dispatchers.IO) { agent.title = title }
-                }
-            }
-        }
-        return info(id)
-    }
-
-    /**
-     * Sets [id]'s [SessionInfo.favorite] and returns the updated info.
-     * Never attaches a runtime, so a `closed` session stays closed.
-     */
-    suspend fun setFavorite(id: String, favorite: Boolean): SessionInfo {
-        val (path, root) = treeOf(entries, store, id)
-        announcingChange {
-            root.mutex.withLock {
-                withContext(Dispatchers.IO) {
-                    val rootId = path.first()
-                    val metadata = try {
-                        store.position(rootId).root
-                    } catch (_: NoSuchFileException) {
-                        throw UnknownSessionException(id) // Deleted while waiting on the mutex.
-                    }
-                    store.writeMetadata(rootId, metadata.copy(favorite = favorite))
                 }
             }
         }
@@ -569,6 +560,33 @@ internal class SessionRegistry(
     /** @throws UnknownSessionException when [id] names no known session. */
     fun requireKnown(id: String) {
         entries.known(id)
+    }
+
+    /**
+     * @throws UnknownSessionException when [id] names no known session, or
+     *   when [workspace] is not the workspace of [id]'s tree root — a session
+     *   outside the caller's scope must look nonexistent rather than
+     *   forbidden, since its existence is exactly what the scope hides.
+     *
+     * A subagent resolves through its root, whose workspace is the whole
+     * tree's, so a child is in scope precisely when its root is. A session
+     * whose stored workspace cannot be read at all is not in *anyone's* scope,
+     * so unreadable state reads as unknown here rather than reporting itself:
+     * [info] is where a corrupt session is diagnosed loudly, and it is
+     * reachable unscoped, which is where a repair starts from.
+     */
+    suspend fun requireInWorkspace(id: String, workspace: String): Unit = withContext(Dispatchers.IO) {
+        entries.known(id)
+        val root = try {
+            store.position(id).root
+        } catch (_: NoSuchFileException) {
+            throw UnknownSessionException(id) // Deleted between lookup and read.
+        } catch (_: CorruptSessionException) {
+            throw UnknownSessionException(id)
+        }
+        if (normalizedWorkspace(root.environment.workspace) != normalizedWorkspace(workspace)) {
+            throw UnknownSessionException(id)
+        }
     }
 
     /** Raises one [sessionsChanged] signal; never suspends, never throws. */

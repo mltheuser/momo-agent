@@ -58,7 +58,7 @@ class SessionLifecycleLiveTest {
             assertNull(created.lastRun, "no run happened yet")
 
             assertEquals(created, http.sessionInfo(created.id))
-            assertEquals(created, http.ownSession(created.id))
+            assertEquals(created, http.ownSession(created.id, localWorkspace(tempDir)))
         }
     }
 
@@ -70,7 +70,7 @@ class SessionLifecycleLiveTest {
 
             val closed = http.closeSession(created.id)
             assertEquals(SessionStatus.CLOSED, closed.status)
-            assertEquals(closed, http.ownSession(created.id))
+            assertEquals(closed, http.ownSession(created.id, localWorkspace(tempDir)))
 
             val closedAgain = http.closeResponse(created.id)
             assertEquals(HttpStatusCode.OK, closedAgain.status)
@@ -108,7 +108,10 @@ class SessionLifecycleLiveTest {
             val lookup = http.get("/v1/sessions/${created.id}")
             assertEquals(HttpStatusCode.NotFound, lookup.status)
             assertEquals("unknown_session", lookup.body<ApiError>().code)
-            assertTrue(http.sessions().none { it.id == created.id }, "a deleted session must leave the listing")
+            assertTrue(
+                http.sessions(localWorkspace(tempDir)).none { it.id == created.id },
+                "a deleted session must leave the listing",
+            )
             assertTrue(
                 created.id !in SessionStore(sharedLiveServer.dataDir).sessionIds(),
                 "a deleted session must leave the store",
@@ -227,14 +230,18 @@ class SessionLifecycleLiveTest {
     @DisplayName("A session with unreadable stored state drops out of the list; get reports it loudly")
     fun corruptSessionDoesNotPoisonTheList() {
         withLiveServer { http ->
-            val healthy = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "workspace-a"))
-            val corrupt = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "workspace-b"))
+            // One workspace, so the corrupt session is inside the very listing
+            // the healthy one is read from: a session skipped for being
+            // unreadable, not for being somebody else's.
+            val workspace = localWorkspace(tempDir, "shared")
+            val healthy = http.createSession(harnessPath(tempDir), workspace)
+            val corrupt = http.createSession(harnessPath(tempDir), workspace)
             // Corruption is scoped to a session this test owns, so the shared
             // process stays sound for every other case.
             sharedLiveServer.dataDir.resolve("sessions/${corrupt.id}/session.json").writeText("not json")
 
             try {
-                val listed = http.sessions().map { it.id }
+                val listed = http.sessions(workspace).map { it.id }
                 assertContains(listed, healthy.id, "an unreadable neighbour must not hide the healthy sessions")
                 assertTrue(corrupt.id !in listed, "an unreadable session must not appear in the listing")
                 val lookup = http.get("/v1/sessions/${corrupt.id}")
@@ -259,22 +266,48 @@ class SessionLifecycleLiveTest {
         }
     }
 
+    // ─── Workspace scope ──────────────────────────────────────────────
+
+    @Test
+    @DisplayName("The listing is scoped to its workspace, and another workspace's session reads as unknown")
+    fun sessionsAreScopedToTheirWorkspace() {
+        withLiveServer { http ->
+            val projectA = localWorkspace(tempDir, "scoped-a")
+            val projectB = localWorkspace(tempDir, "scoped-b")
+            val inA = http.createSession(harnessPath(tempDir), projectA).id
+            val inB = http.createSession(harnessPath(tempDir), projectB).id
+
+            val listedInA = http.sessions(projectA).map { it.id }
+            assertContains(listedInA, inA)
+            assertTrue(inB !in listedInA, "another workspace's session must not appear in this one's listing")
+
+            val foreign = http.sessionInfoResponse(inB, projectA.workspace)
+            assertEquals(HttpStatusCode.NotFound, foreign.status)
+            assertEquals("unknown_session", foreign.body<ApiError>().code, "a foreign session must look nonexistent")
+
+            val unscoped = http.sessionsResponse(workspace = null)
+            assertEquals(HttpStatusCode.BadRequest, unscoped.status)
+            assertEquals("invalid_request", unscoped.body<ApiError>().code)
+        }
+    }
+
     // ─── Concurrency ──────────────────────────────────────────────────
 
     @Test
     @DisplayName("Two sessions run side by side without interference and close independently")
     fun twoSessionsAreIndependent() {
         val harness = harnessPath(tempDir)
+        val workspace = localWorkspace(tempDir, "side-by-side")
         withLiveServer { http ->
             val (first, second) = coroutineScope {
                 listOf(
-                    async { http.createSession(harness, localWorkspace(tempDir, "workspace-a")) },
-                    async { http.createSession(harness, localWorkspace(tempDir, "workspace-b")) },
+                    async { http.createSession(harness, workspace) },
+                    async { http.createSession(harness, workspace) },
                 ).awaitAll()
             }
 
             assertNotEquals(first.id, second.id)
-            val listed = http.sessions().map { it.id }
+            val listed = http.sessions(workspace).map { it.id }
             assertContains(listed, first.id)
             assertContains(listed, second.id)
 
@@ -285,9 +318,9 @@ class SessionLifecycleLiveTest {
     }
 }
 
-/** The listing entry for [sessionId]; the shared process also holds every other case's sessions. */
-private suspend fun HttpClient.ownSession(sessionId: String): SessionInfo =
-    sessions().single { it.id == sessionId }
+/** [workspace]'s listing entry for [sessionId]; the shared process also holds every other case's sessions. */
+private suspend fun HttpClient.ownSession(sessionId: String, workspace: EnvironmentSpec): SessionInfo =
+    sessions(workspace).single { it.id == sessionId }
 
 /** POSTs a create-session request whose body is [body] verbatim. */
 private suspend fun HttpClient.rawCreateSessionResponse(body: String): HttpResponse =

@@ -8,9 +8,9 @@ import kotlin.time.Duration
 
 /**
  * One session as the inspection endpoints report it — derived, never
- * stored. A subagent session's [environment] and [favorite] are its
- * root's; its [harnessPath] names the harness folder the child itself
- * runs (resolved by [SessionRegistry.resolvedHarnessPath]).
+ * stored. A subagent session's [environment] is its root's; its
+ * [harnessPath] names the harness folder the child itself runs (resolved by
+ * [SessionRegistry.resolvedHarnessPath]).
  */
 @Serializable
 internal data class SessionInfo(
@@ -28,7 +28,6 @@ internal data class SessionInfo(
      */
     val privilege: Privilege?,
     val status: SessionStatus,
-    val favorite: Boolean,
     val createdAtMillis: Long,
     /** The last logged event's timestamp — recency for client-side ordering. */
     val updatedAtMillis: Long,

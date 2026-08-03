@@ -40,9 +40,14 @@ Shared build conventions live in the root build script.
   `AgentEvent` and `RunResult.Status`, and the `SessionMetadata` variant
   names in `session.json`, are a compatibility contract — never change them
   (`Privilege` is *not* in this class: response contract only, never
-  stored). `session.json` tolerates unknown keys so a file can outlive its
-  schema; the event log deliberately does not. Details in the event KDoc;
-  storage layout in README, Sessions.
+  stored). The **variant names** are that contract and the field set is not:
+  `session.json` tolerates keys it does not know, so a file can outlive its
+  schema and *dropping* a stored field is safe — an old file's leftover key
+  is ignored rather than fatal (`favorite` was removed this way; the
+  obsolete-key case in `StoredMetadataTest` is the pin). The event log
+  deliberately does not tolerate the same move: there an unknown key is a
+  wire-contract break worth failing on. Details in the event KDoc; storage
+  layout in README, Sessions.
 - Shared test helpers live once in one shared source set — never a
   per-suite copy. Which set, and how the suites are bound for `internal`
   access: [TESTING.md](TESTING.md), Source sets and fixtures.

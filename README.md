@@ -158,9 +158,8 @@ ending in `error` names its reason without a client attached.
 
 A session is one agent conversation over a harness and an execution
 environment. Its source of truth is on disk under the data directory —
-`sessions/<session-id>/session.json` (for a root: harness path,
-environment spec, and the favorite flag; for a subagent: its parent's
-session ID) plus
+`sessions/<session-id>/session.json` (for a root: harness path and
+environment spec; for a subagent: its parent's session ID) plus
 `sessions/<session-id>/events.jsonl` (the event log, one
 serialized `AgentEvent` per line, appended live) — so every session
 survives a server restart: on startup the data directory is indexed and
@@ -169,16 +168,20 @@ its environment are an ephemeral runtime attachment on top; closing a
 session drops the attachment (a container copies its workspace back to
 the host and is removed) and keeps the stored log.
 
+A session **belongs to the workspace folder it works in**, and that folder
+is the scope every request is read in: see *Workspace scope* below. Nothing
+is stored inside the workspace itself — the data directory holds it all — so
+a project with sessions has nothing of the server's in it.
+
 ### Endpoints (v1)
 
 | Method & path                 | Effect |
 | ----------------------------- | ------ |
 | `POST /v1/sessions`           | Create a session (request body below) → `201` with the session info. |
-| `GET /v1/sessions`            | List the root sessions (ID, parent, title, harness path, environment, privilege, status, favorite, created-at, updated-at, last run's budget consumption). Subagent sessions are omitted — fetch them by ID. |
+| `GET /v1/sessions`            | List the root sessions of one workspace (ID, parent, title, harness path, environment, privilege, status, created-at, updated-at, last run's budget consumption). Takes a **required** `?workspace=<absolute path>` (see *Workspace scope*). Subagent sessions are omitted — fetch them by ID. |
 | `GET /v1/sessions/{id}`       | One session's info. |
 | `POST /v1/sessions/{id}/prompt` | Send the next user message; the run starts in the background → `202` with a snapshot of the session info. |
 | `POST /v1/sessions/{id}/rename` | Set the session's title (request body below) → `200` with the updated session info. |
-| `POST /v1/sessions/{id}/favorite` | Set the session's favorite flag (request body below) → `200` with the updated session info. |
 | `POST /v1/sessions/{id}/rewind` | Cut the session's log back to an earlier event (request body below) → `200` with the updated session info plus the IDs of every session the cascade deleted. |
 | `GET /v1/sessions/changes`    | An SSE stream signalling that the session listing is worth re-reading (below). |
 | `GET /v1/sessions/{id}/events`| The session's event log as an SSE stream: stored history, then live events. |
@@ -186,6 +189,10 @@ the host and is removed) and keeps the stored log.
 | `POST /v1/sessions/{id}/close`| Close the session's whole subagent tree; aborts in-flight work without recording its end, tears the environment down, keeps the stored logs. Idempotent. |
 | `DELETE /v1/sessions/{id}`    | Close the tree if needed, then remove the session and its descendants with their stored artifacts → `204`. |
 | `GET /v1/models`              | ai-router's model catalog in its own response shape, filtered to the models an agent can run (capabilities include both `chat` and `tools`). Each entry's `model` field is the fully-qualified string to send as a prompt's `model`. |
+
+Every `/v1/sessions/{id}` route takes an **optional** `?workspace=`, and
+answers `404` when it names a folder that is not the session's own (see
+*Workspace scope*).
 
 The create body names a server-local harness folder, an environment, and
 an optional title:
@@ -199,11 +206,10 @@ A `privilege` key in the body is a `400 invalid_request`: a session's
 privilege is discovered, not chosen, and reported read-only (see the derived
 fields below, and *Command privileges* for what decides it).
 
-Rename and favorite each take a one-field body:
+Rename takes a one-field body:
 
 ```json
 {"title": "..."}
-{"favorite": true}
 ```
 
 So does rewind, naming the first event the cut deletes:
@@ -247,19 +253,62 @@ session, where no environment exists to have asked and the answer could
 differ by the time one does.
 
 Session info also carries `updatedAtMillis` — the last logged event's
-timestamp, for ordering by recency — and `favorite`, stored as root
-metadata (see Sessions): toggling it logs nothing (so `updatedAtMillis`
-stays put) and never attaches a runtime, and through a child's ID it sets
-the root's flag — the one every tree member reports. A rename, by
-contrast, is logged: its `session_renamed` event lands in the log —
-appended directly for a `closed` session, which stays closed — and the
-title is derived from the last such event. A blank title is a
-`400 invalid_request`.
+timestamp, for ordering by recency. A rename is logged: its
+`session_renamed` event lands in the log — appended directly for a `closed`
+session, which stays closed — and the title is derived from the last such
+event. A blank title is a `400 invalid_request`.
 
 Errors are structured JSON — `{"code": "...", "message": "..."}` — with
 `400` for invalid harness/environment/request, `404` for an unknown
 session, `409` for operations conflicting with an active run or with the
 current harness configuration, and `500` otherwise.
+
+### Workspace scope
+
+One server serves every project on the machine, and a session belongs to the
+workspace folder it works in — so that folder is the scope a request is read
+in. It travels as a `workspace` query parameter naming an **absolute path**:
+
+```sh
+curl "http://127.0.0.1:8420/v1/sessions?workspace=/home/me/project"
+```
+
+**Required on `GET /v1/sessions`.** An unscoped listing would be every
+project's sessions at once, which is no answer to any client's question, so a
+request without the parameter — or with a blank or relative one — is a
+`400 invalid_request` rather than a silent everything. It is a query
+parameter rather than a header because HTTP headers carry only Latin-1: a
+project path like `/home/me/プロジェクト` cannot be spelled in one, while a
+query parameter percent-encodes anything.
+
+**Optional on every `/v1/sessions/{id}` route**, including the event stream.
+Named, it must be the session's own or the response is `404 unknown_session`
+— *not* a `403`: a session outside the scope has to look nonexistent, since
+its existence is precisely what the scope hides. Omitted, the route is
+unscoped, which is what keeps `curl` debugging and the server's own tests
+working. Present but blank or relative is a `400 invalid_request` here as
+well — a malformed scope is a client bug, not a request to widen it. A
+subagent resolves through its tree's root, so a child is in scope exactly
+when its root is.
+
+Creation is the one route with a workspace and no scope to check: `POST
+/v1/sessions` names its workspace in the body, so the query parameter is
+ignored there. A session whose stored workspace cannot be read at all — a
+corrupt `session.json` — is in nobody's scope and reads as `404` for any
+parameter; unscoped, it still reports its corruption, which is where a
+repair starts.
+
+Two paths are the same scope when they are lexically equal once made
+absolute and normalized, so a trailing slash and a `.`/`..` segment cost
+nothing. **Symlinks are deliberately not resolved**, which has two
+consequences worth knowing: two spellings of one folder — a symlink and its
+target — are two separate scopes; and a session whose workspace folder has
+been *deleted* stays listable and deletable, because the comparison never
+touches the filesystem. The unresolved path is also the one the agent's
+commands actually run in, so it is the honest thing to compare.
+
+`GET /v1/models` takes no scope, and neither does the change stream — see
+*The change stream* for why it stays global.
 
 ### Prompting
 
@@ -324,8 +373,8 @@ what it does to a run the cut landed in, see the rewind endpoint under
 
 `GET /v1/sessions/changes` is a notification channel for a client that
 renders the session listing: a `change` frame every time a listed session's
-identity or state changes — one created or deleted, a title, a favorite
-flag, and a `status`, so twice per run, as it starts and as it ends. What an
+identity or state changes — one created or deleted, a title, and a
+`status`, so twice per run, as it starts and as it ends. What an
 in-flight run keeps moving is deliberately not signalled: a client following
 `updatedAtMillis` or `lastRun` as they climb follows the session's own event
 stream.
@@ -345,6 +394,12 @@ Signals are dropped rather than queued when a subscriber cannot keep up:
 every frame says the same thing, so a subscriber too slow for a burst loses
 only frames a later one already stands for. Any number of subscribers can
 follow the stream.
+
+**The stream is global, not scoped to a workspace** (see *Workspace scope*):
+a client is signalled by traffic to any project's sessions, and answers with
+a read that is scoped anyway — so the cost of the extra frames is a re-read
+that finds its own listing unchanged. Scoping the stream is cleanly additive
+as an optional parameter if that ever stops being cheap enough.
 
 ### Subagent sessions
 

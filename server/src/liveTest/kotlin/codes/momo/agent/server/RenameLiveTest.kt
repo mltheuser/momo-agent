@@ -11,20 +11,13 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertIs
-import kotlin.test.assertTrue
 
-/**
- * Renaming and favoriting against the real server process: neither reaches a
- * chat completion, so both cost the suite milliseconds.
- */
-class RenameAndFavoriteLiveTest {
+/** Renaming against the real server process: no case reaches a chat completion, so all cost milliseconds. */
+class RenameLiveTest {
 
     @TempDir
     lateinit var tempDir: Path
-
-    // ─── Rename ───────────────────────────────────────────────────────
 
     @Test
     @DisplayName("Renaming a live session updates its info and streams session_renamed to a parked subscriber")
@@ -44,7 +37,10 @@ class RenameAndFavoriteLiveTest {
             }
 
             assertEquals("Chosen title", http.sessionInfo(created.id).title)
-            assertEquals("Chosen title", http.sessions().single { it.id == created.id }.title)
+            assertEquals(
+                "Chosen title",
+                http.sessions(localWorkspace(tempDir)).single { it.id == created.id }.title,
+            )
         }
     }
 
@@ -72,54 +68,15 @@ class RenameAndFavoriteLiveTest {
         }
     }
 
-    // ─── Favorite ─────────────────────────────────────────────────────
-
-    @Test
-    @DisplayName("The favorite flag defaults to false and toggles on a live session, visible in get and list")
-    fun favoriteTogglesOnALiveSession() {
-        withLiveServer { http ->
-            val created = http.createSession(harnessPath(tempDir), localWorkspace(tempDir))
-            assertFalse(created.favorite)
-
-            val favorited = http.setFavorite(created.id, true)
-            assertTrue(favorited.favorite)
-            assertEquals(SessionStatus.IDLE, favorited.status)
-            assertTrue(http.sessionInfo(created.id).favorite)
-            assertTrue(http.sessions().single { it.id == created.id }.favorite)
-
-            assertFalse(http.setFavorite(created.id, false).favorite)
-        }
-    }
-
-    @Test
-    @DisplayName("Favoriting a closed session leaves it closed and appends nothing to its event log")
-    fun favoriteOnAClosedSession() {
-        withLiveServer { http ->
-            val created = http.createSession(harnessPath(tempDir), localWorkspace(tempDir))
-            http.closeSession(created.id)
-
-            val favorited = http.setFavorite(created.id, true)
-            assertTrue(favorited.favorite)
-            assertEquals(SessionStatus.CLOSED, favorited.status, "a favorite toggle must not resume the session")
-
-            val events = SessionStore(sharedLiveServer.dataDir).readEvents(created.id)
-            assertIs<AgentEvent.SessionStarted>(events.single(), "favorite is metadata, never an event")
-        }
-    }
-
     // ─── Errors ───────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("Rename and favorite on an unknown session are 404 unknown_session")
+    @DisplayName("A rename on an unknown session is a 404 unknown_session")
     fun unknownSessionIs404() {
         withLiveServer { http ->
             val rename = http.renameResponse("no-such-id", "title")
             assertEquals(HttpStatusCode.NotFound, rename.status)
             assertEquals("unknown_session", rename.body<ApiError>().code)
-
-            val favorite = http.favoriteResponse("no-such-id", true)
-            assertEquals(HttpStatusCode.NotFound, favorite.status)
-            assertEquals("unknown_session", favorite.body<ApiError>().code)
         }
     }
 

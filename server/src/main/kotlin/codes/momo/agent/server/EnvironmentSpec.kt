@@ -21,6 +21,9 @@ import java.nio.file.Path
 @Serializable
 internal sealed interface EnvironmentSpec {
 
+    /** Absolute path of the folder the session's commands run in. */
+    val workspace: String
+
     /**
      * Builds a fresh environment over the described workspace.
      *
@@ -31,14 +34,14 @@ internal sealed interface EnvironmentSpec {
 
     @Serializable
     @SerialName("local")
-    data class Local(val workspace: String) : EnvironmentSpec {
+    data class Local(override val workspace: String) : EnvironmentSpec {
 
         override fun build(): ExecutionEnvironment = LocalExecutionEnvironment(Path.of(workspace))
     }
 
     @Serializable
     @SerialName("container")
-    data class Container(val image: String, val workspace: String) : EnvironmentSpec {
+    data class Container(val image: String, override val workspace: String) : EnvironmentSpec {
 
         override fun build(): ExecutionEnvironment = ContainerExecutionEnvironment(image, Path.of(workspace))
     }

@@ -58,10 +58,6 @@ internal data class PromptRequest(
 @Serializable
 internal data class RenameRequest(val title: String)
 
-/** Body of a favorite request: the flag's new value. */
-@Serializable
-internal data class FavoriteRequest(val favorite: Boolean)
-
 /** Body of a rewind request: the sequence ID of the first event the cut deletes. */
 @Serializable
 internal data class RewindRequest(val firstDeletedSequenceId: Long)
@@ -150,9 +146,10 @@ private fun Route.sessionRoutes(registry: SessionRegistry) {
             call.respond(HttpStatusCode.Created, info)
         }
         get {
-            call.respond(registry.list())
+            call.respond(registry.list(call.requiredWorkspace()))
         }
         route("/{id}") {
+            scopeToWorkspace(registry)
             get {
                 call.respond(registry.info(call.sessionId()))
             }
@@ -168,10 +165,6 @@ private fun Route.sessionRoutes(registry: SessionRegistry) {
                     throw BadRequestException("A title must not be blank.")
                 }
                 call.respond(registry.rename(call.sessionId(), request.title))
-            }
-            post("/favorite") {
-                val request = call.receive<FavoriteRequest>()
-                call.respond(registry.setFavorite(call.sessionId(), request.favorite))
             }
             post("/rewind") {
                 val request = call.receive<RewindRequest>()
@@ -259,7 +252,7 @@ private fun PromptRequest.validated(): PromptRequest {
     return this
 }
 
-private fun ApplicationCall.sessionId(): String = checkNotNull(parameters["id"]) { "route without {id}" }
+internal fun ApplicationCall.sessionId(): String = checkNotNull(parameters["id"]) { "route without {id}" }
 
 private suspend fun ApplicationCall.respondError(status: HttpStatusCode, code: String, failure: Throwable) {
     respondError(status, code, failure.message ?: failure.javaClass.simpleName)

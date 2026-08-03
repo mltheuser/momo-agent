@@ -14,11 +14,8 @@ import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
-/**
- * What a rename or a favorite does to a session's stored log — the half of
- * the rename and favorite contract that needs a run to have happened.
- */
-class RenameAndFavoriteTest {
+/** What a rename does to a session's stored log — the half of the contract that needs a run to have happened. */
+class RenameTest {
 
     @TempDir
     lateinit var tempDir: Path
@@ -49,7 +46,7 @@ class RenameAndFavoriteTest {
     }
 
     @Test
-    @DisplayName("updatedAtMillis is the last event's timestamp: runs and renames bump it, favorites do not")
+    @DisplayName("updatedAtMillis is the last event's timestamp: both a run and a rename bump it")
     fun updatedAtTracksTheLastEvent() {
         withFakeSessionServer(
             tempDir,
@@ -68,9 +65,6 @@ class RenameAndFavoriteTest {
                 http.streamEvents(created.id, until = { it is AgentEvent.SessionRenamed }).last().event,
             )
             assertEquals(renameEvent.timestampMillis, renamed.updatedAtMillis)
-
-            val favorited = http.setFavorite(created.id, true)
-            assertEquals(renamed.updatedAtMillis, favorited.updatedAtMillis, "favorites are not events")
         }
     }
 }

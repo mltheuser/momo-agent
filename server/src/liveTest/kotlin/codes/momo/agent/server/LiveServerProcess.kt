@@ -89,9 +89,15 @@ internal class LiveServerProcess private constructor(
      * than the suite's Ktor client because starting a process is not a
      * suspending business, and a blocking probe beats a `runBlocking` per
      * poll for one status code.
+     *
+     * The listing is scoped to a workspace and a probe without one is a
+     * `400`, so the probe names the root — an absolute path no session's
+     * workspace is, making the answer an empty list rather than work. It stays
+     * this endpoint rather than `/v1/models`, which proxies ai-router: that
+     * service's health is not this process's readiness.
      */
     private fun respondsOk(): Boolean = try {
-        val connection = URI("$baseUrl/v1/sessions").toURL().openConnection() as HttpURLConnection
+        val connection = URI("$baseUrl/v1/sessions?workspace=/").toURL().openConnection() as HttpURLConnection
         connection.connectTimeout = PROBE_TIMEOUT_MILLIS
         connection.readTimeout = PROBE_TIMEOUT_MILLIS
         try {

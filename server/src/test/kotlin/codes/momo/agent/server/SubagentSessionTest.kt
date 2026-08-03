@@ -26,12 +26,10 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
-import kotlin.test.assertTrue
 
 /**
  * A spawned child is a session in its own right: addressable, promptable by a
- * human, renamable and favoritable through its own ID, and deletable on its
- * own.
+ * human, renamable through its own ID, and deletable on its own.
  */
 class SubagentSessionTest {
 
@@ -137,25 +135,7 @@ class SubagentSessionTest {
         }
     }
 
-    // ─── Rename & favorite through a child ────────────────────────────
-
-    @Test
-    @DisplayName("Favoriting through a child's ID marks the tree-wide flag on the root, appending no events")
-    fun favoriteThroughAChildMarksTheRoot() {
-        withSpawnedChild(tempDir) { http, rootId, childId ->
-            val store = SessionStore(tempDir.resolve("data"))
-            val logSizes = listOf(rootId, childId).associateWith { store.readEvents(it).size }
-
-            val child = http.setFavorite(childId, true)
-
-            assertTrue(child.favorite)
-            assertEquals(SessionStatus.IDLE, child.status, "a favorite toggle must not change the child's status")
-            assertTrue(http.get("/v1/sessions/$rootId").body<SessionInfo>().favorite)
-            logSizes.forEach { (id, size) ->
-                assertEquals(size, store.readEvents(id).size, "favorite is metadata, never an event")
-            }
-        }
-    }
+    // ─── Rename through a child ───────────────────────────────────────
 
     @Test
     @DisplayName("Renaming through a dormant child's ID retitles just the child, leaving the root's title alone")

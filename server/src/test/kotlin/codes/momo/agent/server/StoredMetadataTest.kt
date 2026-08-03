@@ -19,15 +19,17 @@ class StoredMetadataTest {
     lateinit var tempDir: Path
 
     @Test
-    @DisplayName("A stored session whose metadata still carries the obsolete privilege field loads and rebuilds")
-    fun obsoletePrivilegeFieldInStoredMetadataIsIgnored() {
+    @DisplayName("A stored session whose metadata still carries the obsolete privilege and favorite fields loads")
+    fun obsoleteFieldsInStoredMetadataAreIgnored() {
         val harness = writeHarness(tempDir.resolve("harness")).toString()
         val workspace = tempDir.resolve("workspace").createDirectories().toString()
         val folder = tempDir.resolve("data/sessions/old-session").createDirectories()
-        // Written while the spec still accepted a declared privilege. The file
-        // outlives that schema, so the key must be ignored, not fail the load.
+        // Written while the spec still accepted a declared privilege and the
+        // root still stored a favorite flag. The file outlives both schemas, so
+        // each key must be ignored rather than fail the load — the variant
+        // names are the contract, not the field set.
         folder.resolve("session.json").writeText(
-            """{"type":"root","harnessPath":"$harness","environment":{"type":"local",""" +
+            """{"type":"root","harnessPath":"$harness","favorite":true,"environment":{"type":"local",""" +
                 """"workspace":"$workspace","privilege":"passwordless_sudo"}}""",
         )
         folder.resolve("events.jsonl").writeText(
