@@ -159,6 +159,27 @@ internal suspend fun HttpClient.renameResponse(sessionId: String, title: String)
         setBody(RenameRequest(title))
     }
 
+/** POSTs a select-model, asserting 200, and returns the updated session info. */
+internal suspend fun HttpClient.selectModel(
+    sessionId: String,
+    model: String,
+    reasoningEffort: ReasoningEffort? = null,
+): SessionInfo {
+    val response = selectModelResponse(sessionId, model, reasoningEffort)
+    assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+    return response.body()
+}
+
+internal suspend fun HttpClient.selectModelResponse(
+    sessionId: String,
+    model: String,
+    reasoningEffort: ReasoningEffort? = null,
+): HttpResponse =
+    post("/v1/sessions/$sessionId/select-model") {
+        contentType(ContentType.Application.Json)
+        setBody(SelectModelRequest(model, reasoningEffort))
+    }
+
 /**
  * POSTs a rewind cutting from [firstDeletedSequenceId] on, asserting 200, and
  * returns the session as cut plus the cascade's deletions.

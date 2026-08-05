@@ -1,5 +1,6 @@
 package codes.momo.agent.server
 
+import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.environment.Privilege
 import kotlinx.serialization.SerialName
@@ -37,6 +38,14 @@ internal data class SessionInfo(
      * every run the log had.
      */
     val lastRun: RunStats?,
+    /**
+     * The model a client's picker shows for the session's next prompt —
+     * derived, never stored: the latest of the log's own `model_selected`
+     * picks and `run_started` records (see [modelSelection]), falling back
+     * for a child to the parent's spawn pin, and null with neither — the
+     * client's own default then stands.
+     */
+    val modelSelection: ModelSelection?,
 )
 
 @Serializable
@@ -54,6 +63,14 @@ internal enum class SessionStatus {
     @SerialName("closed")
     CLOSED,
 }
+
+/** One model selection as [SessionInfo] reports it. */
+@Serializable
+internal data class ModelSelection(
+    val model: String,
+    /** Null asks for the provider default. */
+    val reasoningEffort: ReasoningEffort? = null,
+)
 
 /** Budget consumption of one run. */
 @Serializable
@@ -74,6 +91,21 @@ internal fun List<AgentEvent>.sessionUpdatedAtMillis(): Long = last().timestampM
 internal fun List<AgentEvent>.sessionTitle(): String =
     filterIsInstance<AgentEvent.SessionRenamed>().lastOrNull()?.title
         ?: (first() as AgentEvent.SessionStarted).title
+
+/**
+ * The selection the log's own events carry, or null when it carries none:
+ * the latest by sequence ID of the `model_selected` picks and the
+ * `run_started` records naming a model — a run updates the shown selection
+ * to what actually ran, and a later explicit pick overrides it.
+ */
+internal fun List<AgentEvent>.modelSelection(): ModelSelection? =
+    asReversed().firstNotNullOfOrNull { event ->
+        when (event) {
+            is AgentEvent.ModelSelected -> ModelSelection(event.model, event.reasoningEffort)
+            is AgentEvent.RunStarted -> event.model?.let { ModelSelection(it, event.reasoningEffort) }
+            else -> null
+        }
+    }
 
 /**
  * Consumption of the log's last run: its `RunFinished` totals once it

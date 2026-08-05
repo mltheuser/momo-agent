@@ -182,6 +182,7 @@ a project with sessions has nothing of the server's in it.
 | `GET /v1/sessions/{id}`       | One session's info. |
 | `POST /v1/sessions/{id}/prompt` | Send the next user message; the run starts in the background → `202` with a snapshot of the session info. |
 | `POST /v1/sessions/{id}/rename` | Set the session's title (request body below) → `200` with the updated session info. |
+| `POST /v1/sessions/{id}/select-model` | Record the model selected for the session's next prompt (request body below) → `200` with the updated session info. |
 | `POST /v1/sessions/{id}/rewind` | Cut the session's log back to an earlier event (request body below) → `200` with the updated session info plus the IDs of every session the cascade deleted. |
 | `GET /v1/sessions/changes`    | An SSE stream signalling that the session listing is worth re-reading (below). |
 | `GET /v1/sessions/{id}/events`| The session's event log as an SSE stream: stored history, then live events. |
@@ -212,7 +213,22 @@ Rename takes a one-field body:
 {"title": "..."}
 ```
 
-So does rewind, naming the first event the cut deletes:
+Select-model records what a client's model picker shows — the selection the
+session's next prompt is expected to carry; `reasoningEffort` is optional
+(absent or null means the provider default), and a missing or blank `model`
+is a `400 invalid_request`:
+
+```json
+{"model": "...", "reasoningEffort": "high"}
+```
+
+The selection is user metadata the event log carries as a `model_selected`
+event — appended directly for a `closed` session, which stays closed, exactly
+like a rename — and read back as the derived `modelSelection` field below.
+The agent itself never reads it: every run still carries its own prompt's
+model settings (see *Prompting*).
+
+Rewind takes a one-field body too, naming the first event the cut deletes:
 
 ```json
 {"firstDeletedSequenceId": 42}
@@ -221,9 +237,10 @@ So does rewind, naming the first event the cut deletes:
 A rewind is destructive: the named event and the conversation after it are
 deleted from the stored log permanently — no copy, no undo — and a
 `conversation_rewound` event is appended as the new tail (see *The event
-stream*). One kind of event survives the cut wherever it sits: a
-`session_renamed` stays in the log with its original sequence ID, so a
-rewind never changes the session's title. The session keeps its identity,
+stream*). Two kinds of event survive the cut wherever they sit: a
+`session_renamed` and a `model_selected` stay in the log with their original
+sequence IDs, so a rewind never changes the session's title or its recorded
+model selection. The session keeps its identity,
 environment and resume path, and is promptable the moment the call returns;
 rewinding a `closed` session leaves it closed, the next prompt resuming
 from the cut log. The whole tree must be idle — a run in flight anywhere
@@ -257,6 +274,17 @@ timestamp, for ordering by recency. A rename is logged: its
 `session_renamed` event lands in the log — appended directly for a `closed`
 session, which stays closed — and the title is derived from the last such
 event. A blank title is a `400 invalid_request`.
+
+`modelSelection` (`{"model": ..., "reasoningEffort": ...}`, nullable) is
+derived the same way, never stored: it is the latest by sequence ID of the
+log's own `model_selected` picks and `run_started` records naming a model —
+so a run updates the shown selection to what actually ran, and a later
+explicit pick overrides it. A rewind can therefore change the derived value:
+only the `model_selected` events survive a cut, so a deleted `run_started`
+stops contributing and an older pick can stand again. A child session whose
+log names neither falls
+back to the `modelId` its spawn pinned, if any (see *Subagent sessions*).
+With nothing at all it is `null`, and the client's own default stands.
 
 Errors are structured JSON — `{"code": "...", "message": "..."}` — with
 `400` for invalid harness/environment/request, `404` for an unknown
@@ -361,10 +389,11 @@ event it appends: it names the last surviving sequence ID and is itself
 numbered above everything deleted, so replaying subscribers, live tails,
 and `Last-Event-ID` reconnects from inside the deleted range all converge
 on it without reconnect gymnastics. Other frames can stand above the cut
-point too: a `session_renamed` the cut kept (see the rewind endpoint) holds
-its original sequence ID, and a subscriber is served it before the
-announcement — so a client that reacts to the announcement by dropping
-state numbered past the cut would discard a rename it has just been handed.
+point too: a `session_renamed` or `model_selected` the cut kept (see the
+rewind endpoint) holds its original sequence ID, and a subscriber is served
+it before the announcement — so a client that reacts to the announcement by
+dropping state numbered past the cut would discard a rename it has just been
+handed.
 The announcement carries no conversation content and renders nothing; for
 what it does to a run the cut landed in, see the rewind endpoint under
 *Endpoints (v1)*.
@@ -373,8 +402,8 @@ what it does to a run the cut landed in, see the rewind endpoint under
 
 `GET /v1/sessions/changes` is a notification channel for a client that
 renders the session listing: a `change` frame every time a listed session's
-identity or state changes — one created or deleted, a title, and a
-`status`, so twice per run, as it starts and as it ends. What an
+identity or state changes — one created or deleted, a title, a model
+selection, and a `status`, so twice per run, as it starts and as it ends. What an
 in-flight run keeps moving is deliberately not signalled: a client following
 `updatedAtMillis` or `lastRun` as they climb follows the session's own event
 stream.

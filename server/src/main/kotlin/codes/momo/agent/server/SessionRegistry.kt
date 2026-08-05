@@ -1,6 +1,7 @@
 package codes.momo.agent.server
 
 import ai.router.sdk.AiRouterClient
+import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.Agent
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.AgentEventListener
@@ -84,7 +85,8 @@ internal class SessionRegistry(
 
     /**
      * Signalled whenever a listed session's identity or state changes: one
-     * created or deleted, a title, and a [SessionStatus] — so twice per run,
+     * created or deleted, a title, a model selection, and a
+     * [SessionStatus] — so twice per run,
      * as it starts and as it ends. What an in-flight run keeps moving is
      * deliberately not signalled: a subscriber following
      * [SessionInfo.updatedAtMillis] or [SessionInfo.lastRun] as they climb
@@ -198,7 +200,19 @@ internal class SessionRegistry(
             createdAtMillis = events.sessionCreatedAtMillis(),
             updatedAtMillis = events.sessionUpdatedAtMillis(),
             lastRun = events.lastRunStats(),
+            modelSelection = events.modelSelection() ?: spawnPinnedSelection(position),
         )
+    }
+
+    /**
+     * The [SessionInfo.modelSelection] fallback for a child whose own log
+     * names no selection: the model its spawn pinned, if any — visible in
+     * the picker before the child has run at all. Effort is null there,
+     * a pin naming only the model.
+     */
+    private fun spawnPinnedSelection(position: TreePosition): ModelSelection? {
+        val parentId = position.path.dropLast(1).lastOrNull() ?: return null
+        return storedSpawn(parentId, position.path.last())?.modelId?.let { ModelSelection(it) }
     }
 
     /**
@@ -218,7 +232,7 @@ internal class SessionRegistry(
             if (harness == null) {
                 null
             } else {
-                storedSpawnType(parentId, childId)?.let { type -> harness.subagents[type]?.harness }
+                storedSpawn(parentId, childId)?.type?.let { type -> harness.subagents[type]?.harness }
             }
         }
         return resolved?.folder?.toString() ?: position.root.harnessPath
@@ -230,43 +244,69 @@ internal class SessionRegistry(
         null
     }
 
-    /** The stored type of [childId]'s spawn in [parentId]'s log; a session ID is spawned at most once. */
-    private fun storedSpawnType(parentId: String, childId: String): String? = try {
+    /** The stored spawn of [childId] in [parentId]'s log; a session ID is spawned at most once. */
+    private fun storedSpawn(parentId: String, childId: String): AgentEvent.SubagentSpawned? = try {
         store.readEvents(parentId)
             .filterIsInstance<AgentEvent.SubagentSpawned>()
             .lastOrNull { it.sessionId == childId }
-            ?.type
     } catch (_: IOException) {
         null
     } catch (_: CorruptSessionException) {
         null
     }
 
+    /** Sets [id]'s title to [title] — user metadata recorded per [recordMetadata] — returning the updated info. */
+    suspend fun rename(id: String, title: String): SessionInfo = recordMetadata(
+        id,
+        onAgent = { it.title = title },
+        dormantEvent = { sequenceId, at -> AgentEvent.SessionRenamed(sequenceId, at, title) },
+    )
+
     /**
-     * Sets [id]'s title to [title], returning the updated info. A member of
-     * an attached tree renames through its agent; a dormant session gets
-     * the [AgentEvent.SessionRenamed] appended straight to its stored log —
-     * a rename never attaches a runtime. The root's mutex serializes both
-     * paths, so a direct append cannot race a prompt rebuilding the tree.
+     * Records the model a client selected for [id]'s next prompt — an
+     * [AgentEvent.ModelSelected] recorded per [recordMetadata] and derived
+     * back out as [SessionInfo.modelSelection] — returning the updated info.
      */
-    suspend fun rename(id: String, title: String): SessionInfo {
+    suspend fun selectModel(id: String, model: String, reasoningEffort: ReasoningEffort?): SessionInfo =
+        recordMetadata(
+            id,
+            onAgent = { it.recordModelSelection(model, reasoningEffort) },
+            dormantEvent = { sequenceId, at -> AgentEvent.ModelSelected(sequenceId, at, model, reasoningEffort) },
+        )
+
+    /**
+     * Records one user-metadata event on [id], returning the updated info.
+     * A member of an attached tree records through its agent via [onAgent],
+     * so sequence numbering stays with the emitter; a dormant session gets
+     * [dormantEvent] appended straight to its stored log — recording never
+     * attaches a runtime. The root's mutex serializes both paths, so a
+     * direct append cannot race a prompt rebuilding the tree.
+     */
+    private suspend fun recordMetadata(
+        id: String,
+        onAgent: (Agent) -> Unit,
+        dormantEvent: (sequenceId: Long, timestampMillis: Long) -> AgentEvent,
+    ): SessionInfo {
         val (path, root) = treeOf(entries, store, id)
         announcingChange {
             root.mutex.withLock {
                 val runtime = root.runtime
                 if (runtime == null) {
-                    appendRenamed(id, title)
+                    appendToDormantLog(id, dormantEvent)
                 } else {
                     val agent = runtime.agentAt(path) ?: throw UnknownSessionException(id)
-                    withContext(Dispatchers.IO) { agent.title = title }
+                    withContext(Dispatchers.IO) { onAgent(agent) }
                 }
             }
         }
         return info(id)
     }
 
-    /** Appends an [AgentEvent.SessionRenamed] to dormant [id]'s stored log; the caller holds the root's mutex. */
-    private suspend fun appendRenamed(id: String, title: String) = withContext(Dispatchers.IO) {
+    /** Appends [event], stamped, to dormant [id]'s stored log; the caller holds the root's mutex. */
+    private suspend fun appendToDormantLog(
+        id: String,
+        event: (sequenceId: Long, timestampMillis: Long) -> AgentEvent,
+    ) = withContext(Dispatchers.IO) {
         val nextSequenceId = try {
             // The next sequence ID exactly as the lib's restore path —
             // restoredSession in SessionState.kt — derives it; the two
@@ -275,13 +315,13 @@ internal class SessionRegistry(
         } catch (_: NoSuchFileException) {
             throw UnknownSessionException(id) // Deleted while waiting on the mutex.
         }
-        val event = AgentEvent.SessionRenamed(nextSequenceId, System.currentTimeMillis(), title)
+        val stamped = event(nextSequenceId, System.currentTimeMillis())
         try {
-            store.eventLogFor(id).use { it.onEvent(event) }
+            store.eventLogFor(id).use { it.onEvent(stamped) }
         } catch (failure: IOException) {
             throw EventLogFailedException(failure)
         }
-        entries.known(id).eventSignal.value = event.sequenceId
+        entries.known(id).eventSignal.value = stamped.sequenceId
     }
 
     /**

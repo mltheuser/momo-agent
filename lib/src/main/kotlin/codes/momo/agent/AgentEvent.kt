@@ -52,6 +52,22 @@ public sealed interface AgentEvent {
         val title: String,
     ) : AgentEvent
 
+    /**
+     * A client recorded the model selection for the session's next prompt —
+     * user metadata the log carries like the title, written by
+     * [Agent.recordModelSelection] and never read by the agent itself: every
+     * run still carries its own [RunSettings].
+     */
+    @Serializable
+    @SerialName("model_selected")
+    public data class ModelSelected(
+        override val sequenceId: Long,
+        override val timestampMillis: Long,
+        val model: String,
+        /** The selection's reasoning effort; null for the provider default. */
+        val reasoningEffort: ReasoningEffort? = null,
+    ) : AgentEvent
+
     /** An [Agent.send] run began; [userMessage] is the verbatim user text. */
     @Serializable
     @SerialName("run_started")

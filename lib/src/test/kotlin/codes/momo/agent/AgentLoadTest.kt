@@ -216,6 +216,7 @@ class AgentLoadTest {
             listOf(
                 "session_started",
                 "session_renamed",
+                "model_selected",
                 "run_started",
                 "llm_call_started",
                 "llm_call_retried",
@@ -246,6 +247,7 @@ class AgentLoadTest {
             listOf(
                 eventKeys("sessionId", "title", "depth"),
                 eventKeys("title"),
+                eventKeys("model", "reasoningEffort"),
                 eventKeys("userMessage", "model", "reasoningEffort"),
                 eventKeys("turn"),
                 eventKeys("cause", "attempt", "backoff"),
@@ -288,14 +290,15 @@ class AgentLoadTest {
         return listOf(
             AgentEvent.SessionStarted(0, 1, "session-1", "Untitled", depth = 1),
             AgentEvent.SessionRenamed(1, 2, "Renamed"),
-            AgentEvent.RunStarted(2, 3, "question", model = "test-model", reasoningEffort = ReasoningEffort.HIGH),
-            AgentEvent.LlmCallStarted(3, 4, turn = 1),
-            AgentEvent.LlmCallRetried(4, 5, cause = "HTTP 503", attempt = 1, backoff = 1.seconds),
-            AgentEvent.LlmCallFinished(5, 6, assistant.message, assistant.usage, "tool_calls"),
-            AgentEvent.ToolCallStarted(6, 7, "call-1", "bash", arguments),
+            AgentEvent.ModelSelected(2, 3, model = "picked-model", reasoningEffort = ReasoningEffort.LOW),
+            AgentEvent.RunStarted(3, 4, "question", model = "test-model", reasoningEffort = ReasoningEffort.HIGH),
+            AgentEvent.LlmCallStarted(4, 5, turn = 1),
+            AgentEvent.LlmCallRetried(5, 6, cause = "HTTP 503", attempt = 1, backoff = 1.seconds),
+            AgentEvent.LlmCallFinished(6, 7, assistant.message, assistant.usage, "tool_calls"),
+            AgentEvent.ToolCallStarted(7, 8, "call-1", "bash", arguments),
             AgentEvent.ToolCallFinished(
-                sequenceId = 7,
-                timestampMillis = 8,
+                sequenceId = 8,
+                timestampMillis = 9,
                 callId = "call-1",
                 resultText = "Error: tool execution timed out after 5m.",
                 outcome = AgentEvent.ToolCallFinished.Outcome.TIMED_OUT,
@@ -303,17 +306,17 @@ class AgentLoadTest {
                 truncated = true,
             ),
             AgentEvent.SubagentSpawned(
-                sequenceId = 8,
-                timestampMillis = 9,
+                sequenceId = 9,
+                timestampMillis = 10,
                 name = "helper",
                 sessionId = "child-session-1",
                 type = "self",
                 modelId = "pinned-model",
             ),
-            AgentEvent.BudgetUpdated(9, 10, turnsUsed = 1, turnsRemaining = 39, elapsed = 2.seconds),
+            AgentEvent.BudgetUpdated(10, 11, turnsUsed = 1, turnsRemaining = 39, elapsed = 2.seconds),
             AgentEvent.RunFinished(
-                sequenceId = 10,
-                timestampMillis = 11,
+                sequenceId = 11,
+                timestampMillis = 12,
                 status = RunResult.Status.ERROR,
                 finalMessage = null,
                 usage = ZERO_USAGE,
@@ -325,7 +328,7 @@ class AgentLoadTest {
                     statusCode = 503,
                 ),
             ),
-            AgentEvent.ConversationRewound(sequenceId = 11, timestampMillis = 12, lastSurvivingSequenceId = 4),
+            AgentEvent.ConversationRewound(sequenceId = 12, timestampMillis = 13, lastSurvivingSequenceId = 4),
         )
     }
 

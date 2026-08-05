@@ -227,7 +227,10 @@ private fun StoredLine.survivesCut(lastSurvivingSequenceId: Long): Boolean =
  * entry — the two views below both derive from this list, so neither can
  * name a type the other does not.
  */
-private val PRESERVED_EVENTS: List<PreservedEvent> = listOf(preservedEvent<AgentEvent.SessionRenamed>())
+private val PRESERVED_EVENTS: List<PreservedEvent> = listOf(
+    preservedEvent<AgentEvent.SessionRenamed>(),
+    preservedEvent<AgentEvent.ModelSelected>(),
+)
 
 /** One preserved event type: the wire name its stored line carries, and whether a decoded event is one. */
 private class PreservedEvent(val storedType: String, val matches: (AgentEvent) -> Boolean)

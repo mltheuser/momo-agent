@@ -58,6 +58,14 @@ internal data class PromptRequest(
 @Serializable
 internal data class RenameRequest(val title: String)
 
+/** Body of a select-model request: the model the session's next prompt should carry. */
+@Serializable
+internal data class SelectModelRequest(
+    val model: String,
+    /** Null asks for the provider default. */
+    val reasoningEffort: ReasoningEffort? = null,
+)
+
 /** Body of a rewind request: the sequence ID of the first event the cut deletes. */
 @Serializable
 internal data class RewindRequest(val firstDeletedSequenceId: Long)
@@ -165,6 +173,15 @@ private fun Route.sessionRoutes(registry: SessionRegistry) {
                     throw BadRequestException("A title must not be blank.")
                 }
                 call.respond(registry.rename(call.sessionId(), request.title))
+            }
+            post("/select-model") {
+                val request = call.receive<SelectModelRequest>()
+                if (request.model.isBlank()) {
+                    // Pre-empts the lib's blank-model require: the rule must
+                    // read as a 400 here, not a 500 from the failed emission.
+                    throw BadRequestException("A model must not be blank.")
+                }
+                call.respond(registry.selectModel(call.sessionId(), request.model, request.reasoningEffort))
             }
             post("/rewind") {
                 val request = call.receive<RewindRequest>()

@@ -7,6 +7,7 @@ import ai.router.sdk.models.ChatResponse
 import ai.router.sdk.models.ChatUsage
 import ai.router.sdk.models.ContentPart
 import ai.router.sdk.models.ContentPartType
+import ai.router.sdk.models.ReasoningEffort
 import ai.router.sdk.models.ToolCall
 import ai.router.sdk.models.ToolDefinition
 import codes.momo.agent.environment.ExecutionEnvironment
@@ -40,6 +41,7 @@ import kotlin.time.TimeSource
  * @throws HarnessValidationException when the harness names a tool the
  *   library does not provide.
  */
+@Suppress("TooManyFunctions") // One cohesive surface: the session's run loop plus its user commands.
 public class Agent internal constructor(
     private val harness: Harness,
     private val client: AiRouterClient,
@@ -98,6 +100,17 @@ public class Agent internal constructor(
             field = value
             emitter.emit { id, at -> AgentEvent.SessionRenamed(id, at, value) }
         }
+
+    /**
+     * Emits an [AgentEvent.ModelSelected] recording the client's model pick
+     * for the session's next prompt — user metadata the log carries like
+     * [title]; what the event means, and what it deliberately does not, is
+     * on its own KDoc.
+     */
+    public fun recordModelSelection(model: String, reasoningEffort: ReasoningEffort? = null) {
+        require(model.isNotBlank()) { "A recorded model selection must name a model." }
+        emitter.emit { id, at -> AgentEvent.ModelSelected(id, at, model, reasoningEffort) }
+    }
 
     private val history: MutableList<ChatMessage> = mutableListOf<ChatMessage>().apply {
         add(textMessage(ROLE_SYSTEM, systemPromptFor(harness, subagent = depth > 0)))
