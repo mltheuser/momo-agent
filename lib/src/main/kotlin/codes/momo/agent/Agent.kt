@@ -60,7 +60,8 @@ public class Agent internal constructor(
         eventListener: AgentEventListener = NoOpAgentEventListener,
     ) : this(harness, client, environment, eventListener, RunBudgets(), SessionState.Fresh(title))
 
-    internal val subagents: Subagents = Subagents(this, harness.subagents.keys, session.spawned)
+    internal val subagents: Subagents =
+        Subagents(this, harness.subagents.keys, SpawnModels(client), session.spawned)
 
     private val depth: Int = session.depth
 
@@ -369,13 +370,20 @@ public class Agent internal constructor(
      * collaborators and budget values — announced in this session's log as
      * [AgentEvent.SubagentSpawned] before the child emits its first event.
      */
-    internal fun spawnChild(name: String, type: String, modelId: String?): Agent {
+    internal fun spawnChild(
+        name: String,
+        type: String,
+        modelId: String?,
+        reasoningEffort: ReasoningEffort?,
+    ): Agent {
         val childHarness = harness.subagents.getValue(type).harness
         val session = SessionState.Fresh(title = name, depth = depth + 1)
         // The listener is asked first, so an embedder tracking children has
         // registered the session by the time the spawn event is observable.
         val listener = eventListener.subagentListener(name, session.id)
-        emitter.emit { id, at -> AgentEvent.SubagentSpawned(id, at, name, session.id, type, modelId) }
+        emitter.emit { id, at ->
+            AgentEvent.SubagentSpawned(id, at, name, session.id, type, modelId, reasoningEffort)
+        }
         return Agent(
             harness = childHarness,
             client = client,

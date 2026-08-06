@@ -1,5 +1,6 @@
 package codes.momo.agent.tool
 
+import ai.router.sdk.models.ReasoningEffort
 import ai.router.sdk.schema.Description
 import codes.momo.agent.Subagents
 import codes.momo.agent.environment.ExecutionEnvironment
@@ -14,8 +15,17 @@ public data class SpawnSubagentArgs(
     @Description("The subagent type — one of the type names listed in the tool description.")
     val type: String,
     @SerialName("model_id")
-    @Description("Model id for the subagent's runs; omit to use the same model as your own run.")
+    @Description(
+        "Model id for the subagent's runs; omit to use the same model as your own run. " +
+            "An unknown id's error lists the closest valid ids, so a best guess is a fine starting point.",
+    )
     val modelId: String? = null,
+    @SerialName("reasoning_effort")
+    @Description(
+        "Reasoning effort for the subagent's runs; omit to use the same effort as your own run. " +
+            "'none' is a real setting — explicitly no reasoning — not the omitted default.",
+    )
+    val reasoningEffort: ReasoningEffort? = null,
 )
 
 /**
@@ -33,10 +43,11 @@ public class SpawnSubagentTool internal constructor(
     argsSerializer = SpawnSubagentArgs.serializer(),
 ) {
 
-    override val timeoutExempt: Boolean = true
-
+    // Not timeoutExempt: unlike prompting, spawning awaits no child run —
+    // its only wait is the model-validation fetch, which the dispatch
+    // backstop caps like any other tool's work.
     override suspend fun execute(args: SpawnSubagentArgs, environment: ExecutionEnvironment): ToolResult =
-        subagents.spawn(args.name, args.type, args.modelId)
+        subagents.spawn(args.name, args.type, args.modelId, args.reasoningEffort)
 
     internal companion object {
 
@@ -52,7 +63,9 @@ private fun spawnSubagentDescription(subagentTypes: Map<String, SubagentType>): 
         and does nothing until you send it work with prompt_subagent. Delegate self-contained
         pieces of work to subagents to keep your own context focused. Each subagent needs a
         unique name; prompt_subagent addresses it by that name. By default the subagent's runs
-        use the same model as your own run; set model_id to run it on a different model. Pass
+        use the same model and reasoning effort as your own run; set model_id or
+        reasoning_effort to override either. An invalid model_id is rejected with the closest
+        valid ids, so guessing one and reading the error is a fine way to find it. Pass
         one of the following as `type`:
         """.trimIndent(),
     )

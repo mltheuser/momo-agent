@@ -94,7 +94,7 @@ class SubagentTest {
     // ─── Typed spawning ───────────────────────────────────────────────
 
     @Test
-    @DisplayName("A spawn-time model_id pins the driven child's model while the effort stays inherited")
+    @DisplayName("A spawn-time model_id pins the driven child's model; the unpinned effort inherits the run's")
     fun spawnTimeModelIdPinsTheChildsModel() {
         val tree = TreeEventListener()
 
@@ -113,6 +113,7 @@ class SubagentTest {
             onToolResults(assistantResponse(finishReason = "stop", text = "relayed"), saying = CHILD_ANSWER)
                 .fromRootAgent().forModel(PARENT_MODEL).atReasoningEffort(ReasoningEffort.HIGH),
             settings = RunSettings(model = PARENT_MODEL, reasoningEffort = ReasoningEffort.HIGH),
+            catalog = usableCatalog(PINNED_MODEL),
         )
 
         assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
@@ -121,9 +122,39 @@ class SubagentTest {
     }
 
     @Test
+    @DisplayName("A spawn-time reasoning_effort pins the driven child's effort; the unpinned model inherits the run's")
+    fun spawnTimeReasoningEffortPinsTheChildsEffort() {
+        val tree = TreeEventListener()
+
+        val result = workspace.runAgainstFake(
+            tree,
+            onOpeningTurn(
+                toolCallResponse(
+                    spawnSubagentCall(id = "call-1", name = "helper", reasoningEffort = ReasoningEffort.LOW),
+                    promptSubagentCall(id = "call-2", name = "helper", message = "compute the answer"),
+                ),
+            ).fromRootAgent().forModel(PARENT_MODEL).atReasoningEffort(ReasoningEffort.HIGH),
+            // Only the child's turn runs at the pinned effort; its model is
+            // still the driving run's.
+            onOpeningTurn(assistantResponse(finishReason = "stop", text = CHILD_ANSWER))
+                .fromSubagent().forModel(PARENT_MODEL).atReasoningEffort(ReasoningEffort.LOW),
+            onToolResults(assistantResponse(finishReason = "stop", text = "relayed"), saying = CHILD_ANSWER)
+                .fromRootAgent().forModel(PARENT_MODEL).atReasoningEffort(ReasoningEffort.HIGH),
+            settings = RunSettings(model = PARENT_MODEL, reasoningEffort = ReasoningEffort.HIGH),
+        )
+
+        assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+        assertEquals(CHILD_ANSWER, result.transcript.toolTexts()[1], "the child answered at the pinned effort")
+        val spawned = tree.events.filterIsInstance<AgentEvent.SubagentSpawned>().single()
+        assertEquals(ReasoningEffort.LOW, spawned.reasoningEffort)
+        assertEquals(null, spawned.modelId)
+    }
+
+    @Test
     @DisplayName("A directly prompted child uses its own call's model even when spawned with a pin")
     fun directlyPromptedChildIgnoresItsSpawnTimePin() {
         FakeLlm(
+            usableCatalog(PINNED_MODEL),
             onOpeningTurn(
                 toolCallResponse(
                     spawnSubagentCall(id = "call-1", name = "helper", modelId = PINNED_MODEL),
@@ -280,6 +311,98 @@ class SubagentTest {
         assertContains(toolTexts[2], "Existing subagents: helper.")
     }
 
+    @Test
+    @DisplayName("A model_id without its @provider suffix still addresses its catalog entry")
+    fun modelIdWithoutProviderSuffixIsAccepted() {
+        val shortForm = PINNED_MODEL.substringBeforeLast('@')
+
+        val result = workspace.runAgainstFake(
+            NoOpAgentEventListener,
+            onOpeningTurn(
+                toolCallResponse(
+                    spawnSubagentCall(id = "call-1", name = "helper", modelId = shortForm),
+                    promptSubagentCall(id = "call-2", name = "helper", message = "compute the answer"),
+                ),
+            ).fromRootAgent(),
+            onOpeningTurn(assistantResponse(finishReason = "stop", text = CHILD_ANSWER))
+                .fromSubagent().forModel(shortForm),
+            onToolResults(assistantResponse(finishReason = "stop", text = "relayed"), saying = CHILD_ANSWER)
+                .fromRootAgent(),
+            catalog = usableCatalog(PINNED_MODEL),
+        )
+
+        assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+        assertEquals(CHILD_ANSWER, result.transcript.toolTexts()[1], "the child answered on the short-form pin")
+    }
+
+    @Test
+    @DisplayName("An unknown model_id is an error result listing the closest usable models, and frees the name")
+    fun unknownModelIdIsAnErrorResultListingClosestModels() {
+        val result = workspace.runAgainstFake(
+            NoOpAgentEventListener,
+            onOpeningTurn(
+                toolCallResponse(
+                    spawnSubagentCall(id = "call-1", name = "helper", modelId = "opus 5"),
+                    spawnSubagentCall(id = "call-2", name = "helper"),
+                ),
+            ),
+            onToolResults(assistantResponse(finishReason = "stop", text = "noted")),
+            catalog = usableCatalog(
+                "anthropic/claude-opus-5:cloud@openrouter",
+                "qwen3.5:27b:local@ollama",
+            ),
+        )
+
+        assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+        val toolTexts = result.transcript.toolTexts()
+        assertContains(toolTexts[0], "Error: model_id 'opus 5' is not in the router's catalog")
+        // Closest first, and the whole usable catalog fits under the cap.
+        assertContains(toolTexts[0], "- anthropic/claude-opus-5:cloud@openrouter\n- qwen3.5:27b:local@ollama")
+        assertContains(toolTexts[0], "Pass one of these verbatim")
+        assertContains(toolTexts[1], "spawned subagent 'helper'", message = "a rejected spawn must not take the name")
+    }
+
+    @Test
+    @DisplayName("Near-miss model_id forms — wrong provider, wrong case, missing tag — are all rejected")
+    fun nearMissModelIdFormsAreRejected() {
+        // Each is one edit away from addressing PINNED_MODEL, and each is a
+        // form the router would refuse: the match is exactly what it resolves,
+        // never a lenient reading.
+        val result = workspace.runAgainstFake(
+            NoOpAgentEventListener,
+            onOpeningTurn(
+                toolCallResponse(
+                    spawnSubagentCall(id = "call-1", name = "a", modelId = "pinned-model:cloud@wrong-provider"),
+                    spawnSubagentCall(id = "call-2", name = "b", modelId = "Pinned-Model:cloud@fake-provider"),
+                    spawnSubagentCall(id = "call-3", name = "c", modelId = "pinned-model"),
+                ),
+            ),
+            onToolResults(assistantResponse(finishReason = "stop", text = "noted")),
+            catalog = usableCatalog(PINNED_MODEL),
+        )
+
+        assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+        for (toolText in result.transcript.toolTexts()) {
+            assertContains(toolText, "is not in the router's catalog")
+            assertContains(toolText, "- $PINNED_MODEL", message = "the rejection must still suggest the entry")
+        }
+    }
+
+    @Test
+    @DisplayName("An unreadable catalog is an error result naming the failure, never a silently accepted pin")
+    fun unreachableCatalogIsAnErrorResult() {
+        // No catalog handed to the fake: the listing draws its failing status.
+        val result = workspace.runAgainstFake(
+            NoOpAgentEventListener,
+            onOpeningTurn(toolCallResponse(spawnSubagentCall(id = "call-1", name = "helper", modelId = "some-model"))),
+            onToolResults(assistantResponse(finishReason = "stop", text = "noted")),
+        )
+
+        assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+        val toolText = result.transcript.toolTexts().single()
+        assertContains(toolText, "Error: model_id 'some-model' could not be validated against the router's catalog")
+    }
+
     // ─── Listener robustness ──────────────────────────────────────────
 
     @Test
@@ -339,5 +462,5 @@ private const val BIGGER_MODEL: String = "bigger-model"
 
 /** The models of the three ways a child's model can be decided: the driving run's, the spawn's, its own call's. */
 private const val PARENT_MODEL: String = "parent-model"
-private const val PINNED_MODEL: String = "pinned-model"
+private const val PINNED_MODEL: String = "pinned-model:cloud@fake-provider"
 private const val DIRECT_MODEL: String = "direct-model"

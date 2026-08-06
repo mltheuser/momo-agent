@@ -2,6 +2,7 @@ package codes.momo.agent.server
 
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.FakeLlm
 import codes.momo.agent.TEST_RUN_SETTINGS
 import codes.momo.agent.assistantResponse
 import codes.momo.agent.forModel
@@ -11,6 +12,7 @@ import codes.momo.agent.onOpeningTurn
 import codes.momo.agent.onToolResults
 import codes.momo.agent.spawnSubagentCall
 import codes.momo.agent.toolCallResponse
+import codes.momo.agent.usableCatalog
 import io.ktor.client.call.body
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -118,25 +120,35 @@ class SelectModelTest {
     }
 
     @Test
-    @DisplayName("A child spawned with a pinned model shows the pin before its own log names anything")
+    @DisplayName("A child spawned with pinned model and effort shows both before its own log names anything")
     fun spawnPinBacksAChildWithoutOwnSelection() {
-        withFakeSessionServer(
-            tempDir,
+        // The catalog backs the pin's validation; the pinned id is one of its
+        // fully-qualified model strings, the only form a spawn accepts.
+        val fake = FakeLlm(
+            usableCatalog(PINNED_MODEL),
             onOpeningTurn(
-                toolCallResponse(spawnSubagentCall(id = "call-1", name = "helper", modelId = "pinned-model")),
+                toolCallResponse(
+                    spawnSubagentCall(
+                        id = "call-1",
+                        name = "helper",
+                        modelId = PINNED_MODEL,
+                        reasoningEffort = ReasoningEffort.LOW,
+                    ),
+                ),
                 saying = SPAWN_PROMPT,
             ).fromRootAgent(),
             onToolResults(assistantResponse(finishReason = "stop", text = "spawned")).fromRootAgent(),
-        ) { http ->
+        )
+        withFakeSessionServer(tempDir, fake) { http ->
             val rootId = http.createSession(subagentHarness(tempDir), localWorkspace(tempDir)).id
             http.prompt(rootId, SPAWN_PROMPT)
             val childId = spawnedChildId(http, rootId)
             http.awaitRunEnd(rootId)
 
             assertEquals(
-                ModelSelection("pinned-model"),
+                ModelSelection(PINNED_MODEL, ReasoningEffort.LOW),
                 http.sessionInfo(childId).modelSelection,
-                "the spawn's pin backs a child log naming no selection of its own",
+                "the spawn's pins back a child log naming no selection of its own",
             )
         }
     }
@@ -285,3 +297,6 @@ class SelectModelTest {
         }
     }
 }
+
+/** The spawn-time model pin, as a fully-qualified catalog string — the only form a spawn accepts. */
+private const val PINNED_MODEL: String = "pinned-model:cloud@fake-provider"

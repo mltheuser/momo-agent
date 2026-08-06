@@ -282,9 +282,10 @@ so a run updates the shown selection to what actually ran, and a later
 explicit pick overrides it. A rewind can therefore change the derived value:
 only the `model_selected` events survive a cut, so a deleted `run_started`
 stops contributing and an older pick can stand again. A child session whose
-log names neither falls
-back to the `modelId` its spawn pinned, if any (see *Subagent sessions*).
-With nothing at all it is `null`, and the client's own default stands.
+log names neither falls back to what its spawn pinned — the `modelId`
+together with any `reasoning_effort` pinned beside it (see *Subagent
+sessions*). With nothing at all it is `null`, and the client's own default
+stands.
 
 Errors are structured JSON — `{"code": "...", "message": "..."}` — with
 `400` for invalid harness/environment/request, `404` for an unknown
@@ -351,9 +352,9 @@ those calls' reasoning effort. The run's `run_started` event records the
 model and effort it used. A missing or blank `model` and an unknown
 `reasoningEffort` value are a `400 invalid_request`; an unknown model id
 is accepted and surfaces as a failed run. The settings also cover subagent
-runs this run drives — unless the child was spawned with a `model_id`,
-which pins its model (see Subagent sessions); a directly prompted child
-uses only its own prompt's settings.
+runs this run drives — unless the child was spawned with a `model_id` or
+`reasoning_effort`, which pin its settings (see Subagent sessions); a
+directly prompted child uses only its own prompt's settings.
 
 Prompting a `closed` session rebuilds its tree's runtime first — that is
 the resume path (see Subagent sessions). No endpoint returns the run's
@@ -458,18 +459,23 @@ load naming the reference. The subagent tools are never listed under
 `tools` (doing so is a load error); a declared map implies them, withheld
 again from agents at the library-fixed nesting-depth cap.
 
-`spawn_subagent(name, type, model_id?)` spawns a child of a declared
-`type`, running that type's harness. The optional `model_id` pins the
-model of the runs the parent drives through `prompt_subagent` — without it
-they inherit the driving run's model (reasoning effort is inherited either
-way) — and survives dormancy: a revived child keeps its pin. A directly
-prompted child always uses its own prompt's settings.
+`spawn_subagent(name, type, model_id?, reasoning_effort?)` spawns a child
+of a declared `type`, running that type's harness. The optional `model_id`
+and `reasoning_effort` pin the model and effort of the runs the parent
+drives through `prompt_subagent` — an omitted one inherits the driving
+run's setting (`none` is a real effort pin, not the omitted default) — and
+both survive dormancy: a revived child keeps its pins. A `model_id` must
+address an entry of the router's catalog of chat+tools models, as its
+fully-qualified `model` string with or without the `@provider` suffix; an
+unknown one is rejected with up to ten of the closest usable ids, so the
+error is how a model discovers a valid id. A directly prompted child
+always uses its own prompt's settings.
 
 Each child is a full session under the same data directory, created the
 moment its spawn is announced. Clients discover children through the
 parent's `subagent_spawned` event, which carries the child's session ID
-plus the spawn's `subagentType` and `modelId` (both `null` in logs
-predating typed spawning): `GET /{id}`, the event stream, and
+plus the spawn's `subagentType`, `modelId` and `reasoningEffort` (each
+`null` in logs predating it): `GET /{id}`, the event stream, and
 `POST /{id}/prompt` all work on children, while the listing stays
 roots-only. A child's info carries `parent` (`null` on a root); its
 `environment` is its root's — children execute in the root's environment

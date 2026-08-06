@@ -1,5 +1,6 @@
 package codes.momo.agent
 
+import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.tool.ToolResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
@@ -9,20 +10,23 @@ import kotlinx.coroutines.sync.withLock
  * The children a session has spawned, keyed by their caller-chosen names —
  * the session-owned collaborator behind the subagent tools. Each child is
  * of one of the parent harness's [declaredTypes], remembered together with
- * its spawn-time model override. The map outlives individual runs: a later
- * run can prompt a child an earlier one spawned. A restored session starts
- * with its log's spawned children as dormant entries, revived on first use.
+ * its spawn-time model and effort overrides; [spawnModels] answers whether
+ * a requested model override exists. The map outlives individual runs: a
+ * later run can prompt a child an earlier one spawned. A restored session
+ * starts with its log's spawned children as dormant entries, revived on
+ * first use.
  */
 internal class Subagents(
     private val parent: Agent,
     private val declaredTypes: Set<String>,
+    private val spawnModels: SpawnModels,
     spawned: Map<String, SpawnedChild>,
 ) {
 
     /**
      * One registered child: live, or dormant — known only by its spawn
-     * facts until revived. [type] and [modelId] carry what the spawn's
-     * [AgentEvent.SubagentSpawned] records, nulls included.
+     * facts until revived. [type], [modelId] and [reasoningEffort] carry
+     * what the spawn's [AgentEvent.SubagentSpawned] records, nulls included.
      */
     private sealed interface Child {
         val sessionId: String
@@ -30,12 +34,15 @@ internal class Subagents(
         val type: String?
 
         val modelId: String?
+
+        val reasoningEffort: ReasoningEffort?
     }
 
     private class Live(
         val agent: Agent,
         override val type: String?,
         override val modelId: String?,
+        override val reasoningEffort: ReasoningEffort?,
     ) : Child {
         override val sessionId: String
             get() = agent.sessionId
@@ -45,6 +52,7 @@ internal class Subagents(
         override val sessionId: String,
         override val type: String?,
         override val modelId: String?,
+        override val reasoningEffort: ReasoningEffort?,
     ) : Child
 
     // Guards the map so a parent-run tool call and an embedder navigating
@@ -54,31 +62,53 @@ internal class Subagents(
     private val children = LinkedHashMap<String, Child>()
 
     init {
-        spawned.forEach { (name, child) -> children[name] = Dormant(child.sessionId, child.type, child.modelId) }
+        spawned.forEach { (name, child) ->
+            children[name] = Dormant(child.sessionId, child.type, child.modelId, child.reasoningEffort)
+        }
     }
 
     /** The live child spawned as [name], for test access into the tree. */
     operator fun get(name: String): Agent? = (children[name] as? Live)?.agent
 
-    suspend fun spawn(name: String, type: String, modelId: String?): ToolResult = mutex.withLock {
-        when {
-            name.isBlank() -> ToolResult.Error("subagent name must not be blank.")
-
-            name in children -> ToolResult.Error(
-                "a subagent named '$name' already exists — pick an unused name, or prompt the existing one.",
-            )
-
-            type !in declaredTypes -> ToolResult.Error(
-                "unknown subagent type '$type' — declared types: ${formatTypes()}.",
-            )
-
-            modelId != null && modelId.isBlank() -> ToolResult.Error("model_id must not be blank when given.")
-
-            else -> {
-                children[name] = Live(parent.spawnChild(name, type, modelId), type, modelId)
+    /**
+     * Two lock takes with the catalog fetch between them, never under one:
+     * [mutex] also serializes the lookups the embedder serves reads through,
+     * and a held fetch would block them for its whole wait. The cheap checks
+     * run first so their error priority reads unchanged, and the insert
+     * re-checks the name — a concurrent spawn may have taken it meanwhile.
+     */
+    suspend fun spawn(
+        name: String,
+        type: String,
+        modelId: String?,
+        reasoningEffort: ReasoningEffort?,
+    ): ToolResult {
+        val rejection = mutex.withLock { rejectSpawn(name, type, modelId) }
+            ?: modelId?.let { spawnModels.rejectionFor(it) }?.let { ToolResult.Error(it) }
+        return rejection ?: mutex.withLock {
+            rejectSpawn(name, type, modelId) ?: run {
+                val child = parent.spawnChild(name, type, modelId, reasoningEffort)
+                children[name] = Live(child, type, modelId, reasoningEffort)
                 ToolResult.Success("spawned subagent '$name'")
             }
         }
+    }
+
+    /** Why the spawn cannot proceed on what this map and the harness know; null when it can. Caller holds [mutex]. */
+    private fun rejectSpawn(name: String, type: String, modelId: String?): ToolResult.Error? = when {
+        name.isBlank() -> ToolResult.Error("subagent name must not be blank.")
+
+        name in children -> ToolResult.Error(
+            "a subagent named '$name' already exists — pick an unused name, or prompt the existing one.",
+        )
+
+        type !in declaredTypes -> ToolResult.Error(
+            "unknown subagent type '$type' — declared types: ${formatTypes()}.",
+        )
+
+        modelId != null && modelId.isBlank() -> ToolResult.Error("model_id must not be blank when given.")
+
+        else -> null
     }
 
     suspend fun prompt(name: String, message: String): ToolResult {
@@ -119,20 +149,26 @@ internal class Subagents(
                 children.remove(name)
                 null
             } else {
-                Live(revived, child.type, child.modelId).also { children[name] = it }
+                Live(revived, child.type, child.modelId, child.reasoningEffort).also { children[name] = it }
             }
         }
     }
 
     /**
-     * One blocking child run — under the child's spawn-time model override
-     * when it has one: the child's final message is the result verbatim; a
-     * run ending any other way becomes an error result the parent can
-     * react to.
+     * One blocking child run — under the child's spawn-time model and
+     * effort overrides where it has them: the child's final message is the
+     * result verbatim; a run ending any other way becomes an error result
+     * the parent can react to.
      */
     private suspend fun promptChild(child: Live, name: String, message: String): ToolResult = try {
         parent.awaitingChildRun { settings ->
-            child.agent.send(message, child.modelId?.let { settings.copy(model = it) } ?: settings)
+            // The spawn-time pins: a null pin inherits the driving run's
+            // setting, a set one — [ReasoningEffort.NONE] included — overrides.
+            val pinned = settings.copy(
+                model = child.modelId ?: settings.model,
+                reasoningEffort = child.reasoningEffort ?: settings.reasoningEffort,
+            )
+            child.agent.send(message, pinned)
         }.asToolResult(name)
     } catch (cancellation: CancellationException) {
         throw cancellation

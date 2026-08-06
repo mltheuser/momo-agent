@@ -1,12 +1,12 @@
 package codes.momo.agent.server
 
 import ai.router.sdk.AiRouterClient
-import ai.router.sdk.models.Capability
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.RunSettings
 import codes.momo.agent.SubagentRevivalException
 import codes.momo.agent.environment.EnvironmentStartupException
 import codes.momo.agent.harness.HarnessValidationException
+import codes.momo.agent.usableModels
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.ContentConvertException
@@ -131,17 +131,10 @@ private val catalogJson = Json {
     explicitNulls = false
 }
 
-/**
- * `GET /v1/models`: ai-router's catalog in its own response shape,
- * filtered to the models an agent run can use — capabilities including
- * both chat and tools. ai-router's server-side capability filter takes a
- * single capability, so tools is filtered here.
- */
+/** `GET /v1/models`: ai-router's catalog in its own response shape, filtered by [usableModels]. */
 private fun Route.modelRoutes(client: AiRouterClient) {
     get("/v1/models") {
-        val catalog = client.listModels(capability = Capability.CHAT)
-        val usable = catalog.copy(data = catalog.data.filter { it.hasCapability(Capability.TOOLS) })
-        call.respondText(catalogJson.encodeToString(usable), ContentType.Application.Json)
+        call.respondText(catalogJson.encodeToString(client.usableModels()), ContentType.Application.Json)
     }
 }
 

@@ -2,6 +2,7 @@ package codes.momo.agent
 
 import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ChatMessage
+import ai.router.sdk.models.ModelList
 import codes.momo.agent.environment.LocalExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.SubagentType
@@ -52,8 +53,9 @@ internal fun Path.runAgainstFake(
     budgets: RunBudgets = RunBudgets(),
     harness: Harness = SUBAGENT_HARNESS,
     settings: RunSettings = TEST_RUN_SETTINGS,
+    catalog: ModelList? = null,
 ): RunResult =
-    FakeLlm(*rules).client().use { client ->
+    (if (catalog == null) FakeLlm(*rules) else FakeLlm(catalog, *rules)).client().use { client ->
         runBlocking { agent(client, listener, budgets, harness = harness).send(OPENING_PROMPT, settings) }
     }
 

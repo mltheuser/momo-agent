@@ -222,6 +222,8 @@ public sealed interface AgentEvent {
         val type: String? = null,
         /** Model the parent's driven runs of this child use; null to inherit each driving run's. */
         val modelId: String? = null,
+        /** Reasoning effort of the parent's driven runs of this child; null to inherit each driving run's. */
+        val reasoningEffort: ReasoningEffort? = null,
     ) : AgentEvent
 
     /**

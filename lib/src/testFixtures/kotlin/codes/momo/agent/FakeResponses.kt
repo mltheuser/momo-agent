@@ -1,10 +1,15 @@
 package codes.momo.agent
 
+import ai.router.sdk.models.Capability
 import ai.router.sdk.models.ChatMessage
 import ai.router.sdk.models.ChatResponse
 import ai.router.sdk.models.ChatUsage
 import ai.router.sdk.models.ContentPart
 import ai.router.sdk.models.ContentPartType
+import ai.router.sdk.models.ModelInfo
+import ai.router.sdk.models.ModelList
+import ai.router.sdk.models.ProviderType
+import ai.router.sdk.models.ReasoningEffort
 import ai.router.sdk.models.ToolCall
 import ai.router.sdk.models.ToolCallFunction
 import kotlinx.serialization.json.buildJsonObject
@@ -44,6 +49,7 @@ public fun spawnSubagentCall(
     name: String,
     type: String = "self",
     modelId: String? = null,
+    reasoningEffort: ReasoningEffort? = null,
 ): ToolCall = ToolCall(
     id = id,
     function = ToolCallFunction(
@@ -52,8 +58,31 @@ public fun spawnSubagentCall(
             put("name", name)
             put("type", type)
             modelId?.let { put("model_id", it) }
+            reasoningEffort?.let {
+                put("reasoning_effort", aiRouterSdkJson.encodeToJsonElement(ReasoningEffort.serializer(), it))
+            }
         },
     ),
+)
+
+/**
+ * A catalog of chat+tools models under the given fully-qualified
+ * `id:tag@provider` strings — the shape spawn-time model validation
+ * accepts, each entry's fields derived from its string.
+ */
+public fun usableCatalog(vararg models: String): ModelList = ModelList(
+    `object` = "list",
+    data = models.map { model ->
+        val provider = model.substringAfterLast('@')
+        val tagged = model.substringBeforeLast('@')
+        ModelInfo(
+            id = tagged.substringBeforeLast(':'),
+            model = model,
+            provider = provider,
+            providerType = if (tagged.substringAfterLast(':') == "local") ProviderType.LOCAL else ProviderType.CLOUD,
+            capabilities = listOf(Capability.CHAT, Capability.TOOLS),
+        )
+    },
 )
 
 public fun promptSubagentCall(id: String, name: String, message: String): ToolCall = ToolCall(

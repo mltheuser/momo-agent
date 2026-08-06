@@ -206,14 +206,14 @@ internal class SessionRegistry(
 
     /**
      * The [SessionInfo.modelSelection] fallback for a child whose own log
-     * names no selection: the model its spawn pinned, if any — visible in
-     * the picker before the child has run at all. Effort is null there,
-     * a pin naming only the model.
+     * names no selection: what its spawn pinned, if anything — visible in
+     * the picker before the child has run at all. A selection must name a
+     * model, so an effort pinned without one has no fallback to ride.
      */
-    private fun spawnPinnedSelection(position: TreePosition): ModelSelection? {
-        val parentId = position.path.dropLast(1).lastOrNull() ?: return null
-        return storedSpawn(parentId, position.path.last())?.modelId?.let { ModelSelection(it) }
-    }
+    private fun spawnPinnedSelection(position: TreePosition): ModelSelection? =
+        position.path.dropLast(1).lastOrNull()
+            ?.let { parentId -> storedSpawn(parentId, position.path.last()) }
+            ?.let { spawn -> spawn.modelId?.let { ModelSelection(it, spawn.reasoningEffort) } }
 
     /**
      * The folder of the harness [position]'s session actually runs: for a

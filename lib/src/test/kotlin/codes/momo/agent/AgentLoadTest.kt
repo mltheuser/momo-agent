@@ -254,7 +254,7 @@ class AgentLoadTest {
                 eventKeys("message", "usage", "finishReason"),
                 eventKeys("callId", "toolName", "arguments"),
                 eventKeys("callId", "resultText", "outcome", "duration", "truncated"),
-                eventKeys("name", "sessionId", "subagentType", "modelId"),
+                eventKeys("name", "sessionId", "subagentType", "modelId", "reasoningEffort"),
                 eventKeys("turnsUsed", "turnsRemaining", "elapsed"),
                 eventKeys("status", "finalMessage", "usage", "turnsUsed", "elapsed", "error"),
                 eventKeys("lastSurvivingSequenceId"),
@@ -312,6 +312,7 @@ class AgentLoadTest {
                 sessionId = "child-session-1",
                 type = "self",
                 modelId = "pinned-model",
+                reasoningEffort = ReasoningEffort.LOW,
             ),
             AgentEvent.BudgetUpdated(10, 11, turnsUsed = 1, turnsRemaining = 39, elapsed = 2.seconds),
             AgentEvent.RunFinished(
@@ -400,7 +401,15 @@ class AgentLoadTest {
         val decoded = Json.decodeFromString<AgentEvent>(stored)
 
         assertEquals(
-            AgentEvent.SubagentSpawned(8, 9, name = "helper", sessionId = "child-1", type = null, modelId = null),
+            AgentEvent.SubagentSpawned(
+                8,
+                9,
+                name = "helper",
+                sessionId = "child-1",
+                type = null,
+                modelId = null,
+                reasoningEffort = null,
+            ),
             decoded,
         )
     }

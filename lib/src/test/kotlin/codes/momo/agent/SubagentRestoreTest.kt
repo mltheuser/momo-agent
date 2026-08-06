@@ -1,5 +1,6 @@
 package codes.momo.agent
 
+import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.environment.LocalExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import kotlinx.coroutines.runBlocking
@@ -34,8 +35,8 @@ class SubagentRestoreTest {
 
     /**
      * One recorded run on [harness] in which the root spawns the child
-     * `helper` of type [type], pinned to [PINNED_CHILD_MODEL], and primes it;
-     * returns the tree's listener.
+     * `helper` of type [type], pinned to [PINNED_CHILD_MODEL] at
+     * [PINNED_CHILD_EFFORT], and primes it; returns the tree's listener.
      */
     private fun recordSpawnOfHelper(
         harness: Harness = SUBAGENT_HARNESS,
@@ -47,16 +48,24 @@ class SubagentRestoreTest {
             tree,
             onOpeningTurn(
                 toolCallResponse(
-                    spawnSubagentCall(id = "call-1", name = "helper", type = type, modelId = PINNED_CHILD_MODEL),
+                    spawnSubagentCall(
+                        id = "call-1",
+                        name = "helper",
+                        type = type,
+                        modelId = PINNED_CHILD_MODEL,
+                        reasoningEffort = PINNED_CHILD_EFFORT,
+                    ),
                     promptSubagentCall(id = "call-2", name = "helper", message = "get ready"),
                 ),
             ).fromRootAgent(),
             onOpeningTurn(assistantResponse(finishReason = "stop", text = "ready"))
                 .fromSubagent()
                 .underInstructions(childInstructions)
-                .forModel(PINNED_CHILD_MODEL),
+                .forModel(PINNED_CHILD_MODEL)
+                .atReasoningEffort(PINNED_CHILD_EFFORT),
             onToolResults(assistantResponse(finishReason = "stop", text = "spawned")),
             harness = harness,
+            catalog = usableCatalog(PINNED_CHILD_MODEL),
         )
         return tree
     }
@@ -97,7 +106,7 @@ class SubagentRestoreTest {
     // ─── Reviving stored children ─────────────────────────────────────
 
     @Test
-    @DisplayName("A restored parent revives its stored child, which answers under its own harness and model pin")
+    @DisplayName("A restored parent revives its stored child, which answers under its own harness and spawn pins")
     fun restoredParentRevivesItsStoredChild() {
         val harness = typedHarness(
             "Unit-test instructions.",
@@ -109,16 +118,17 @@ class SubagentRestoreTest {
 
         // Only the oracle-instructed child's own turn is given the answer, so
         // the parent can carry it back only by reviving that child and
-        // prompting it under the harness its type declares and the model its
-        // spawn pinned — both restored from the stored log, neither the
-        // driving run's own.
+        // prompting it under the harness its type declares and the model and
+        // effort its spawn pinned — all restored from the stored log, none
+        // the driving run's own.
         FakeLlm(
             onOpeningTurn(toolCallResponse(promptSubagentCall(id = "call-3", name = "helper", message = "well?")))
                 .fromRootAgent(),
             onOpeningTurn(assistantResponse(finishReason = "stop", text = ORACLE_ANSWER))
                 .fromSubagent()
                 .underInstructions(ORACLE_INSTRUCTIONS)
-                .forModel(PINNED_CHILD_MODEL),
+                .forModel(PINNED_CHILD_MODEL)
+                .atReasoningEffort(PINNED_CHILD_EFFORT),
             onToolResults(assistantResponse(finishReason = "stop", text = "relayed")),
         ).client().use { client ->
             val parent = Agent.load(
@@ -163,7 +173,11 @@ class SubagentRestoreTest {
     fun untypedStoredSpawnFailsRevival() {
         val toolText = assertRevivalFailsLoudly(SUBAGENT_HARNESS) { log ->
             log.map { event ->
-                if (event is AgentEvent.SubagentSpawned) event.copy(type = null, modelId = null) else event
+                if (event is AgentEvent.SubagentSpawned) {
+                    event.copy(type = null, modelId = null, reasoningEffort = null)
+                } else {
+                    event
+                }
             }
         }
 
@@ -231,7 +245,10 @@ class SubagentRestoreTest {
 private const val CHILD_TYPE: String = "oracle"
 
 /** The spawn-time model pin every recorded child carries, and the driving run's is not. */
-private const val PINNED_CHILD_MODEL: String = "pinned-child-model"
+private const val PINNED_CHILD_MODEL: String = "pinned-child-model:cloud@fake-provider"
+
+/** The spawn-time effort pin beside it; the driving runs carry none. */
+private val PINNED_CHILD_EFFORT: ReasoningEffort = ReasoningEffort.LOW
 
 private const val ORACLE_INSTRUCTIONS: String = "Oracle-harness instructions."
 

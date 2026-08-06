@@ -1,6 +1,7 @@
 package codes.momo.agent
 
 import ai.router.sdk.models.ChatMessage
+import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
 import codes.momo.agent.tool.SUBAGENT_TOOL_NAMES
@@ -52,7 +53,12 @@ internal sealed interface SessionState {
 }
 
 /** One already-spawned child as its [AgentEvent.SubagentSpawned] recorded it. */
-internal class SpawnedChild(val sessionId: String, val type: String?, val modelId: String?)
+internal class SpawnedChild(
+    val sessionId: String,
+    val type: String?,
+    val modelId: String?,
+    val reasoningEffort: ReasoningEffort?,
+)
 
 /**
  * The [SessionState.Restored] a stored [events] log describes, validated
@@ -73,7 +79,7 @@ internal fun restoredSession(events: List<AgentEvent>, harness: Harness): Sessio
         // Last spawn per name wins: a name freed by a lost child log may
         // have been reused by a later spawn.
         spawned = events.filterIsInstance<AgentEvent.SubagentSpawned>()
-            .associate { it.name to SpawnedChild(it.sessionId, it.type, it.modelId) },
+            .associate { it.name to SpawnedChild(it.sessionId, it.type, it.modelId, it.reasoningEffort) },
     )
 }
 
