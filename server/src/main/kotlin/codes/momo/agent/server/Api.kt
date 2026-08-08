@@ -78,8 +78,11 @@ internal data class RewindResponse(val session: SessionInfo, val deletedSessionI
 @Serializable
 internal data class ApiError(val code: String, val message: String)
 
-/** The agent server's HTTP surface over [registry]; [client] backs the model-catalog proxy. */
-internal fun Application.agentServer(registry: SessionRegistry, client: AiRouterClient) {
+/**
+ * The agent server's HTTP surface over [registry]; [client] backs the
+ * model-catalog proxy and [templates] the template routes.
+ */
+internal fun Application.agentServer(registry: SessionRegistry, client: AiRouterClient, templates: TemplateStore) {
     install(ContentNegotiation) {
         json()
     }
@@ -103,6 +106,12 @@ internal fun Application.agentServer(registry: SessionRegistry, client: AiRouter
         exception<ContentConvertException> { call, failure ->
             call.respondError(HttpStatusCode.BadRequest, "invalid_request", failure.rootMessage())
         }
+        exception<UnknownTemplateException> { call, failure ->
+            call.respondError(HttpStatusCode.NotFound, "unknown_template", failure)
+        }
+        exception<InvalidTemplateNameException> { call, failure ->
+            call.respondError(HttpStatusCode.BadRequest, "invalid_request", failure)
+        }
         exception<SessionConflictException> { call, failure ->
             call.respondError(HttpStatusCode.Conflict, "conflict", failure)
         }
@@ -122,6 +131,7 @@ internal fun Application.agentServer(registry: SessionRegistry, client: AiRouter
     routing {
         sessionRoutes(registry)
         modelRoutes(client)
+        templateRoutes(templates)
     }
 }
 

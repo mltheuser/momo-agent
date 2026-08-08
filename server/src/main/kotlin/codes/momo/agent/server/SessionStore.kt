@@ -24,7 +24,6 @@ import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import kotlin.io.path.createDirectories
 import kotlin.io.path.isDirectory
@@ -32,7 +31,6 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readLines
 import kotlin.io.path.readText
-import kotlin.io.path.writeText
 
 /**
  * What the event log deliberately omits about a session: everything needed
@@ -263,17 +261,6 @@ private fun <T : Any> parseLogLines(id: String, file: Path, parse: (String) -> T
             if (index == lines.lastIndex) null else throw CorruptSessionException(id, failure)
         }
     }
-}
-
-/**
- * Replaces [target] with [content] via a temp file moved atomically over it:
- * concurrent readers hold no lock, so they must only ever see a complete
- * file — old or new.
- */
-private fun replaceAtomically(target: Path, content: String) {
-    val staging = Files.createTempFile(target.parent, target.fileName.toString(), ".tmp")
-    staging.writeText(content)
-    Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE)
 }
 
 /**

@@ -37,8 +37,9 @@ internal fun withSessionServer(
     wait: Duration = RUN_WAIT,
     block: suspend (HttpClient) -> Unit,
 ) {
-    SessionRegistry(tempDir.resolve("data"), client).use { registry ->
-        withServer(registry, client, wait, block)
+    val dataDir = tempDir.resolve("data")
+    SessionRegistry(dataDir, client).use { registry ->
+        withServer(registry, client, TemplateStore(dataDir), wait, block)
     }
 }
 
@@ -110,15 +111,16 @@ private fun Throwable.explainedBy(fake: FakeLlm): Throwable {
 /**
  * Runs [block] against the server's real routing and serialization over a
  * loopback socket — the same engine `Main.kt` runs — with [registry] behind
- * it and [client] backing `/v1/models`.
+ * it, [client] backing `/v1/models` and [templates] `/v1/templates`.
  */
 private fun withServer(
     registry: SessionRegistry,
     client: AiRouterClient,
+    templates: TemplateStore,
     wait: Duration,
     block: suspend (HttpClient) -> Unit,
 ) {
-    val server = embeddedServer(ServerCIO, port = 0, host = LOOPBACK) { agentServer(registry, client) }
+    val server = embeddedServer(ServerCIO, port = 0, host = LOOPBACK) { agentServer(registry, client, templates) }
     try {
         server.start(wait = false)
         runBlocking {

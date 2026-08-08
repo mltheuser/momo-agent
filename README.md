@@ -190,6 +190,9 @@ a project with sessions has nothing of the server's in it.
 | `POST /v1/sessions/{id}/close`| Close the session's whole subagent tree; aborts in-flight work without recording its end, tears the environment down, keeps the stored logs. Idempotent. |
 | `DELETE /v1/sessions/{id}`    | Close the tree if needed, then remove the session and its descendants with their stored artifacts → `204`. |
 | `GET /v1/models`              | ai-router's model catalog in its own response shape, filtered to the models an agent can run (capabilities include both `chat` and `tools`). Each entry's `model` field is the fully-qualified string to send as a prompt's `model`. |
+| `GET /v1/templates`           | Every stored prompt template's name, as a sorted JSON array (see *Prompt templates*). |
+| `GET /v1/templates/{name}`    | One template → `200` `{"name": "...", "body": "..."}`; a name no file backs is a `404 unknown_template`. |
+| `PUT /v1/templates/{name}`    | Create or overwrite a template with body `{"body": "..."}` → `200` with the template as stored. Idempotent; a blank body is a `400 invalid_request`. |
 
 Every `/v1/sessions/{id}` route takes an **optional** `?workspace=`, and
 answers `404` when it names a folder that is not the session's own (see
@@ -291,6 +294,17 @@ Errors are structured JSON — `{"code": "...", "message": "..."}` — with
 `400` for invalid harness/environment/request, `404` for an unknown
 session, `409` for operations conflicting with an active run or with the
 current harness configuration, and `500` otherwise.
+
+### Prompt templates
+
+A prompt template is a recurring prompt text saved under a name, for a
+client to recall instead of retyping. Each is one plain markdown file,
+`<data-dir>/templates/<name>.md`, holding the body verbatim. A name is 1 to
+100 characters from `[A-Za-z0-9._-]` and does not start with `.` — no
+whitespace, no path separators, no `..` — and anything else is a
+`400 invalid_request`. Templates are global: they take no `?workspace=`
+scope, and one set serves every project. There is no delete endpoint —
+a template is removed by deleting its file by hand.
 
 ### Workspace scope
 
