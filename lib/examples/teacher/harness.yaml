@@ -1,0 +1,6 @@
+tools:
+  - bash
+subagents:
+  self:
+    path: .
+    description: A teacher that answers questions in a way that is easy for the human recipient to understand.
