@@ -23,19 +23,21 @@ Shared build conventions live in the root build script.
 - Comments and KDoc are minimal and purposeful: say only what naming and
   structure cannot, state each contract fact in exactly one place, and keep
   KDoc self-contained (no planning-doc or issue references).
-- `abort`, `stop` and `rewind` name different things and must never be
-  swapped: aborting is close/delete/shutdown cancelling a tree's runs, plus
-  the transcript repair for tool calls a run ended before answering;
-  stopping is the user's run-scoped command that records a `stopped`
-  outcome; rewinding is the conversation moved back to an earlier point by
-  cutting the stored log — never `revert` or `reverse`. The server's mocked
+- `abort`, `stop`, `rewind` and `retry` name different things and must
+  never be swapped: aborting is close/delete/shutdown cancelling a tree's
+  runs, plus the transcript repair for tool calls a run ended before
+  answering; stopping is the user's run-scoped command that records a
+  `stopped` outcome; rewinding is the conversation moved back to an earlier
+  point by cutting the stored log — never `revert` or `reverse`; retrying
+  is the user's command that cuts a failed run's failure tail and resumes
+  the run in place (a rewind plus an `Agent.retry`). The server's mocked
   cascade cases (`SubagentStopCascadeTest`) are where the stop/abort
   difference is pinned.
-- Four catch arms deliberately stay narrower than `Throwable` — the event
-  emitter's, tool dispatch's, the run loop's `Exception` arm, and
-  `executeRun`'s run-end error-log guard — so widening one in a tidy-up
-  silently converts a failed JVM into a run that merely errored. Contract
-  in `Agent.send`'s KDoc.
+- Five catch arms deliberately stay narrower than `Throwable` — the event
+  emitter's, tool dispatch's, the run loop's `Exception` arm,
+  `executeRun`'s run-end error-log guard, and the retry loop's arm in
+  `Retry.kt` — so widening one in a tidy-up silently converts a failed JVM
+  into a run that merely errored. Contract in `Agent.send`'s KDoc.
 - Stored session state is a persisted format: the `@SerialName`s on
   `AgentEvent` and `RunResult.Status`, and the `SessionMetadata` variant
   names in `session.json`, are a compatibility contract — never change them

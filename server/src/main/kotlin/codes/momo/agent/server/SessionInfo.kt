@@ -95,14 +95,16 @@ internal fun List<AgentEvent>.sessionTitle(): String =
 /**
  * The selection the log's own events carry, or null when it carries none:
  * the latest by sequence ID of the `model_selected` picks and the
- * `run_started` records naming a model — a run updates the shown selection
- * to what actually ran, and a later explicit pick overrides it.
+ * `run_started`/`run_resumed` records naming a model — a run updates the
+ * shown selection to what actually ran, and a later explicit pick
+ * overrides it.
  */
 internal fun List<AgentEvent>.modelSelection(): ModelSelection? =
     asReversed().firstNotNullOfOrNull { event ->
         when (event) {
             is AgentEvent.ModelSelected -> ModelSelection(event.model, event.reasoningEffort)
             is AgentEvent.RunStarted -> event.model?.let { ModelSelection(it, event.reasoningEffort) }
+            is AgentEvent.RunResumed -> ModelSelection(event.model, event.reasoningEffort)
             else -> null
         }
     }

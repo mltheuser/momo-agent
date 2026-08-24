@@ -184,6 +184,7 @@ a project with sessions has nothing of the server's in it.
 | `POST /v1/sessions/{id}/rename` | Set the session's title (request body below) → `200` with the updated session info. |
 | `POST /v1/sessions/{id}/select-model` | Record the model selected for the session's next prompt (request body below) → `200` with the updated session info. |
 | `POST /v1/sessions/{id}/rewind` | Cut the session's log back to an earlier event (request body below) → `200` with the updated session info plus the IDs of every session the cascade deleted. |
+| `POST /v1/sessions/{id}/retry` | Retry the session's failed last run — no request body → `202` with a snapshot of the session info (see *Retrying a failed run*). |
 | `GET /v1/sessions/changes`    | An SSE stream signalling that the session listing is worth re-reading (below). |
 | `GET /v1/sessions/{id}/events`| The session's event log as an SSE stream: stored history, then live events. |
 | `POST /v1/sessions/{id}/stop` | Stop the session's in-flight run — no request body → `200` with the session info once the run has ended. Idempotent. |
@@ -376,7 +377,8 @@ outcome: its `run_finished` event (status, final message verbatim, usage,
 turns used, elapsed, and — on an `error` status — a structured error naming
 what failed) is the record, observed via the event stream. A run's
 `status` there is one of `completed`, `stopped` (the stop endpoint ended
-it), `turns_exhausted`, `timeout`, or `error`. The one run without that
+it), `turns_exhausted`, `timeout`, or `error` — a failed run can be
+retried in place (see *Retrying a failed run*). The one run without that
 record is one cut short by closing or deleting the session, or by a server
 shutdown — the log ends mid-run and the session's `status` is the
 indicator. A rewind can also take the record away when its cut lands
@@ -384,6 +386,25 @@ mid-run — see the rewind endpoint under *Endpoints (v1)*. A blank prompt
 is a `400 invalid_request`, a prompt while a run
 is active a `409 conflict`, and a session whose event log can no longer
 persist refuses new runs with a `500 event_log_failed`.
+
+### Retrying a failed run
+
+`POST /{id}/retry` takes no body: everything is derived from the stored
+log, whose tail must be a `run_finished` with status `error` — anything
+else (a completed run, a stopped one, a fresh session, a run in flight
+anywhere in the tree) is a `409 conflict` and nothing changes. The retry
+is a rewind and a resume in one request: the log is cut back to before the
+LLM call that failed — the failed call's `llm_call_started`, its
+`llm_call_retried` tail and the `run_finished` all go, announced by the
+same `conversation_rewound` tail a rewind appends — and the beheaded run
+resumes under the settings its own opening recorded. Progress the run made
+before the failed call (completed turns, tool results) survives. The
+resumed run opens on the stream as a `run_resumed` event — carrying the
+run's model and effort like a `run_started`, but no user message: the run
+it continues already has one — and ends with a `run_finished` like any
+other. Automatic transient-failure retries start over with a fresh backoff
+schedule, so retrying is also how a run that exhausted them is given
+another round.
 
 ### The event stream
 

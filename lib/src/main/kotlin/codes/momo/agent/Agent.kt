@@ -158,8 +158,33 @@ public class Agent internal constructor(
      */
     public suspend fun send(text: String, settings: RunSettings): RunResult {
         require(text.isNotBlank()) { "A user message must not be blank." }
+        return guardedRun(text, settings)
+    }
+
+    /**
+     * Runs the loop to a terminal outcome over the conversation exactly as
+     * it stands — no new user message, no [AgentEvent.RunStarted]: an
+     * [AgentEvent.RunResumed] opens the run in the log, which otherwise
+     * reads as the beheaded run simply continuing. Everything else matches
+     * [send], its budgets, outcome reporting and thrown contract included.
+     *
+     * This is the resume behind a failed run's retry: load the session from
+     * its log cut back to before the failed LLM call, then call this.
+     *
+     * @throws IllegalArgumentException when the conversation is not waiting
+     *   on the model — its last message is no user message or tool result.
+     * @throws IllegalStateException when a run is already in flight.
+     */
+    public suspend fun retry(settings: RunSettings): RunResult {
+        require(history.last().role == ROLE_USER || history.last().role == ROLE_TOOL) {
+            "Nothing to retry: the conversation is not waiting on the model."
+        }
+        return guardedRun(text = null, settings)
+    }
+
+    private suspend fun guardedRun(text: String?, settings: RunSettings): RunResult {
         check(running.compareAndSet(false, true)) {
-            "send() is already running on this agent — await the active call before sending another."
+            "A run is already running on this agent — await the active one before starting another."
         }
         // The loop runs under a job of its own, so a stop cancels the loop
         // while leaving this coroutine live to record the run's outcome.
@@ -197,22 +222,22 @@ public class Agent internal constructor(
         run.ended.join()
     }
 
-    private suspend fun executeRun(text: String, run: RunState): RunResult {
+    /** One run to its outcome; a null [text] is a [retry], which opens no run of its own in the log. */
+    private suspend fun executeRun(text: String?, run: RunState): RunResult {
         currentRun = run
-        history += userMessage(text)
+        if (text != null) {
+            history += userMessage(text)
+        }
         // Outlives the try: the arm that records it cannot also rethrow it.
         var fatal: Throwable? = null
         val status = try {
             // Inside the try, so a listener raising on the opening event ends
             // the run through the arms below like any later one would.
             emitter.emit { id, at ->
-                AgentEvent.RunStarted(
-                    sequenceId = id,
-                    timestampMillis = at,
-                    userMessage = text,
-                    model = run.settings.model,
-                    reasoningEffort = run.settings.reasoningEffort,
-                )
+                when (text) {
+                    null -> AgentEvent.RunResumed(id, at, run.settings.model, run.settings.reasoningEffort)
+                    else -> AgentEvent.RunStarted(id, at, text, run.settings.model, run.settings.reasoningEffort)
+                }
             }
             withContext(run.loop) { runLoop(run) }
         } catch (cancellation: CancellationException) {
@@ -318,6 +343,7 @@ public class Agent internal constructor(
         )
         emitter.emit { id, at -> AgentEvent.LlmCallStarted(id, at, turn = run.turnsUsed + 1) }
         val response = retryTransientFailures(
+            backoffs = budgets.retryBackoffs,
             onRetry = { cause, attempt, backoff ->
                 emitter.emit { id, at ->
                     AgentEvent.LlmCallRetried(id, at, cause.message ?: cause.toString(), attempt, backoff)

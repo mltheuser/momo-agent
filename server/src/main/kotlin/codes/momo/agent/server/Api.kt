@@ -98,13 +98,13 @@ internal fun Application.agentServer(registry: SessionRegistry, client: AiRouter
             call.respondError(HttpStatusCode.BadRequest, "invalid_environment", failure)
         }
         exception<BadRequestException> { call, failure ->
-            call.respondError(HttpStatusCode.BadRequest, "invalid_request", failure.rootMessage())
+            call.respondError(HttpStatusCode.BadRequest, "invalid_request", failure.rootMessage)
         }
         exception<InvalidRewindPointException> { call, failure ->
             call.respondError(HttpStatusCode.BadRequest, "invalid_request", failure)
         }
         exception<ContentConvertException> { call, failure ->
-            call.respondError(HttpStatusCode.BadRequest, "invalid_request", failure.rootMessage())
+            call.respondError(HttpStatusCode.BadRequest, "invalid_request", failure.rootMessage)
         }
         exception<UnknownTemplateException> { call, failure ->
             call.respondError(HttpStatusCode.NotFound, "unknown_template", failure)
@@ -160,52 +160,61 @@ private fun Route.sessionRoutes(registry: SessionRegistry) {
             call.respond(registry.list(call.requiredWorkspace()))
         }
         route("/{id}") {
-            scopeToWorkspace(registry)
-            get {
-                call.respond(registry.info(call.sessionId()))
-            }
-            post("/prompt") {
-                val request = call.receive<PromptRequest>().validated()
-                val id = call.sessionId()
-                registry.startRun(id, request.prompt, RunSettings(request.model, request.reasoningEffort))
-                call.respond(HttpStatusCode.Accepted, registry.info(id))
-            }
-            post("/rename") {
-                val request = call.receive<RenameRequest>()
-                if (request.title.isBlank()) {
-                    throw BadRequestException("A title must not be blank.")
-                }
-                call.respond(registry.rename(call.sessionId(), request.title))
-            }
-            post("/select-model") {
-                val request = call.receive<SelectModelRequest>()
-                if (request.model.isBlank()) {
-                    // Pre-empts the lib's blank-model require: the rule must
-                    // read as a 400 here, not a 500 from the failed emission.
-                    throw BadRequestException("A model must not be blank.")
-                }
-                call.respond(registry.selectModel(call.sessionId(), request.model, request.reasoningEffort))
-            }
-            post("/rewind") {
-                val request = call.receive<RewindRequest>()
-                val id = call.sessionId()
-                val deletedSessionIds = registry.rewind(id, request.firstDeletedSequenceId)
-                call.respond(RewindResponse(registry.info(id), deletedSessionIds))
-            }
-            eventStreamRoute(registry)
-            post("/stop") {
-                registry.stopRun(call.sessionId())
-                call.respond(registry.info(call.sessionId()))
-            }
-            post("/close") {
-                registry.close(call.sessionId())
-                call.respond(registry.info(call.sessionId()))
-            }
-            delete {
-                registry.delete(call.sessionId())
-                call.respond(HttpStatusCode.NoContent)
-            }
+            singleSessionRoutes(registry)
         }
+    }
+}
+
+private fun Route.singleSessionRoutes(registry: SessionRegistry) {
+    scopeToWorkspace(registry)
+    get {
+        call.respond(registry.info(call.sessionId()))
+    }
+    post("/prompt") {
+        val request = call.receive<PromptRequest>().validated()
+        val id = call.sessionId()
+        registry.startRun(id, request.prompt, RunSettings(request.model, request.reasoningEffort))
+        call.respond(HttpStatusCode.Accepted, registry.info(id))
+    }
+    post("/rename") {
+        val request = call.receive<RenameRequest>()
+        if (request.title.isBlank()) {
+            throw BadRequestException("A title must not be blank.")
+        }
+        call.respond(registry.rename(call.sessionId(), request.title))
+    }
+    post("/select-model") {
+        val request = call.receive<SelectModelRequest>()
+        if (request.model.isBlank()) {
+            // Pre-empts the lib's blank-model require: the rule must
+            // read as a 400 here, not a 500 from the failed emission.
+            throw BadRequestException("A model must not be blank.")
+        }
+        call.respond(registry.selectModel(call.sessionId(), request.model, request.reasoningEffort))
+    }
+    post("/retry") {
+        val id = call.sessionId()
+        registry.retryRun(id)
+        call.respond(HttpStatusCode.Accepted, registry.info(id))
+    }
+    post("/rewind") {
+        val request = call.receive<RewindRequest>()
+        val id = call.sessionId()
+        val deletedSessionIds = registry.rewind(id, request.firstDeletedSequenceId)
+        call.respond(RewindResponse(registry.info(id), deletedSessionIds))
+    }
+    eventStreamRoute(registry)
+    post("/stop") {
+        registry.stopRun(call.sessionId())
+        call.respond(registry.info(call.sessionId()))
+    }
+    post("/close") {
+        registry.close(call.sessionId())
+        call.respond(registry.info(call.sessionId()))
+    }
+    delete {
+        registry.delete(call.sessionId())
+        call.respond(HttpStatusCode.NoContent)
     }
 }
 
@@ -283,10 +292,11 @@ private suspend fun ApplicationCall.respondError(status: HttpStatusCode, code: S
 }
 
 /** Ktor wraps deserialization failures; the innermost message names the actual problem. */
-private fun Throwable.rootMessage(): String {
-    val root = generateSequence(this) { it.cause }.last()
-    return root.message ?: root.javaClass.simpleName
-}
+private val Throwable.rootMessage: String
+    get() {
+        val root = generateSequence(this) { it.cause }.last()
+        return root.message ?: root.javaClass.simpleName
+    }
 
 /** The change stream's one frame name; its frames carry no data. */
 private const val CHANGE_EVENT: String = "change"

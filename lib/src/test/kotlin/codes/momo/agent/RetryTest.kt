@@ -6,6 +6,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import java.io.IOException
+import java.nio.channels.UnresolvedAddressException
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -17,6 +19,8 @@ class RetryTest {
 
     private fun apiFailure(statusCode: Int): AiRouterException =
         AiRouterException(statusCode, ApiError(type = "test", message = "status $statusCode"))
+
+    private val scheduleMillis = RETRY_BACKOFFS.map { it.inWholeMilliseconds }
 
     @Test
     @DisplayName("A block succeeding immediately runs once, without any delay")
@@ -34,7 +38,7 @@ class RetryTest {
     }
 
     @Test
-    @DisplayName("Transient failures are retried with exponential backoff until the block succeeds")
+    @DisplayName("Transient failures are retried on the backoff schedule until the block succeeds")
     fun transientFailuresAreRetriedUntilSuccess() = runTest {
         var attempts = 0
 
@@ -46,12 +50,11 @@ class RetryTest {
 
         assertEquals("recovered", result)
         assertEquals(3, attempts)
-        // 1s of backoff after the first failure, 2s after the second.
-        assertEquals(3_000L, testScheduler.currentTime)
+        assertEquals(scheduleMillis[0] + scheduleMillis[1], testScheduler.currentTime)
     }
 
     @Test
-    @DisplayName("A persistent transient failure propagates once the retry cap is exhausted")
+    @DisplayName("A persistent transient failure propagates once the backoff schedule is spent")
     fun persistentTransientFailureGivesUp() = runTest {
         var attempts = 0
 
@@ -63,9 +66,8 @@ class RetryTest {
         }
 
         assertEquals(503, failure.statusCode)
-        assertEquals(MAX_LLM_RETRIES + 1, attempts)
-        // 1s + 2s + 4s of backoff between the four attempts.
-        assertEquals(7_000L, testScheduler.currentTime)
+        assertEquals(RETRY_BACKOFFS.size + 1, attempts)
+        assertEquals(scheduleMillis.sum(), testScheduler.currentTime)
     }
 
     @Test
@@ -86,7 +88,23 @@ class RetryTest {
     }
 
     @Test
-    @DisplayName("A failure that is not an ai-router error propagates immediately")
+    @DisplayName("A connection-level failure is retried like a transient status")
+    fun connectionFailureIsRetried() = runTest {
+        var attempts = 0
+
+        val result = retryTransientFailures {
+            attempts++
+            if (attempts == 1) throw IOException("Connection refused")
+            "recovered"
+        }
+
+        assertEquals("recovered", result)
+        assertEquals(2, attempts)
+        assertEquals(scheduleMillis[0], testScheduler.currentTime)
+    }
+
+    @Test
+    @DisplayName("A failure that is neither an ai-router error nor connection-level propagates immediately")
     fun unrelatedFailureIsNotRetried() = runTest {
         var attempts = 0
 
@@ -102,16 +120,19 @@ class RetryTest {
     }
 
     @Test
-    @DisplayName("Classification: 429 and the 5xx range are transient, everything else is not")
+    @DisplayName("Classification: 429, the 5xx range and connection-level failures are transient, the rest is not")
     fun retryClassification() {
         assertTrue(apiFailure(429).isTransient)
         assertTrue(apiFailure(500).isTransient)
         assertTrue(apiFailure(503).isTransient)
         assertTrue(apiFailure(599).isTransient)
+        assertTrue(IOException("Connection reset").isTransient)
+        assertTrue(UnresolvedAddressException().isTransient)
 
         assertFalse(apiFailure(400).isTransient)
         assertFalse(apiFailure(404).isTransient)
         assertFalse(apiFailure(428).isTransient)
         assertFalse(apiFailure(600).isTransient)
+        assertFalse(IllegalStateException("not transient").isTransient)
     }
 }

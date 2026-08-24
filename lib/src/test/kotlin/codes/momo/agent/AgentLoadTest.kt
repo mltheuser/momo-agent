@@ -146,6 +146,50 @@ class AgentLoadTest {
     }
 
     @Test
+    @DisplayName("Retrying a log cut before a failed LLM call resumes the beheaded run without a new RunStarted")
+    fun retryResumesTheBeheadedRun() {
+        // The failed call's tail is cut away, so the log ends at the tool
+        // call the run had finished — the shape the server's retry leaves.
+        val logged = recordedSession()
+        val cut = logged.subList(0, logged.indexOfFirst { it is AgentEvent.ToolCallFinished } + 1)
+
+        val listener = CollectingEventListener()
+        FakeLlm(onToolResults(assistantResponse(finishReason = "stop", text = "recovered"))).client().use { client ->
+            val agent = Agent.load(cut, TEST_HARNESS, client, environment(), listener)
+
+            val result = runBlocking { agent.retry(TEST_RUN_SETTINGS) }
+
+            assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
+            assertEquals("recovered", result.finalMessage)
+            assertEquals(
+                listOf("system", "user", "assistant", "tool", "assistant"),
+                result.transcript.map { it.role },
+                "the retried run continues the conversation with no user message of its own",
+            )
+        }
+        assertFalse(
+            listener.events.any { it is AgentEvent.RunStarted },
+            "a retry opens no run of its own in the log — it continues the beheaded one",
+        )
+        assertEquals(
+            RunResult.Status.COMPLETED,
+            (listener.events.last() as AgentEvent.RunFinished).status,
+        )
+    }
+
+    @Test
+    @DisplayName("Retrying a conversation that is not waiting on the model is rejected")
+    fun retryOfAnAnsweredConversationIsRejected() {
+        val logged = recordedSession()
+
+        unusedAiRouterClient().use { client ->
+            val agent = Agent.load(logged, TEST_HARNESS, client, environment())
+
+            assertFailsWith<IllegalArgumentException> { runBlocking { agent.retry(TEST_RUN_SETTINGS) } }
+        }
+    }
+
+    @Test
     @DisplayName("A log holding two interrupted runs loads with the dangling call of each one repaired")
     fun everyInterruptedRunInTheLogIsRepaired() {
         // A turn budget of one ends each run at the LLM boundary with its
@@ -227,6 +271,7 @@ class AgentLoadTest {
                 "budget_updated",
                 "run_finished",
                 "conversation_rewound",
+                "run_resumed",
             ),
             Json.parseToJsonElement(json).jsonArray.map { it.jsonObject.getValue("type").jsonPrimitive.content },
         )
@@ -258,6 +303,7 @@ class AgentLoadTest {
                 eventKeys("turnsUsed", "turnsRemaining", "elapsed"),
                 eventKeys("status", "finalMessage", "usage", "turnsUsed", "elapsed", "error"),
                 eventKeys("lastSurvivingSequenceId"),
+                eventKeys("model", "reasoningEffort"),
             ),
             Json.parseToJsonElement(json).jsonArray.map { it.jsonObject.keys },
         )
@@ -330,6 +376,12 @@ class AgentLoadTest {
                 ),
             ),
             AgentEvent.ConversationRewound(sequenceId = 12, timestampMillis = 13, lastSurvivingSequenceId = 4),
+            AgentEvent.RunResumed(
+                sequenceId = 13,
+                timestampMillis = 14,
+                model = "test-model",
+                reasoningEffort = ReasoningEffort.LOW,
+            ),
         )
     }
 

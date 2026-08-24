@@ -5,6 +5,7 @@ import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.Agent
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.AgentEventListener
+import codes.momo.agent.RunResult
 import codes.momo.agent.RunSettings
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
@@ -571,20 +572,59 @@ internal class SessionRegistry(
     suspend fun startRun(id: String, prompt: String, settings: RunSettings) {
         val (path, root) = treeOf(entries, store, id)
         root.mutex.withLock {
-            val attached = root.runtime
-            val runtime = attached ?: rebuild(root, path.first()).also { root.runtime = it }
-            try {
-                val agent = runtime.agentAt(path) ?: throw UnknownSessionException(id)
-                runtime.startRun(agent, prompt, settings)
-            } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
-                // A failed prompt must not leave behind the runtime it
-                // attached — a member unreachable from its parent's log (a
-                // torn spawn tail) or a failed revival throws here.
-                if (attached == null) {
-                    teardown(root)
+            launchRunLocked(root, path) { agent -> agent.send(prompt, settings) }
+        }
+    }
+
+    /**
+     * Retries [id]'s failed last run: cuts the stored log back to before
+     * the LLM call that failed — per [retryPlan], which is also where a
+     * session with nothing to retry draws its refusal — and resumes the
+     * beheaded run under the settings it recorded, exactly as [rewind]
+     * followed by a resume would. The cut announces itself to subscribers
+     * as [AgentEvent.ConversationRewound]; the resumed run opens as
+     * [AgentEvent.RunResumed] and runs like any prompted one.
+     *
+     * @throws SessionConflictException when the log's tail is not a failed
+     *   run, or a run is in flight anywhere in the tree.
+     */
+    suspend fun retryRun(id: String) {
+        val (path, root) = treeOf(entries, store, id)
+        announcingChange {
+            root.mutex.withLock {
+                if (root.runtime?.hasRunInFlight() == true) {
+                    throw SessionConflictException("A run is in flight in the session's tree.")
                 }
-                throw failure
+                val plan = retryPlan(storedEvents(id))
+                executeRewind(root, rootId = path.first(), id = id, lastSurviving = plan.lastSurvivingSequenceId)
+                launchRunLocked(root, path) { agent -> agent.retry(plan.settings) }
             }
+        }
+    }
+
+    /**
+     * Attaches [path]'s tree when dormant — reviving just the chain from
+     * the root down to its target — and launches [run] on the target's
+     * agent; the caller holds the root's mutex.
+     */
+    private suspend fun launchRunLocked(
+        root: SessionEntry,
+        path: List<String>,
+        run: suspend (Agent) -> RunResult,
+    ) {
+        val attached = root.runtime
+        val runtime = attached ?: rebuild(root, path.first()).also { root.runtime = it }
+        try {
+            val agent = runtime.agentAt(path) ?: throw UnknownSessionException(path.last())
+            runtime.launchRun(agent, run)
+        } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
+            // A failed start must not leave behind the runtime it
+            // attached — a member unreachable from its parent's log (a
+            // torn spawn tail) or a failed revival throws here.
+            if (attached == null) {
+                teardown(root)
+            }
+            throw failure
         }
     }
 
@@ -889,12 +929,13 @@ private class TreeRuntime(
         path.drop(1).fold(rootAgent as Agent?) { agent, childId -> agent?.liveSubagentBySessionId(childId) }
 
     /**
-     * The one way to drive a member of the tree: starts a run over [prompt]
-     * as a child of the tree's scope — so [abortRuns] reaches it — and
-     * returns as soon as it is started. The run's outcome is never
-     * returned; its [AgentEvent.RunFinished] log entry is the record.
+     * The one way to drive a member of the tree: launches [run] — an
+     * [Agent.send] or an [Agent.retry] on [agent] — as a child of the
+     * tree's scope, so [abortRuns] reaches it, and returns as soon as it is
+     * started. The run's outcome is never returned; its
+     * [AgentEvent.RunFinished] log entry is the record.
      */
-    fun startRun(agent: Agent, prompt: String, settings: RunSettings) {
+    fun launchRun(agent: Agent, run: suspend (Agent) -> RunResult) {
         logs[agent.sessionId]?.failure?.let { throw EventLogFailedException(it) }
         claimRun(agent)
         // Behind the claim, and at the end behind its release: the ordering
@@ -902,7 +943,7 @@ private class TreeRuntime(
         announceChange()
         scope.launch {
             try {
-                agent.send(prompt, settings)
+                run(agent)
             } finally {
                 activeRuns.remove(agent.sessionId)
                 announceChange()

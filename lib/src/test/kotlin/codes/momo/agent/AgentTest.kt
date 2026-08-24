@@ -178,7 +178,13 @@ class AgentTest {
     @DisplayName("A terminal LLM failure ends the run as an ERROR result and leaves the agent usable")
     fun terminalLlmFailureBecomesErrorResult() {
         AiRouterClient(refusingBaseUrl()).use { client ->
-            val agent = workspace.agent(client, harness = TEST_HARNESS)
+            // No backoff schedule: a refused connection is transient now, and
+            // the case is about the failure that stands once retries are spent.
+            val agent = workspace.agent(
+                client,
+                budgets = RunBudgets(retryBackoffs = emptyList()),
+                harness = TEST_HARNESS,
+            )
             runBlocking {
                 val first = agent.send("hello", TEST_RUN_SETTINGS)
 

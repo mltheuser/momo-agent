@@ -82,6 +82,22 @@ public sealed interface AgentEvent {
     ) : AgentEvent
 
     /**
+     * An [Agent.retry] resumed the conversation's beheaded run: no new user
+     * message, so no [RunStarted] — this event is what marks the resumed
+     * run in flight, carrying its [RunSettings] fields the way [RunStarted]
+     * does. It bears no conversation content (transcript derivation
+     * ignores it).
+     */
+    @Serializable
+    @SerialName("run_resumed")
+    public data class RunResumed(
+        override val sequenceId: Long,
+        override val timestampMillis: Long,
+        val model: String,
+        val reasoningEffort: ReasoningEffort? = null,
+    ) : AgentEvent
+
+    /**
      * A run reached a terminal status, however it ended — an [Agent.stop]
      * included. A log can still record a run without this event: cancelling
      * the coroutine that runs [Agent.send] leaves one, as does this event's

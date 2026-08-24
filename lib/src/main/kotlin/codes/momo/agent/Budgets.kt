@@ -34,4 +34,6 @@ internal data class RunBudgets(
     val maxTurns: Int = Budgets.MAX_TURNS,
     val maxWallClock: Duration = Budgets.MAX_WALL_CLOCK,
     val toolTimeout: Duration = Budgets.TOOL_TIMEOUT,
+    /** Sleeps between a failed LLM call and its retries, one entry per retry. */
+    val retryBackoffs: List<Duration> = RETRY_BACKOFFS,
 )

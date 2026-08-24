@@ -22,18 +22,20 @@ class AgentEventStreamTest {
     @DisplayName("A transient LLM failure emits a retry event carrying the cause and backoff")
     fun transientFailureEmitsRetryEvent() {
         val listener = CollectingEventListener()
+        val backoff = 10.milliseconds
 
         val result = workspace.runAgainstFake(
             listener,
             transientFailure("a fake overload"),
             onOpeningTurn(assistantResponse(finishReason = "stop", text = "ok")),
+            budgets = RunBudgets(retryBackoffs = listOf(backoff)),
             harness = TEST_HARNESS,
         )
 
         assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
         val retry = listener.events.filterIsInstance<AgentEvent.LlmCallRetried>().single()
         assertEquals(1, retry.attempt)
-        assertEquals(INITIAL_RETRY_BACKOFF, retry.backoff)
+        assertEquals(backoff, retry.backoff)
         assertContains(retry.cause, "a fake overload")
     }
 
