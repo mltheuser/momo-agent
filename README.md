@@ -371,6 +371,16 @@ runs this run drives — unless the child was spawned with a `model_id` or
 `reasoning_effort`, which pin its settings (see Subagent sessions); a
 directly prompted child uses only its own prompt's settings.
 
+A markdown image link — `![title](link)` — anywhere in the prompt is
+resolved best-effort into an image the model sees alongside the text: a
+relative path resolves against the session workspace, an absolute path
+loads likewise (both through the session's execution environment), and an http(s) URL is
+fetched. A link that fails to load — for any reason —
+stays plain prompt text. The
+prompt string itself is stored and echoed verbatim either way; the resolved
+images ride the run's `run_started` event as its `attachments`, so replay
+rebuilds the exact message without re-reading the sources.
+
 Prompting a `closed` session rebuilds its tree's runtime first — that is
 the resume path (see Subagent sessions). No endpoint returns the run's
 outcome: its `run_finished` event (status, final message verbatim, usage,
@@ -564,8 +574,8 @@ child gets an error result in its own log.
 - **macOS** (including arm64) — best-effort, for development only.
 - **Windows** — unsupported.
 
-The project assumes a POSIX userland (`bash`, coreutils, `grep`, `find`,
-`sed`), UTF-8 everywhere, LF line endings, and a `docker` CLI usable
+The project assumes a POSIX userland (`bash`, coreutils — `base64`
+included — `grep`, `find`, `sed`), UTF-8 everywhere, LF line endings, and a `docker` CLI usable
 without `sudo` (needed for container-backed execution and the
 `containerTest` suite).
 

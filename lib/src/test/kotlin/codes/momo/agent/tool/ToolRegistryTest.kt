@@ -30,6 +30,8 @@ class ToolRegistryTest {
 
     // ─── Fixture helpers ──────────────────────────────────────────────
 
+    private val defaultMarker = ToolRegistry.truncationMarker(ToolRegistry.MAX_RESULT_CHARS)
+
     private fun registryOf(vararg tools: Tool<*>): ToolRegistry = ToolRegistry(tools.toList())
 
     private suspend fun ToolRegistry.dispatch(
@@ -158,7 +160,7 @@ class ToolRegistryTest {
 
         val error = assertError(result, "unknown tool")
         assertTrue(
-            error.message.endsWith(ToolRegistry.TRUNCATION_MARKER),
+            error.message.endsWith(defaultMarker),
             "expected truncated error text to end with the marker, was: ${error.message.takeLast(80)}",
         )
     }
@@ -291,7 +293,7 @@ class ToolRegistryTest {
         val result = assertIs<ToolResult.TimedOut>(registry.dispatch("scripted"))
 
         val partialOutput = assertNotNull(result.partialOutput)
-        assertTrue(partialOutput.endsWith(ToolRegistry.TRUNCATION_MARKER))
+        assertTrue(partialOutput.endsWith(defaultMarker))
     }
 
     // ─── Result truncation ────────────────────────────────────────────
@@ -306,7 +308,7 @@ class ToolRegistryTest {
 
         val result = assertIs<ToolResult.Success>(execution.result)
         assertEquals(
-            "x".repeat(ToolRegistry.MAX_RESULT_CHARS) + ToolRegistry.TRUNCATION_MARKER,
+            "x".repeat(ToolRegistry.MAX_RESULT_CHARS) + defaultMarker,
             result.text,
         )
         assertTrue(execution.truncated)
@@ -322,9 +324,22 @@ class ToolRegistryTest {
         val result = assertIs<ToolResult.Success>(registry.dispatch("scripted"))
 
         assertEquals(
-            "x".repeat(ToolRegistry.MAX_RESULT_CHARS - 1) + ToolRegistry.TRUNCATION_MARKER,
+            "x".repeat(ToolRegistry.MAX_RESULT_CHARS - 1) + defaultMarker,
             result.text,
         )
+    }
+
+    @Test
+    @DisplayName("A tool's own result limit overrides the default, and the marker names it")
+    fun toolDeclaredLimitOverridesDefault() = runTest {
+        val limit = 8
+        val registry = registryOf(ScriptedTool(maxResultChars = limit) { ToolResult.Success("x".repeat(limit + 1)) })
+
+        val execution = registry.execute("scripted", buildJsonObject { }, UnusedEnvironment)
+
+        val result = assertIs<ToolResult.Success>(execution.result)
+        assertEquals("x".repeat(limit) + ToolRegistry.truncationMarker(limit), result.text)
+        assertTrue(execution.truncated)
     }
 
     @Test
@@ -365,6 +380,7 @@ private class EmptyArgs
 /** Runs the injected [body], letting each test script a success, failure, or delay. */
 private class ScriptedTool(
     name: String = "scripted",
+    override val maxResultChars: Int = ToolRegistry.MAX_RESULT_CHARS,
     private val body: suspend () -> ToolResult = { ToolResult.Success("") },
 ) : Tool<EmptyArgs>(
     name = name,

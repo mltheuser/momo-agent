@@ -196,6 +196,7 @@ class BashToolTest {
     @Test
     @DisplayName("Oversized real output dispatched through the registry is truncated with the marker")
     fun oversizedOutputIsTruncatedByDispatch() = runBlocking {
+        val marker = ToolRegistry.truncationMarker(ToolRegistry.MAX_RESULT_CHARS)
         val registry = ToolRegistry(listOf(bashTool()))
         val arguments = buildJsonObject {
             put("command", "head -c ${ToolRegistry.MAX_RESULT_CHARS + 1} /dev/zero | tr '\\0' x")
@@ -205,10 +206,10 @@ class BashToolTest {
 
         val success = assertIs<ToolResult.Success>(result)
         assertTrue(
-            success.text.endsWith(ToolRegistry.TRUNCATION_MARKER),
+            success.text.endsWith(marker),
             "expected the registry's truncation marker, text ends with: ${success.text.takeLast(80)}",
         )
-        assertEquals(ToolRegistry.MAX_RESULT_CHARS + ToolRegistry.TRUNCATION_MARKER.length, success.text.length)
+        assertEquals(ToolRegistry.MAX_RESULT_CHARS + marker.length, success.text.length)
     }
 
     // ─── Timeout mapping ──────────────────────────────────────────────

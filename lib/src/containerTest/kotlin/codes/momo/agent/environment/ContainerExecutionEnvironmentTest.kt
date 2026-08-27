@@ -4,14 +4,19 @@ import codes.momo.agent.labeledContainers
 import codes.momo.agent.tool.BashArgs
 import codes.momo.agent.tool.BashTool
 import codes.momo.agent.tool.ToolResult
+import codes.momo.agent.tool.ViewImageArgs
+import codes.momo.agent.tool.ViewImageTool
+import codes.momo.agent.writeWordImage
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
+import java.util.Base64
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
+import kotlin.io.path.readBytes
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 import kotlin.test.assertContains
@@ -116,6 +121,24 @@ class ContainerExecutionEnvironmentTest {
 
             val readBack = environment.exec(listOf("cat", "/workspace/bare.txt"), timeout = 30.seconds)
             assertEquals(bare, readBack.assertCompletedOk().stdout)
+        }
+    }
+
+    @Test
+    @DisplayName("The view_image tool loads a PNG planted in the container through the container's own base64")
+    fun viewImageToolLoadsFromContainer() {
+        val png = tempDir.resolve("pixel.png")
+        writeWordImage(png, "HI")
+        withEnvironment { environment ->
+            val result = ViewImageTool().execute(ViewImageArgs("/workspace/pixel.png"), environment)
+
+            val image = assertIs<ToolResult.Image>(result, result.text)
+            assertEquals("image/png", image.mimeType)
+            assertEquals(
+                Base64.getEncoder().encodeToString(png.readBytes()),
+                image.base64Data,
+                "the container read must hand back the host-planted bytes verbatim",
+            )
         }
     }
 

@@ -143,6 +143,11 @@ public class Agent internal constructor(
      * fresh budget counters. [settings] carries this run's model settings
      * (see [RunSettings]).
      *
+     * Markdown image links in [text] resolve best-effort into images the
+     * model sees alongside the verbatim prompt (see
+     * [resolvePromptAttachments]); a link that fails to load stays plain
+     * text, silently.
+     *
      * After every outcome — cancellation included —
      * the stored conversation stays well-formed for the next call: tool
      * calls the run never finished are answered with synthesized aborted
@@ -202,6 +207,19 @@ public class Agent internal constructor(
         }
     }
 
+    private fun emitRunOpening(
+        text: String?,
+        settings: RunSettings,
+        attachments: List<AgentEvent.RunStarted.Attachment>,
+    ) {
+        emitter.emit { id, at ->
+            when (text) {
+                null -> AgentEvent.RunResumed(id, at, settings.model, settings.reasoningEffort)
+                else -> AgentEvent.RunStarted(id, at, text, settings.model, settings.reasoningEffort, attachments)
+            }
+        }
+    }
+
     /**
      * Stops the run in flight, if any, and returns once it has ended: its
      * loop is cancelled — killing the process tree of a tool mid-execution
@@ -225,20 +243,16 @@ public class Agent internal constructor(
     /** One run to its outcome; a null [text] is a [retry], which opens no run of its own in the log. */
     private suspend fun executeRun(text: String?, run: RunState): RunResult {
         currentRun = run
+        val attachments = if (text == null) emptyList() else resolvePromptAttachments(text, environment)
         if (text != null) {
-            history += userMessage(text)
+            history += userMessage(text, attachments)
         }
         // Outlives the try: the arm that records it cannot also rethrow it.
         var fatal: Throwable? = null
         val status = try {
             // Inside the try, so a listener raising on the opening event ends
             // the run through the arms below like any later one would.
-            emitter.emit { id, at ->
-                when (text) {
-                    null -> AgentEvent.RunResumed(id, at, run.settings.model, run.settings.reasoningEffort)
-                    else -> AgentEvent.RunStarted(id, at, text, run.settings.model, run.settings.reasoningEffort)
-                }
-            }
+            emitRunOpening(text, run.settings, attachments)
             withContext(run.loop) { runLoop(run) }
         } catch (cancellation: CancellationException) {
             if (!cancellation.isRunStopped()) {
@@ -375,7 +389,8 @@ public class Agent internal constructor(
         }
         val timeout = minOf(budgets.toolTimeout, run.remaining.coerceAtLeast(Duration.ZERO))
         val execution = registry.execute(call.function.name, call.function.arguments, environment, timeout)
-        history += toolResultMessage(call.id, execution.result.text)
+        val media = execution.result.media
+        history += toolResultMessage(call.id, execution.result.text, media)
         emitter.emit { id, at ->
             AgentEvent.ToolCallFinished(
                 sequenceId = id,
@@ -385,6 +400,7 @@ public class Agent internal constructor(
                 outcome = execution.result.outcome,
                 duration = execution.duration,
                 truncated = execution.truncated,
+                media = media,
             )
         }
     }
@@ -635,18 +651,65 @@ private fun AgentEventEmitter.emitRunFinishedUnder(fatal: Throwable, result: Run
 private fun textMessage(role: String, text: String): ChatMessage =
     ChatMessage(role = role, content = listOf(ContentPart(type = ContentPartType.TEXT, text = text)))
 
-internal fun userMessage(text: String): ChatMessage = textMessage(ROLE_USER, text)
+/**
+ * The user message a prompt becomes — with [attachments] present, each
+ * resolved markdown image link keeps its markdown verbatim as text and an
+ * image content part follows it, so the model sees both the picture and
+ * where it came from; the text parts concatenated always equal the original
+ * prompt. Replay reconstructs stored prompts through this same builder, so
+ * a restored conversation matches the live one exactly.
+ */
+internal fun userMessage(
+    text: String,
+    attachments: List<AgentEvent.RunStarted.Attachment> = emptyList(),
+): ChatMessage {
+    val imageByLink = attachments.associateBy { it.link }
+    if (imageByLink.isEmpty()) {
+        return textMessage(ROLE_USER, text)
+    }
+    val parts = buildList {
+        var consumed = 0
+        for (match in MARKDOWN_IMAGE.findAll(text)) {
+            val image = imageByLink[match.groupValues[1]] ?: continue
+            add(ContentPart(type = ContentPartType.TEXT, text = text.substring(consumed, match.range.last + 1)))
+            add(ContentPart(type = ContentPartType.IMAGE, mimeType = image.mimeType, base64Data = image.base64Data))
+            consumed = match.range.last + 1
+        }
+        if (consumed < text.length) {
+            add(ContentPart(type = ContentPartType.TEXT, text = text.substring(consumed)))
+        }
+    }
+    return ChatMessage(role = ROLE_USER, content = parts)
+}
 
-internal fun toolResultMessage(callId: String, text: String): ChatMessage =
+/**
+ * The tool message appended for one answered call — with [media] present,
+ * the image content part alone stands in for the text, which stays a
+ * stored-log marker. Replay reconstructs stored results through this same
+ * builder, so a restored conversation matches the live one exactly.
+ */
+internal fun toolResultMessage(
+    callId: String,
+    text: String,
+    media: AgentEvent.ToolCallFinished.Media? = null,
+): ChatMessage =
     ChatMessage(
         role = ROLE_TOOL,
-        content = listOf(ContentPart(type = ContentPartType.TEXT, text = text)),
+        content = when (media) {
+            null -> listOf(ContentPart(type = ContentPartType.TEXT, text = text))
+            else -> listOf(
+                ContentPart(type = ContentPartType.IMAGE, mimeType = media.mimeType, base64Data = media.base64Data),
+            )
+        },
         toolCallId = callId,
     )
 
+private val ToolResult.media: AgentEvent.ToolCallFinished.Media?
+    get() = (this as? ToolResult.Image)?.let { AgentEvent.ToolCallFinished.Media(it.mimeType, it.base64Data) }
+
 private val ToolResult.outcome: AgentEvent.ToolCallFinished.Outcome
     get() = when (this) {
-        is ToolResult.Success -> AgentEvent.ToolCallFinished.Outcome.SUCCESS
+        is ToolResult.Success, is ToolResult.Image -> AgentEvent.ToolCallFinished.Outcome.SUCCESS
         is ToolResult.Error -> AgentEvent.ToolCallFinished.Outcome.ERROR
         is ToolResult.TimedOut -> AgentEvent.ToolCallFinished.Outcome.TIMED_OUT
     }

@@ -75,7 +75,7 @@ class HarnessTest {
         // Test working directory is the Gradle project dir.
         val harness = Harness.load(Path.of("examples/coder"))
 
-        assertEquals(listOf("bash"), harness.tools)
+        assertEquals(listOf("bash", "view_image"), harness.tools)
         assertTrue(
             harness.instructions.contains("careful, methodical coding agent"),
             "instructions.md content is exposed raw",

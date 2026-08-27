@@ -66,8 +66,9 @@ public class ToolRegistry(tools: List<Tool<*>>) {
      *   models often add stray fields);
      * - an unexpected exception from the tool → [ToolResult.Error];
      * - exceeding [timeout] → [ToolResult.TimedOut];
-     * - text over [MAX_RESULT_CHARS] → truncated, with
-     *   [TRUNCATION_MARKER] appended.
+     * - text over the tool's [Tool.maxResultChars] (default
+     *   [MAX_RESULT_CHARS]) → truncated, with a marker naming the
+     *   applied limit appended.
      */
     public suspend fun execute(
         name: String,
@@ -76,11 +77,12 @@ public class ToolRegistry(tools: List<Tool<*>>) {
         timeout: Duration = Budgets.TOOL_TIMEOUT,
     ): ToolExecution {
         val start = TimeSource.Monotonic.markNow()
-        val result = when (val tool = toolsByName[name]) {
+        val tool = toolsByName[name]
+        val result = when (tool) {
             null -> ToolResult.Error(unknownToolMessage(name))
             else -> dispatch(tool, arguments, environment, timeout)
         }
-        val bounded = result.bounded()
+        val bounded = result.bounded(tool?.maxResultChars ?: MAX_RESULT_CHARS)
         return ToolExecution(
             result = bounded,
             truncated = bounded.text != result.text,
@@ -122,24 +124,35 @@ public class ToolRegistry(tools: List<Tool<*>>) {
     private fun formatNames(): String =
         if (names.isEmpty()) "(none)" else names.sorted().joinToString(", ")
 
-    private fun ToolResult.bounded(): ToolResult = when (this) {
-        is ToolResult.Success -> ToolResult.Success(text.boundedResultText())
-        is ToolResult.Error -> ToolResult.Error(message.boundedResultText())
-        is ToolResult.TimedOut -> ToolResult.TimedOut(partialOutput?.boundedResultText(), timeout)
+    private fun ToolResult.bounded(limit: Int): ToolResult = when (this) {
+        is ToolResult.Success -> ToolResult.Success(text.boundedResultText(limit))
+        is ToolResult.Image -> this
+        is ToolResult.Error -> ToolResult.Error(message.boundedResultText(limit))
+        is ToolResult.TimedOut -> ToolResult.TimedOut(partialOutput?.boundedResultText(limit), timeout)
+    }
+
+    private fun String.boundedResultText(limit: Int): String {
+        if (length <= limit) return this
+        // Strings are UTF-16 in memory; cutting a surrogate pair in half
+        // leaves text that cannot be re-encoded to UTF-8 for the model.
+        val cut = if (this[limit - 1].isHighSurrogate()) limit - 1 else limit
+        return take(cut) + truncationMarker(limit)
     }
 
     public companion object {
 
         /**
-         * Per-result cap on model-facing text: where
+         * Default per-result cap on model-facing text: where
          * [ExecutionEnvironment.MAX_CAPTURED_BYTES] protects the JVM
          * heap, this far smaller bound protects the model's context.
+         * A tool with legitimately larger payloads overrides
+         * [Tool.maxResultChars].
          */
         public const val MAX_RESULT_CHARS: Int = 96 * 1024
 
-        /** Appended to capped text so the model knows output was cut short. */
-        public const val TRUNCATION_MARKER: String =
-            "\n[output truncated: exceeded $MAX_RESULT_CHARS characters]"
+        /** Appended to capped text so the model knows output was cut short at [limit]. */
+        public fun truncationMarker(limit: Int): String =
+            "\n[output truncated: exceeded $limit characters]"
 
         /**
          * Headroom the dispatch timer adds over [Budgets.TOOL_TIMEOUT] so
@@ -150,26 +163,9 @@ public class ToolRegistry(tools: List<Tool<*>>) {
     }
 }
 
-/**
- * [ToolRegistry.MAX_RESULT_CHARS]-capped model-facing text, with
- * [ToolRegistry.TRUNCATION_MARKER] appended when cut — the bound every
- * tool result passes through.
- */
-internal fun String.boundedResultText(): String {
-    if (length <= ToolRegistry.MAX_RESULT_CHARS) return this
-    // Strings are UTF-16 in memory; cutting a surrogate pair in half
-    // leaves text that cannot be re-encoded to UTF-8 for the model.
-    val cut = if (this[ToolRegistry.MAX_RESULT_CHARS - 1].isHighSurrogate()) {
-        ToolRegistry.MAX_RESULT_CHARS - 1
-    } else {
-        ToolRegistry.MAX_RESULT_CHARS
-    }
-    return take(cut) + ToolRegistry.TRUNCATION_MARKER
-}
-
 /** One [ToolRegistry.execute] dispatch: the model-facing result plus the facts only dispatch knows. */
 public data class ToolExecution(
-    /** The outcome, its payload bounded to [ToolRegistry.MAX_RESULT_CHARS] (failure framing adds slightly more). */
+    /** The outcome, its payload bounded to the tool's [Tool.maxResultChars] (failure framing adds slightly more). */
     val result: ToolResult,
     /** Whether bounding cut the payload short. */
     val truncated: Boolean,

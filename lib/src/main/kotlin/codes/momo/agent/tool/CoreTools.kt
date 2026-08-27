@@ -21,6 +21,7 @@ internal fun coreToolRegistry(
     ToolRegistry(
         listOf(
             BashTool(workspacePath, privilege),
+            ViewImageTool(),
             SpawnSubagentTool(subagents, subagentTypes),
             PromptSubagentTool(subagents),
         ),

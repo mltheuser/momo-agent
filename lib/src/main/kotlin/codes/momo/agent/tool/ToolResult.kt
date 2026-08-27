@@ -16,6 +16,18 @@ public sealed interface ToolResult {
     /** The tool did what was asked; [text] is its output. */
     public data class Success(override val text: String) : ToolResult
 
+    /**
+     * The tool produced an image the model is meant to see: the agent loop
+     * sends it as an image content part instead of text. [text] is only a
+     * marker for renderers of the stored log, never the payload — bounding
+     * leaves this result untouched, since truncated base64 is garbage.
+     */
+    public data class Image(val mimeType: String, val base64Data: String) : ToolResult {
+
+        override val text: String
+            get() = "[image: $mimeType]"
+    }
+
     /** The tool (or its dispatch) failed; [message] names the problem. */
     public data class Error(val message: String) : ToolResult {
 

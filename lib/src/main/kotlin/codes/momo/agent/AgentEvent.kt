@@ -68,7 +68,13 @@ public sealed interface AgentEvent {
         val reasoningEffort: ReasoningEffort? = null,
     ) : AgentEvent
 
-    /** An [Agent.send] run began; [userMessage] is the verbatim user text. */
+    /**
+     * An [Agent.send] run began; [userMessage] is the verbatim user text.
+     * [attachments] carries the images its markdown image links resolved
+     * to at send time, so replay rebuilds the run's exact multi-part user
+     * message from the log alone — the linked files may have changed or
+     * vanished since.
+     */
     @Serializable
     @SerialName("run_started")
     public data class RunStarted(
@@ -79,7 +85,14 @@ public sealed interface AgentEvent {
         val model: String? = null,
         /** The run's [RunSettings.reasoningEffort]; null when unset. */
         val reasoningEffort: ReasoningEffort? = null,
-    ) : AgentEvent
+        /** One entry per resolved image link; empty when none resolved (and for logs predating the field). */
+        val attachments: List<Attachment> = emptyList(),
+    ) : AgentEvent {
+
+        /** One resolved prompt image, verbatim as loaded — the log is the conversation, blobs included. */
+        @Serializable
+        public data class Attachment(val link: String, val mimeType: String, val base64Data: String)
+    }
 
     /**
      * An [Agent.retry] resumed the conversation's beheaded run: no new user
@@ -194,7 +207,12 @@ public sealed interface AgentEvent {
         val arguments: JsonObject,
     ) : AgentEvent
 
-    /** A tool call finished; [resultText] is the exact model-facing text appended to the conversation. */
+    /**
+     * A tool call finished. For a text result [resultText] is the exact
+     * model-facing text appended to the conversation; for a media result
+     * the appended tool message carries [media] as an image content part
+     * instead, and [resultText] is only a marker for renderers.
+     */
     @Serializable
     @SerialName("tool_call_finished")
     public data class ToolCallFinished(
@@ -206,7 +224,13 @@ public sealed interface AgentEvent {
         val duration: Duration,
         /** The dispatch's [codes.momo.agent.tool.ToolExecution.truncated]. */
         val truncated: Boolean,
+        /** The image a media-bearing result put in front of the model; null for text results and older logs. */
+        val media: Media? = null,
     ) : AgentEvent {
+
+        /** An image payload, verbatim as the tool produced it — the log is the conversation, blobs included. */
+        @Serializable
+        public data class Media(val mimeType: String, val base64Data: String)
 
         /** How the execution ended, mirroring the [codes.momo.agent.tool.ToolResult] variants. */
         @Serializable

@@ -125,12 +125,12 @@ private fun conversationFrom(events: List<AgentEvent>): List<ChatMessage> = buil
         when (event) {
             is AgentEvent.RunStarted -> {
                 addAll(abortedToolResults(this))
-                add(userMessage(event.userMessage))
+                add(userMessage(event.userMessage, event.attachments))
             }
 
             is AgentEvent.LlmCallFinished -> add(event.message)
 
-            is AgentEvent.ToolCallFinished -> add(toolResultMessage(event.callId, event.resultText))
+            is AgentEvent.ToolCallFinished -> add(toolResultMessage(event.callId, event.resultText, event.media))
 
             else -> Unit
         }

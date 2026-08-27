@@ -34,6 +34,15 @@ public abstract class Tool<A : Any> protected constructor(
      */
     internal open val timeoutExempt: Boolean = false
 
+    /**
+     * Cap on the tool's model-facing result text, applied by
+     * [ToolRegistry.execute]. Override only for tools whose payloads are
+     * legitimately larger than the [ToolRegistry.MAX_RESULT_CHARS]
+     * default — never for media-bearing results, which truncation would
+     * corrupt; those must fail oversized input up front instead.
+     */
+    internal open val maxResultChars: Int = ToolRegistry.MAX_RESULT_CHARS
+
     /** The LLM-facing definition sent with chat requests. */
     public val definition: ToolDefinition = ToolDefinition(
         name = name,

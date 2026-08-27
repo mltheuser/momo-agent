@@ -44,6 +44,11 @@ public fun bashCall(id: String, command: String): ToolCall = ToolCall(
     function = ToolCallFunction(name = "bash", arguments = buildJsonObject { put("command", command) }),
 )
 
+public fun viewImageCall(id: String, path: String): ToolCall = ToolCall(
+    id = id,
+    function = ToolCallFunction(name = "view_image", arguments = buildJsonObject { put("path", path) }),
+)
+
 public fun spawnSubagentCall(
     id: String,
     name: String,
