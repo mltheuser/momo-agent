@@ -189,11 +189,12 @@ private fun RunResult.asToolResult(name: String): ToolResult = when (status) {
     RunResult.Status.COMPLETED -> ToolResult.Success(finalMessage.orEmpty())
 
     // The one status whose advice inverts: a user chose this, so re-prompting
-    // undoes their intent. A parent only ever reads this result for a child
-    // stopped from outside — a stop of its own run cancels its loop instead.
+    // undoes their intent. A stop of the parent's own run lands here too —
+    // the cascade ends the child's run as STOPPED and its send returns.
     RunResult.Status.STOPPED -> ToolResult.Error(
-        "subagent '$name' run ended as STOPPED — a user deliberately stopped it. " +
-            "Do not prompt it again to retry that work; report what happened and finish your run.",
+        "subagent '$name' run ended as STOPPED — a user deliberately stopped it. The subagent received this " +
+            "prompt and keeps whatever progress it made. Do not prompt it again to retry that work; report " +
+            "what happened and finish your run.",
     )
 
     RunResult.Status.TURNS_EXHAUSTED -> ToolResult.Error(
@@ -207,6 +208,7 @@ private fun RunResult.asToolResult(name: String): ToolResult = when (status) {
     )
 
     RunResult.Status.ERROR -> ToolResult.Error(
-        "subagent '$name' run ended as ERROR — ${error ?: "its LLM call failed"}.",
+        "subagent '$name' run ended as ERROR — ${error ?: "its LLM call failed"}. The subagent received this " +
+            "prompt and keeps whatever progress it made; prompting it again continues where it left off.",
     )
 }

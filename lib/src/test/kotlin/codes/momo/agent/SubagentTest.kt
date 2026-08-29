@@ -1,7 +1,11 @@
 package codes.momo.agent
 
 import ai.router.sdk.models.ReasoningEffort
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -241,6 +245,11 @@ class SubagentTest {
         )
 
         assertContains(toolText, "Error: subagent 'helper' run ended as ERROR")
+        assertContains(
+            toolText,
+            "received this prompt",
+            message = "the parent must learn the prompt was received",
+        )
     }
 
     @Test
@@ -269,6 +278,51 @@ class SubagentTest {
         )
 
         assertContains(toolText, "Error: subagent 'helper' run ended as TIMEOUT")
+    }
+
+    @Test
+    @DisplayName("A stop cutting the parent mid-prompt tells it, per prompt call, whether the child received it")
+    fun stopMidPromptRepairsReceiptIntoTheParentsTranscript() {
+        val childWorking = CompletableDeferred<Unit>()
+        val listener = object : AgentEventListener {
+            override fun onEvent(event: AgentEvent) = Unit
+
+            override fun listenerForSubagent(name: String, sessionId: String): AgentEventListener =
+                AgentEventListener { event ->
+                    if (event is AgentEvent.ToolCallStarted) childWorking.complete(Unit)
+                }
+        }
+        FakeLlm(
+            onOpeningTurn(
+                toolCallResponse(
+                    spawnSubagentCall(id = "call-1", name = "helper"),
+                    promptSubagentCall(id = "call-2", name = "helper", message = "first errand"),
+                    promptSubagentCall(id = "call-3", name = "helper", message = "second errand"),
+                ),
+            ).fromRootAgent(),
+            // Real time in a tool holds the child mid-prompt until the stop
+            // lands; the second prompt call is still queued behind it.
+            onOpeningTurn(toolCallResponse(bashCall(id = "child-1", command = "sleep 30"))).fromSubagent(),
+        ).client().use { client ->
+            val parent = workspace.agent(client, listener)
+            runBlocking {
+                val run = async(Dispatchers.IO) { parent.send("go", TEST_RUN_SETTINGS) }
+                withTimeout(5.seconds) { childWorking.await() }
+
+                parent.stop()
+
+                val result = withTimeout(5.seconds) { run.await() }
+                assertEquals(RunResult.Status.STOPPED, result.status)
+                val toolTexts = result.transcript.toolTexts()
+                assertContains(toolTexts[0], "spawned subagent 'helper'")
+                // The blocked prompt reads the cascade-stopped child's own
+                // outcome; the queued one never dispatched and says so.
+                assertContains(toolTexts[1], "run ended as STOPPED")
+                assertContains(toolTexts[1], "received this prompt")
+                assertContains(toolTexts[2], "a user stopped the run before this call could execute")
+                assertContains(toolTexts[2], "never received this message")
+            }
+        }
     }
 
     // ─── Error results ────────────────────────────────────────────────

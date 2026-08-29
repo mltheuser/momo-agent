@@ -542,8 +542,12 @@ result, and the name is free to spawn anew.
 A stop, by contrast, is run-scoped and leaves the tree attached: it
 cascades only downward, into the child runs the stopped run is blocked on
 — each recording its own `stopped` end. A stopped parent-driven child
-hands its parent the same kind of error result any other unfinished child
-run does, and the parent runs on.
+hands its parent an error result naming the stop, like every unfinished
+child run hands one naming its own outcome, and the parent runs on. A
+`prompt_subagent` call the cut run never answered gets a synthesized
+result in the parent's transcript saying what ended the run and whether
+the subagent received the message — received when the call had started
+executing, never delivered when it was still queued.
 
 A rewind of any member cascades along what its deleted range caused,
 recursively: a deleted `subagent_spawned` removes that child and its whole

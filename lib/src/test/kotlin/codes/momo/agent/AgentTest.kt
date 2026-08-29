@@ -279,7 +279,10 @@ class AgentTest {
             assertEquals("call-1", aborted.toolCallId)
             // The aborted text also proves the call never ran: an executed echo
             // would have produced its output here.
-            assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.text)
+            assertEquals(
+                toolCallRepairText("bash", started = false, runStatus = RunResult.Status.TURNS_EXHAUSTED),
+                aborted.text,
+            )
         }
         val finished = assertIs<AgentEvent.RunFinished>(log.events.last())
         assertEquals(RunResult.Status.TURNS_EXHAUSTED, finished.status)

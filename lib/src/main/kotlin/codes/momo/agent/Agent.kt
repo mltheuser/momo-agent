@@ -150,8 +150,9 @@ public class Agent internal constructor(
      *
      * After every outcome — cancellation included —
      * the stored conversation stays well-formed for the next call: tool
-     * calls the run never finished are answered with synthesized aborted
-     * results.
+     * calls the run never finished are answered with synthesized results
+     * naming how the run ended and whether the call had started (see
+     * [toolCallRepairText]).
      *
      * @throws IllegalArgumentException when [text] is blank.
      * @throws IllegalStateException when a send is already running.
@@ -247,32 +248,34 @@ public class Agent internal constructor(
         if (text != null) {
             history += userMessage(text, attachments)
         }
-        // Outlives the try: the arm that records it cannot also rethrow it.
+        // Outlive the try: the arm that records them cannot also rethrow.
         var fatal: Throwable? = null
-        val status = try {
+        var status: RunResult.Status? = null
+        try {
             // Inside the try, so a listener raising on the opening event ends
             // the run through the arms below like any later one would.
             emitRunOpening(text, run.settings, attachments)
-            withContext(run.loop) { runLoop(run) }
+            status = withContext(run.loop) { runLoop(run) }
         } catch (cancellation: CancellationException) {
             if (!cancellation.isRunStopped()) {
                 throw cancellation
             }
-            run.decided ?: RunResult.Status.STOPPED
+            status = run.decided ?: RunResult.Status.STOPPED
         } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
             run.failure = failure
-            RunResult.Status.ERROR
+            status = RunResult.Status.ERROR
         } catch (@Suppress("TooGenericExceptionCaught") raised: Throwable) {
             run.failure = raised
             fatal = raised
-            RunResult.Status.ERROR
+            status = RunResult.Status.ERROR
         } finally {
             currentRun = null
-            // A finally so the repair also runs on external cancellation.
-            history += abortedToolResults(history)
+            // A finally so the repair also runs on external cancellation —
+            // where status stays null, read as an abort.
+            history += toolCallRepairs(history, run.startedCallIds, status)
         }
         val result = RunResult(
-            status = status,
+            status = checkNotNull(status),
             finalMessage = run.finalMessage,
             transcript = history.toList(),
             usage = run.usage,
@@ -307,7 +310,9 @@ public class Agent internal constructor(
         while (true) {
             // A stopped child run *returns* to its caller, so the tool call
             // that just finished may leave this loop cancelled: a cut loop
-            // never starts another turn.
+            // never starts another turn — nor, below, another call of the
+            // batch, so a call the cut beat stays unstarted and its
+            // synthesized result says so.
             coroutineContext.ensureActive()
             if (run.remaining <= Duration.ZERO) {
                 return run.decide(RunResult.Status.TIMEOUT)
@@ -318,6 +323,7 @@ public class Agent internal constructor(
                 return run.decide(outcome)
             }
             for (call in response.message.toolCalls.orEmpty()) {
+                coroutineContext.ensureActive()
                 executeCall(run, call)
             }
         }
@@ -384,6 +390,7 @@ public class Agent internal constructor(
 
     /** One dispatched (or registry-rejected) call. */
     private suspend fun executeCall(run: RunState, call: ToolCall) {
+        run.startedCallIds += call.id
         emitter.emit { id, at ->
             AgentEvent.ToolCallStarted(id, at, call.id, call.function.name, call.function.arguments)
         }
@@ -502,6 +509,9 @@ public class Agent internal constructor(
         var finalMessage: String? = null
         var failure: Throwable? = null
 
+        /** The calls whose execution began — what the transcript repair reads receipt from. */
+        val startedCallIds: MutableSet<String> = mutableSetOf()
+
         /** Time spent blocked on child runs. */
         var blocked: Duration = Duration.ZERO
 
@@ -526,7 +536,8 @@ public class Agent internal constructor(
          * Reconstructs a session from its stored event log: the transcript
          * is derived from the log's verbatim payloads under the system
          * prompt [harness] produces now, tool calls the log left unanswered
-         * are answered with synthesized aborted results, and new events
+         * are answered with the synthesized results the live run appended
+         * (see [toolCallRepairText]), and new events
          * continue the log's sequence IDs. Loading emits nothing. The
          * session's subagent-tree position is restored with it: its depth,
          * and its spawned children as dormant entries — each with its

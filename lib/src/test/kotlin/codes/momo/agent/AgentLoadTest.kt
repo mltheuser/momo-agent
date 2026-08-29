@@ -194,7 +194,7 @@ class AgentLoadTest {
             )
             val aborted = result.transcript.single { it.role == "tool" }
             assertEquals("call-1", aborted.toolCallId)
-            assertEquals(ABORTED_TOOL_RESULT_TEXT, aborted.text)
+            assertEquals(toolCallRepairText("bash", started = true, runStatus = null), aborted.text)
         }
     }
 
@@ -223,7 +223,10 @@ class AgentLoadTest {
                 result.transcript.map { it.role },
                 "the beheaded run's dangling call must be repaired, the rewound tail contributing nothing",
             )
-            assertEquals(ABORTED_TOOL_RESULT_TEXT, result.transcript.single { it.role == "tool" }.text)
+            assertEquals(
+                toolCallRepairText("bash", started = true, runStatus = null),
+                result.transcript.single { it.role == "tool" }.text,
+            )
         }
         assertEquals(
             rewound.last().sequenceId + 1,
@@ -304,7 +307,12 @@ class AgentLoadTest {
             )
             val aborted = result.transcript.filter { it.role == "tool" }
             assertEquals(listOf("call-1", "call-2"), aborted.map { it.toolCallId })
-            aborted.forEach { assertEquals(ABORTED_TOOL_RESULT_TEXT, it.text) }
+            aborted.forEach {
+                assertEquals(
+                    toolCallRepairText("bash", started = false, runStatus = RunResult.Status.TURNS_EXHAUSTED),
+                    it.text,
+                )
+            }
         }
     }
 

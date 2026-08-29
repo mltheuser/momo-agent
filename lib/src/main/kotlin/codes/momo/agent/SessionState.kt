@@ -117,16 +117,33 @@ private fun requireToolCallsSupported(events: List<AgentEvent>, harness: Harness
 /**
  * The conversation the log's verbatim payloads describe, in event order,
  * repaired the way the live session's history was: tool calls a run left
- * unanswered get synthesized aborted results where that run ended — before
- * the next run's user message, or at the tail.
+ * unanswered get synthesized results where that run ended — before the next
+ * run's user message, or at the tail — each naming the ended run's recorded
+ * outcome (none for a log cut without one, an abort) and whether the log
+ * shows the call's execution starting.
  */
 private fun conversationFrom(events: List<AgentEvent>): List<ChatMessage> = buildList {
+    val startedCallIds = mutableSetOf<String>()
+    var runStatus: RunResult.Status? = null
+
+    fun openRun() {
+        addAll(toolCallRepairs(this, startedCallIds, runStatus))
+        startedCallIds.clear()
+        runStatus = null
+    }
+
     for (event in events) {
         when (event) {
             is AgentEvent.RunStarted -> {
-                addAll(abortedToolResults(this))
+                openRun()
                 add(userMessage(event.userMessage, event.attachments))
             }
+
+            is AgentEvent.RunResumed -> openRun()
+
+            is AgentEvent.RunFinished -> runStatus = event.status
+
+            is AgentEvent.ToolCallStarted -> startedCallIds += event.callId
 
             is AgentEvent.LlmCallFinished -> add(event.message)
 
@@ -135,5 +152,5 @@ private fun conversationFrom(events: List<AgentEvent>): List<ChatMessage> = buil
             else -> Unit
         }
     }
-    addAll(abortedToolResults(this))
+    addAll(toolCallRepairs(this, startedCallIds, runStatus))
 }
