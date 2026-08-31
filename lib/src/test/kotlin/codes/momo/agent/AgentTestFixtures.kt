@@ -1,6 +1,6 @@
 package codes.momo.agent
 
-import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
@@ -28,7 +28,7 @@ internal fun <T> Path.withFakeAgent(
         val agent = Agent(
             harness = harness,
             client = client,
-            environment = LocalExecutionEnvironment(this),
+            environment = ExecutionEnvironment(this),
             eventListener = listener,
             budgets = budgets,
             session = SessionState.Fresh("Test session"),

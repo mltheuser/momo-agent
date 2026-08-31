@@ -7,9 +7,9 @@ Shared build conventions live in the root build script.
 
 ## Build & verify
 
-- `./gradlew build` — compile, detekt and every test tier but the container
-  one. The live tier runs inside `check`, so a `build` needs a running
-  ai-router and costs API spend.
+- `./gradlew build` — compile, detekt and every test tier. The live tier
+  runs inside `check`, so a `build` needs a running ai-router and costs API
+  spend.
 - `./lint.sh` / `./fmt.sh` — detekt check / auto-fix formatting.
 
 ## Conventions
@@ -70,8 +70,8 @@ Shared build conventions live in the root build script.
 - [README.md](README.md) — read when setting up the build, pointing the live
   tier at another router or model, running or configuring the agent server,
   working on or against its HTTP API (endpoints and wire format),
-  working with container-backed execution, granting or explaining the
-  host's command privileges (sudoers), or checking platform assumptions.
+  granting or explaining the host's command privileges (sudoers), or
+  checking platform assumptions.
 - [../planning/issues/agent-lib/README.md](../planning/issues/agent-lib/README.md) — read when
   picking up an issue or looking up how a delivered feature was designed:
   issue index, binding design decisions, per-issue Outcomes (lives in the

@@ -1,9 +1,7 @@
 package codes.momo.agent.server
 
-import codes.momo.agent.environment.ContainerExecutionEnvironment
 import codes.momo.agent.environment.EnvironmentStartupException
 import codes.momo.agent.environment.ExecutionEnvironment
-import codes.momo.agent.environment.LocalExecutionEnvironment
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.nio.file.Path
@@ -13,10 +11,16 @@ import java.nio.file.Path
  * verbatim in the session's metadata so a dormant session's runtime can be
  * rebuilt from it.
  *
- * It describes only what a client can choose. The privilege a session's
- * commands run with is not among those things — it follows from the account
- * the server process runs as — so it is discovered when the environment is
- * built and reported through [SessionInfo.privilege], never accepted here.
+ * Execution is always local, so the one variant describes only the
+ * workspace. It stays a tagged union regardless: the `local` tag is the
+ * wire and storage contract — every stored `session.json` carries it — and
+ * the tag is what makes a request naming a retired variant (`container`)
+ * fail loudly instead of quietly building something else.
+ *
+ * The privilege a session's commands run with is not described here — it
+ * follows from the account the server process runs as — so it is discovered
+ * when the environment is built and reported through [SessionInfo.privilege],
+ * never accepted from a client.
  */
 @Serializable
 internal sealed interface EnvironmentSpec {
@@ -27,22 +31,11 @@ internal sealed interface EnvironmentSpec {
     /**
      * Builds a fresh environment over the described workspace.
      *
-     * @throws EnvironmentStartupException when the workspace or the
-     *   environment's backend is unusable.
+     * @throws EnvironmentStartupException when the workspace is unusable.
      */
-    fun build(): ExecutionEnvironment
+    fun build(): ExecutionEnvironment = ExecutionEnvironment(Path.of(workspace))
 
     @Serializable
     @SerialName("local")
-    data class Local(override val workspace: String) : EnvironmentSpec {
-
-        override fun build(): ExecutionEnvironment = LocalExecutionEnvironment(Path.of(workspace))
-    }
-
-    @Serializable
-    @SerialName("container")
-    data class Container(val image: String, override val workspace: String) : EnvironmentSpec {
-
-        override fun build(): ExecutionEnvironment = ContainerExecutionEnvironment(image, Path.of(workspace))
-    }
+    data class Local(override val workspace: String) : EnvironmentSpec
 }

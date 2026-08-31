@@ -1,33 +1,72 @@
 package codes.momo.agent.environment
 
+import java.io.File
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.Path
+import kotlin.io.path.isDirectory
 import kotlin.time.Duration
 
 /**
- * Execution seam around a workspace. All workspace-touching tools run their
- * commands through this single primitive, so the same tool code serves a
- * plain local directory and, later, a container over a temp folder.
+ * Execution primitive around a workspace folder: all workspace-touching
+ * tools run their commands through [exec], directly on this host, with the
+ * workspace as the working directory and the host environment variables
+ * inherited.
  *
- * Implementations own their lifecycle: [close] tears down whatever the
- * environment set up (e.g. a container); the environment must not be used
- * afterwards.
+ * **Not an isolation boundary:** commands run with the invoking user's
+ * rights and can touch anything that user can. Where isolation is needed —
+ * a benchmark harness, a cloud runner — the boundary is a container the
+ * embedder owns, with this whole process running inside it.
+ *
+ * Timeout and cancellation do a best-effort tree kill. Processes that
+ * daemonize away, or fork during the kill, escape it and leak on the host;
+ * that is accepted here, and a container boundary around the process reaps
+ * such escapees with itself.
  */
-public interface ExecutionEnvironment : AutoCloseable {
+public class ExecutionEnvironment internal constructor(
+    workspace: Path,
+    searchPath: String?,
+    probe: PrivilegeProbe = hostPrivilegeProbe(workspace),
+    private val runner: CommandRunner = hostCommandRunner(workspace),
+) {
 
     /**
-     * Absolute path of the workspace root as seen by commands run through
-     * [exec] — for a container-backed environment the in-container path,
-     * not the host one. POSIX notation, the form tools pass paths in.
+     * Wraps [workspace], validating it and the host userland baseline up
+     * front and discovering the [privilege] its commands run with.
+     *
+     * @throws EnvironmentStartupException when [workspace] is not an
+     *   existing directory, or baseline binaries (see the README's platform
+     *   section) are missing from `PATH` — naming everything that is
+     *   missing.
      */
-    public val workspacePath: String
+    public constructor(workspace: Path) : this(workspace, System.getenv("PATH"))
+
+    init {
+        if (!workspace.isDirectory()) {
+            throw EnvironmentStartupException(
+                "Workspace folder not found (or not a directory): $workspace",
+            )
+        }
+        val missing = USERLAND_BASELINE.filterNot { isOnSearchPath(it, searchPath) }
+        if (missing.isNotEmpty()) {
+            throw EnvironmentStartupException(
+                "Host userland baseline is incomplete — required binaries not found on PATH: " +
+                    "${missing.joinToString(", ")}. Install them (or fix PATH) and retry.",
+            )
+        }
+    }
 
     /**
-     * [Privilege] the commands run through [exec] have. Defaulted so that
-     * embedders' own implementations of this interface keep working, and
-     * defaulted to the lowest state: an environment that cannot elevate has
-     * nothing to report.
+     * [Privilege] the commands run through [exec] have. Discovered, never
+     * declared: what a command here can elevate to is fixed by the account
+     * this process runs as, so the host is asked rather than told.
+     * Initialized after the init block because the probes lean on the
+     * userland baseline it establishes.
      */
-    public val privilege: Privilege
-        get() = Privilege.UNPRIVILEGED
+    public val privilege: Privilege = probe.detect()
+
+    /** Absolute path of the workspace root, in the POSIX notation tools pass paths in. */
+    public val workspacePath: String = workspace.toAbsolutePath().normalize().toString()
 
     /**
      * Runs [command] with the workspace root as the working directory,
@@ -48,11 +87,14 @@ public interface ExecutionEnvironment : AutoCloseable {
      *   an exit code.
      * - Cancelling the calling coroutine kills the process tree the same
      *   way.
+     * - A program that cannot be started at all (no such executable)
+     *   propagates its [IOException] — a caller error, not a command
+     *   outcome.
      */
     public suspend fun exec(
         command: List<String>,
         timeout: Duration,
-    ): ExecResult
+    ): ExecResult = runner.run(command, timeout)
 
     public companion object {
 
@@ -63,4 +105,29 @@ public interface ExecutionEnvironment : AutoCloseable {
          */
         public const val MAX_CAPTURED_BYTES: Int = 8 * 1024 * 1024
     }
+}
+
+private fun isOnSearchPath(binary: String, searchPath: String?): Boolean =
+    searchPath.orEmpty()
+        .split(File.pathSeparator)
+        .filter { it.isNotBlank() }
+        .any { directory ->
+            val candidate = Path.of(directory, binary)
+            Files.isRegularFile(candidate) && Files.isExecutable(candidate)
+        }
+
+/**
+ * How [ExecutionEnvironment.exec] reaches the host: one command in, its
+ * outcome out. A seam like [PrivilegeProbe] — the public constructor runs
+ * real host processes, while a test can inject outcomes (a timeout, a
+ * capture-cap truncation) the real host cannot produce on demand.
+ */
+internal fun interface CommandRunner {
+
+    suspend fun run(command: List<String>, timeout: Duration): ExecResult
+}
+
+/** The real runner: [command] as a host subprocess working in [workspace]. */
+internal fun hostCommandRunner(workspace: Path): CommandRunner = CommandRunner { command, timeout ->
+    runProcess(command, workingDirectory = workspace, timeout = timeout)
 }

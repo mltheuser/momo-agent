@@ -1,8 +1,8 @@
 package codes.momo.agent.tool
 
 import codes.momo.agent.Budgets
-import codes.momo.agent.environment.ExecResult
 import codes.momo.agent.environment.ExecutionEnvironment
+import codes.momo.agent.environment.completed
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
 import kotlinx.coroutines.CancellationException
@@ -15,6 +15,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import java.nio.file.Path
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -392,13 +393,9 @@ private class ScriptedTool(
 }
 
 /** No dispatch under test touches the workspace. */
-private object UnusedEnvironment : ExecutionEnvironment {
-
-    override val workspacePath: String
-        get() = error("the registry tests never use the workspace")
-
-    override suspend fun exec(command: List<String>, timeout: Duration): ExecResult =
-        error("the registry tests never exec")
-
-    override fun close(): Unit = Unit
-}
+private val UnusedEnvironment: ExecutionEnvironment = ExecutionEnvironment(
+    Path.of("."),
+    searchPath = System.getenv("PATH"),
+    probe = { completed(exitCode = 1) },
+    runner = { _, _ -> error("the registry tests never exec") },
+)

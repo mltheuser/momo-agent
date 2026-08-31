@@ -1,6 +1,6 @@
 package codes.momo.agent
 
-import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.writeHarness
 import kotlinx.coroutines.runBlocking
@@ -46,7 +46,7 @@ class SubagentDelegationLiveTest {
             val agent = liveAgent(
                 Harness.load(parentFolder),
                 client,
-                LocalExecutionEnvironment(workspace),
+                ExecutionEnvironment(workspace),
                 "Delegation session",
                 listener,
             )

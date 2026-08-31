@@ -1,6 +1,6 @@
 package codes.momo.agent
 
-import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.DisplayName
@@ -35,7 +35,7 @@ class ViewImageLiveTest {
         )
 
         liveAiRouterClient().use { client ->
-            val environment = LocalExecutionEnvironment(workspace)
+            val environment = ExecutionEnvironment(workspace)
             val agent = liveAgent(harness, client, environment, "View image live test")
 
             val result = agent.send(

@@ -1,6 +1,6 @@
 package codes.momo.agent
 
-import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.DisplayName
@@ -39,7 +39,7 @@ class AgentLiveTest {
     fun toolThenFinish() = runBlocking {
         workspace.resolve("token.txt").writeText("The token is: $TOKEN\n")
         liveAiRouterClient().use { client ->
-            val environment = LocalExecutionEnvironment(workspace)
+            val environment = ExecutionEnvironment(workspace)
             val agent = liveAgent(harness(), client, environment, "Live test session")
 
             val result = agent.send(
@@ -78,7 +78,7 @@ class AgentLiveTest {
         val tokenFile = workspace.resolve("token.txt")
         tokenFile.writeText("$TOKEN\n")
         liveAiRouterClient().use { client ->
-            val environment = LocalExecutionEnvironment(workspace)
+            val environment = ExecutionEnvironment(workspace)
             val agent = liveAgent(harness(), client, environment, "Live test session")
 
             val first = agent.send(

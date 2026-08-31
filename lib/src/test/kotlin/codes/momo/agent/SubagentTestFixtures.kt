@@ -3,7 +3,7 @@ package codes.momo.agent
 import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ChatMessage
 import ai.router.sdk.models.ModelList
-import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.SubagentType
 import kotlinx.coroutines.runBlocking
@@ -40,7 +40,7 @@ internal fun Path.agent(
 ): Agent = Agent(
     harness = harness,
     client = client,
-    environment = LocalExecutionEnvironment(this),
+    environment = ExecutionEnvironment(this),
     eventListener = listener,
     budgets = budgets,
     session = SessionState.Fresh("Test session", depth = depth),

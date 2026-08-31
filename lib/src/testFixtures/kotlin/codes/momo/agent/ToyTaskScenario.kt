@@ -6,11 +6,9 @@ import codes.momo.agent.environment.runProcess
 import codes.momo.agent.harness.Harness
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Path
-import kotlin.io.path.exists
 import kotlin.io.path.isRegularFile
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.test.fail
@@ -62,7 +60,7 @@ public fun runToyTaskScenario(environment: ExecutionEnvironment) {
  * The first run must have ended by asking rather than delivering: no script
  * yet — the non-prose proxy for the question being its final message — and
  * the planted token nowhere in the workspace, since only the user can reveal
- * it. Both checks run in the environment, which may be a container.
+ * it.
  */
 private suspend fun assertOnlyAsked(environment: ExecutionEnvironment) {
     environment.assertNotFound(
@@ -89,14 +87,6 @@ private suspend fun ExecutionEnvironment.assertNotFound(command: List<String>, f
         0 -> fail(found)
         else -> fail("$command could not answer, exit ${completed.exitCode}: ${completed.stderr}")
     }
-}
-
-/** Isolation check for the container variant: the script has not reached the host yet. */
-public fun assertToyTaskAbsent(workspace: Path) {
-    assertFalse(
-        workspace.resolve(SCRIPT_NAME).exists(),
-        "the container workspace must reach the host only on close()",
-    )
 }
 
 /** Host-side mechanical check: the script exists, runs clean, and prints the planted greeting. */

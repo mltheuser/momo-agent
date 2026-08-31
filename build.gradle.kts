@@ -66,7 +66,6 @@ subprojects {
                     "src/test/kotlin",
                     "src/testFixtures/kotlin",
                     "src/liveTest/kotlin",
-                    "src/containerTest/kotlin",
                 ),
             )
         }

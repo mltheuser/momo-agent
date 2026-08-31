@@ -2,7 +2,7 @@ package codes.momo.agent.tool
 
 import codes.momo.agent.Budgets
 import codes.momo.agent.environment.ExecResult
-import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.environment.Privilege
 import codes.momo.agent.environment.completed
 import kotlinx.coroutines.runBlocking
@@ -37,13 +37,13 @@ class BashToolTest {
     private fun descriptionFor(privilege: Privilege): String =
         assertNotNull(BashTool("/some/workspace", privilege).definition.description)
 
-    /** Runs [command] through the tool against a real local environment over the temp workspace. */
+    /** Runs [command] through the tool against a real environment over the temp workspace. */
     private fun run(command: String): ToolResult = runBlocking {
-        bashTool().execute(BashArgs(command), LocalExecutionEnvironment(tempDir))
+        bashTool().execute(BashArgs(command), ExecutionEnvironment(tempDir))
     }
 
     private fun runStubbed(execResult: ExecResult): ToolResult = runBlocking {
-        bashTool().execute(BashArgs("true"), FixedResultEnvironment(execResult))
+        bashTool().execute(BashArgs("true"), FixedResultRunner(execResult).environment(tempDir))
     }
 
     // ─── Definition ───────────────────────────────────────────────────
@@ -163,12 +163,12 @@ class BashToolTest {
     @Test
     @DisplayName("The command is run as bash -c under the tool timeout budget")
     fun commandRunsAsBashDashCWithBudget() = runBlocking {
-        val environment = FixedResultEnvironment(completed())
+        val runner = FixedResultRunner(completed())
 
-        bashTool().execute(BashArgs("echo hi"), environment)
+        bashTool().execute(BashArgs("echo hi"), runner.environment(tempDir))
 
-        assertEquals(listOf("bash", "-c", "echo hi"), environment.lastCommand)
-        assertEquals(Budgets.TOOL_TIMEOUT, environment.lastTimeout)
+        assertEquals(listOf("bash", "-c", "echo hi"), runner.lastCommand)
+        assertEquals(Budgets.TOOL_TIMEOUT, runner.lastTimeout)
     }
 
     // ─── Capture-cap flags ────────────────────────────────────────────
@@ -202,7 +202,7 @@ class BashToolTest {
             put("command", "head -c ${ToolRegistry.MAX_RESULT_CHARS + 1} /dev/zero | tr '\\0' x")
         }
 
-        val result = registry.execute("bash", arguments, LocalExecutionEnvironment(tempDir)).result
+        val result = registry.execute("bash", arguments, ExecutionEnvironment(tempDir)).result
 
         val success = assertIs<ToolResult.Success>(result)
         assertTrue(

@@ -3,7 +3,7 @@ package codes.momo.agent
 import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ToolCall
 import ai.router.sdk.models.ToolCallFunction
-import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
 import kotlinx.coroutines.CompletableDeferred
@@ -66,7 +66,7 @@ class AgentTest {
 
         AiRouterClient(refusingBaseUrl()).use { client ->
             val failure = assertFailsWith<HarnessValidationException> {
-                Agent(invalid, client, LocalExecutionEnvironment(workspace), "Test session")
+                Agent(invalid, client, ExecutionEnvironment(workspace), "Test session")
             }
             assertContains(failure.message.orEmpty(), "teleport")
         }

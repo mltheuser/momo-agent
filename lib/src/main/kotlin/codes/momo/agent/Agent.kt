@@ -36,7 +36,7 @@ import kotlin.time.TimeSource
  * the session's [AgentEvent] log.
  *
  * Collaborator lifecycles stay with the embedder: the agent never closes
- * [client] or [environment].
+ * [client].
  *
  * @throws HarnessValidationException when the harness names a tool the
  *   library does not provide.

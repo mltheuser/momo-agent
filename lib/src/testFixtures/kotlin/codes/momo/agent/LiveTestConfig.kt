@@ -130,7 +130,7 @@ private fun unreachableMessage(failure: Throwable): String =
 
 /**
  * Live-test configuration arrives as system properties set by the
- * `liveTest` and `containerTest` Gradle tasks (see the module build scripts).
+ * `liveTest` Gradle tasks (see the module build scripts).
  */
 private fun requiredSystemProperty(name: String): String =
     checkNotNull(System.getProperty(name)) {

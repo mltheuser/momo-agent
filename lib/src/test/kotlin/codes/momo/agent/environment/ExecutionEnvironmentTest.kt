@@ -25,14 +25,14 @@ import kotlin.test.fail
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
-class LocalExecutionEnvironmentTest {
+class ExecutionEnvironmentTest {
 
     @TempDir
     lateinit var tempDir: Path
 
     // ─── Helpers ──────────────────────────────────────────────────────
 
-    private fun environment(): LocalExecutionEnvironment = LocalExecutionEnvironment(tempDir)
+    private fun environment(): ExecutionEnvironment = ExecutionEnvironment(tempDir)
 
     /** Runs [command] in a fresh environment over [workspace]. */
     private fun exec(
@@ -40,7 +40,7 @@ class LocalExecutionEnvironmentTest {
         timeout: Duration = 30.seconds,
         workspace: Path = tempDir,
     ): ExecResult = runBlocking {
-        LocalExecutionEnvironment(workspace).exec(command.toList(), timeout)
+        ExecutionEnvironment(workspace).exec(command.toList(), timeout)
     }
 
     private fun ExecResult.assertCompletedOk(): ExecResult.Completed {
@@ -233,7 +233,7 @@ class LocalExecutionEnvironmentTest {
     fun workspacePathIsTheAbsoluteWorkspace() {
         // A messy-but-valid spelling of the same directory must come back
         // as the canonical absolute path.
-        val environment = LocalExecutionEnvironment(tempDir.resolve("."))
+        val environment = ExecutionEnvironment(tempDir.resolve("."))
 
         assertEquals(tempDir.toString(), environment.workspacePath)
     }
@@ -246,7 +246,7 @@ class LocalExecutionEnvironmentTest {
         val missing = tempDir.resolve("does-not-exist")
 
         val exception = assertFailsWith<EnvironmentStartupException> {
-            LocalExecutionEnvironment(missing)
+            ExecutionEnvironment(missing)
         }
         assertContains(exception.message.orEmpty(), missing.toString())
     }
@@ -258,7 +258,7 @@ class LocalExecutionEnvironmentTest {
         file.writeText("not a folder")
 
         val exception = assertFailsWith<EnvironmentStartupException> {
-            LocalExecutionEnvironment(file)
+            ExecutionEnvironment(file)
         }
         assertContains(exception.message.orEmpty(), file.toString())
     }
@@ -277,7 +277,7 @@ class LocalExecutionEnvironmentTest {
             }
 
         val exception = assertFailsWith<EnvironmentStartupException> {
-            LocalExecutionEnvironment(tempDir, searchPath = stubBin.toString())
+            ExecutionEnvironment(tempDir, searchPath = stubBin.toString())
         }
         val message = exception.message.orEmpty()
         assertContains(message, "grep")
@@ -289,7 +289,7 @@ class LocalExecutionEnvironmentTest {
     @DisplayName("With no PATH at all, the full baseline is named")
     fun noSearchPathNamesTheFullBaseline() {
         val exception = assertFailsWith<EnvironmentStartupException> {
-            LocalExecutionEnvironment(tempDir, searchPath = null)
+            ExecutionEnvironment(tempDir, searchPath = null)
         }
         val message = exception.message.orEmpty()
         BASELINE_BINARIES.forEach { binary ->
@@ -304,8 +304,8 @@ class LocalExecutionEnvironmentTest {
     // NOPASSWD-granted CI user and on a host without `sudo` alike.
 
     /** Constructs over [tempDir] with [probe] answering for the host. */
-    private fun environment(probe: PrivilegeProbe): LocalExecutionEnvironment =
-        LocalExecutionEnvironment(tempDir, System.getenv("PATH"), probe)
+    private fun environment(probe: PrivilegeProbe): ExecutionEnvironment =
+        ExecutionEnvironment(tempDir, System.getenv("PATH"), probe)
 
     /** A probe that appends every command it is asked to run to [commands] and grants it. */
     private fun recordingProbe(commands: MutableList<List<String>>): PrivilegeProbe = PrivilegeProbe { command ->
@@ -353,10 +353,14 @@ class LocalExecutionEnvironmentTest {
         val probed = mutableListOf<List<String>>()
 
         // Granting nothing forces both probes to run, in order.
-        LocalExecutionEnvironment(tempDir, System.getenv("PATH")) { command ->
-            probed += command
-            completed(exitCode = 1)
-        }
+        ExecutionEnvironment(
+            tempDir,
+            System.getenv("PATH"),
+            probe = { command ->
+                probed += command
+                completed(exitCode = 1)
+            },
+        )
 
         // The argv is the contract with the host, so it is pinned verbatim,
         // `-k` included (the probe's KDoc says why it matters).
@@ -386,7 +390,7 @@ class LocalExecutionEnvironmentTest {
         val probed = mutableListOf<List<String>>()
 
         assertFailsWith<EnvironmentStartupException> {
-            LocalExecutionEnvironment(tempDir, searchPath = null, probe = recordingProbe(probed))
+            ExecutionEnvironment(tempDir, searchPath = null, probe = recordingProbe(probed))
         }
 
         assertTrue(probed.isEmpty(), "the baseline scan must fail first, ran: $probed")

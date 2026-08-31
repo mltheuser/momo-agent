@@ -16,15 +16,14 @@ import kotlin.time.Duration
 /**
  * Runs [command] as a host subprocess per the [ExecutionEnvironment.exec]
  * contract: concurrent capped stream capture, stdin closed immediately,
- * and the [killer] invoked on [timeout]. Cleanup-and-rethrow: no abnormal
- * exit (cancellation included) may leak a live process — the kill also
- * closes the pipes, unblocking the drain workers.
+ * and the process tree killed on [timeout]. Cleanup-and-rethrow: no
+ * abnormal exit (cancellation included) may leak a live process — the kill
+ * also closes the pipes, unblocking the drain workers.
  */
 internal suspend fun runProcess(
     command: List<String>,
     workingDirectory: Path? = null,
     timeout: Duration,
-    killer: ProcessKiller = HOST_PROCESS_TREE_KILLER,
 ): ExecResult {
     require(command.isNotEmpty()) { "command must not be empty." }
     return withContext(Dispatchers.IO) {
@@ -40,7 +39,7 @@ internal suspend fun runProcess(
 
             val exitedInTime = withTimeoutOrNull(timeout) { process.onExit().await() } != null
             if (!exitedInTime) {
-                withContext(NonCancellable) { killer.kill(process) }
+                withContext(NonCancellable) { killProcessTree(process) }
             }
             val stdout = stdoutJob.await()
             val stderr = stderrJob.await()
@@ -61,10 +60,23 @@ internal suspend fun runProcess(
                 )
             }
         } catch (@Suppress("TooGenericExceptionCaught") failure: Throwable) {
-            withContext(NonCancellable) { killer.kill(process) }
+            withContext(NonCancellable) { killProcessTree(process) }
             throw failure
         }
     }
+}
+
+/**
+ * Best-effort host tree kill: descendants are enumerated via
+ * [ProcessHandle.descendants] before the parent is destroyed — a dead parent
+ * no longer knows its children — because the JVM cannot create POSIX process
+ * groups. Runs in a non-cancellable context; it leaves the process's pipes
+ * closing, so the stream drains finish.
+ */
+private fun killProcessTree(process: Process) {
+    val descendants = process.toHandle().descendants().toList()
+    process.destroyForcibly()
+    descendants.forEach { it.destroyForcibly() }
 }
 
 /** [runProcess] for the blocking lifecycle paths, which have no coroutine to suspend in. */

@@ -1,27 +1,32 @@
 package codes.momo.agent
 
 import codes.momo.agent.environment.ExecResult
-import codes.momo.agent.tool.FixedResultEnvironment
+import codes.momo.agent.tool.FixedResultRunner
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
 import java.util.Base64
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class PromptAttachmentsTest {
 
+    @TempDir
+    lateinit var tempDir: Path
+
     @Test
     @DisplayName("Markdown image links resolve through the environment, deduplicated by link")
     fun resolvesMarkdownImageLinksOnce() = runBlocking {
-        val environment = FixedResultEnvironment(
+        val runner = FixedResultRunner(
             completed(PNG_BASE64.length.toString()),
             completed(PNG_BASE64),
         )
 
         val attachments = resolvePromptAttachments(
             "Compare ![before](shots/a.png) against ![after](shots/a.png).",
-            environment,
+            runner.environment(tempDir),
         )
 
         val attachment = attachments.single()
@@ -33,29 +38,35 @@ class PromptAttachmentsTest {
     @Test
     @DisplayName("A link that fails to load resolves to nothing — silently")
     fun unloadableLinkResolvesToNothing() = runBlocking {
-        val environment = FixedResultEnvironment(
+        val runner = FixedResultRunner(
             ExecResult.Completed(1, "", "wc: gone.png: No such file or directory", false, false),
         )
 
-        assertTrue(resolvePromptAttachments("See ![missing](gone.png).", environment).isEmpty())
+        assertTrue(resolvePromptAttachments("See ![missing](gone.png).", runner.environment(tempDir)).isEmpty())
     }
 
     @Test
     @DisplayName("An unreachable http link resolves to nothing, and never touches the environment")
     fun unreachableUrlResolvesToNothing() = runBlocking {
-        val environment = FixedResultEnvironment()
+        val runner = FixedResultRunner()
 
-        assertTrue(resolvePromptAttachments("See ![shot](http://127.0.0.1:1/shot.png).", environment).isEmpty())
-        assertEquals(0, environment.callCount)
+        assertTrue(
+            resolvePromptAttachments("See ![shot](http://127.0.0.1:1/shot.png).", runner.environment(tempDir))
+                .isEmpty(),
+        )
+        assertEquals(0, runner.callCount)
     }
 
     @Test
     @DisplayName("A prompt without markdown image syntax resolves to nothing without an exec")
     fun plainPromptNeverExecs() = runBlocking {
-        val environment = FixedResultEnvironment()
+        val runner = FixedResultRunner()
 
-        assertTrue(resolvePromptAttachments("Just text, a [link](a.png) and a lone bang!", environment).isEmpty())
-        assertEquals(0, environment.callCount)
+        assertTrue(
+            resolvePromptAttachments("Just text, a [link](a.png) and a lone bang!", runner.environment(tempDir))
+                .isEmpty(),
+        )
+        assertEquals(0, runner.callCount)
     }
 }
 

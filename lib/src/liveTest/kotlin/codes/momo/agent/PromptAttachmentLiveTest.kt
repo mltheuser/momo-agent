@@ -1,7 +1,7 @@
 package codes.momo.agent
 
 import ai.router.sdk.models.ContentPartType
-import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.DisplayName
@@ -33,7 +33,7 @@ class PromptAttachmentLiveTest {
         )
 
         liveAiRouterClient().use { client ->
-            val agent = liveAgent(harness, client, LocalExecutionEnvironment(workspace), "Prompt attachment live test")
+            val agent = liveAgent(harness, client, ExecutionEnvironment(workspace), "Prompt attachment live test")
 
             val result = agent.send(
                 "Without using any tools, reply with the single word written in ![screen](secret.png). " +

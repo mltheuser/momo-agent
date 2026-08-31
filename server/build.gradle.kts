@@ -44,19 +44,15 @@ application {
 kotlin {
     // The API's request and response types are `internal`, so everything
     // speaking to it needs `internal` access to main — the fixtures included.
-    target.compilations.matching { it.name in setOf("testFixtures", "liveTest", "containerTest") }.configureEach {
+    target.compilations.matching { it.name in setOf("testFixtures", "liveTest") }.configureEach {
         associateWith(target.compilations.getByName("main"))
     }
     // What the live suite shares with the default one is the client side of
     // the API — the fixtures. The server behind it is deliberately not
     // shared: the live suite drives the packaged distribution as a process,
     // which is the whole point of the tier.
-    target.compilations.matching { it.name in setOf("test", "liveTest", "containerTest") }.configureEach {
+    target.compilations.matching { it.name in setOf("test", "liveTest") }.configureEach {
         associateWith(target.compilations.getByName("testFixtures"))
-    }
-    // The container tests also reach the default suite's server harnesses.
-    target.compilations.matching { it.name == "containerTest" }.configureEach {
-        associateWith(target.compilations.getByName("test"))
     }
 }
 
@@ -143,30 +139,6 @@ testing {
             }
         }
 
-        // Deliberately NOT wired into `check`, mirroring the lib module:
-        // `./gradlew build` must succeed without a Docker daemon.
-        register<JvmTestSuite>("containerTest") {
-            useJUnitJupiter()
-            dependencies {
-                implementation(project())
-                serverTestDependencies()
-            }
-            targets.all {
-                testTask.configure {
-                    description = "Runs the container session tests against a local Docker daemon."
-                    // Both container suites assert over the shared codes.momo.agent
-                    // container label; concurrent runs would see each other's containers.
-                    mustRunAfter(":lib:containerTest")
-                    testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-                    // Always re-run against the live backend: never UP-TO-DATE and
-                    // never restored FROM-CACHE (Test tasks are @CacheableTask).
-                    outputs.upToDateWhen { false }
-                    outputs.cacheIf { false }
-                    // Container startup on top of an image pull on a cold daemon.
-                    hangBackstop(minutes = 20)
-                }
-            }
-        }
     }
 }
 

@@ -1,7 +1,7 @@
 package codes.momo.agent
 
 import ai.router.sdk.dsl.chatRequest
-import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.tool.BashTool
 import codes.momo.agent.tool.ToolRegistry
 import codes.momo.agent.tool.ToolResult
@@ -34,7 +34,7 @@ class BashToolLiveTest {
     @DisplayName("Tool round-trip: the model calls bash and the registry runs its command over the workspace")
     fun bashToolRoundTrip() = runBlocking {
         workspace.resolve(NOTES).writeText("the magic word is $TOKEN\n")
-        val environment = LocalExecutionEnvironment(workspace)
+        val environment = ExecutionEnvironment(workspace)
         val registry = ToolRegistry(listOf(BashTool(environment.workspacePath, environment.privilege)))
 
         liveAiRouterClient().use { client ->

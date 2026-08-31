@@ -58,8 +58,8 @@ internal class InvalidRewindPointException(message: String) : RuntimeException(m
  *
  * Tree lifecycle transitions serialize on the root entry's mutex — the
  * only mutex ever locked, so there is no lock ordering to get wrong;
- * blocking work (harness and store IO, environment construction — possibly
- * a slow image pull) runs on the IO dispatcher.
+ * blocking work (harness and store IO, environment construction) runs on
+ * the IO dispatcher.
  */
 @Suppress("TooManyFunctions") // One cohesive surface over the shared entry map and the root-mutex discipline.
 internal class SessionRegistry(
@@ -123,18 +123,14 @@ internal class SessionRegistry(
                 val environment = spec.build()
                 val entry = SessionEntry()
                 val logs = ConcurrentHashMap<String, PersistedEventLog>()
-                val agent = closingOnFailure(environment) {
-                    val listener = TreeMemberListener(logs, entry, eventLog, sessionId = null)
-                    Agent(harness, client, environment, title ?: path.fileName.toString(), listener)
-                }
+                val listener = TreeMemberListener(logs, entry, eventLog, sessionId = null)
+                val agent = Agent(harness, client, environment, title ?: path.fileName.toString(), listener)
                 logs[agent.sessionId] = eventLog
                 try {
                     store.writeMetadata(agent.sessionId, SessionMetadata.Root(harnessPath, spec))
                 } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
-                    // Without metadata the session can never be rebuilt: discard
-                    // every artifact instead of leaking the live environment.
+                    // Without metadata the session can never be rebuilt: discard every artifact.
                     runCatching { eventLog.close() }
-                    runCatching { environment.close() }
                     runCatching { store.delete(agent.sessionId) }
                     throw failure
                 }
@@ -327,13 +323,8 @@ internal class SessionRegistry(
 
     /**
      * Closes [id]'s whole tree: cancels every in-flight run in it, closes
-     * the open event logs, closes the one environment (a container copies
-     * its workspace back to the host), and drops the runtime attachment.
-     * Every member stays stored and resumable. Closing a dormant tree is a
-     * no-op.
-     *
-     * @throws codes.momo.agent.environment.EnvironmentFailureException when
-     *   the environment's teardown failed; the tree is closed regardless.
+     * the open event logs, and drops the runtime attachment. Every member
+     * stays stored and resumable. Closing a dormant tree is a no-op.
      */
     suspend fun close(id: String) {
         val (_, root) = treeOf(entries, store, id)
@@ -352,10 +343,9 @@ internal class SessionRegistry(
      * it is no lifecycle transition — it attaches nothing, detaches nothing,
      * writes no metadata, and reads only the attached runtime and its live
      * links. Staying off the mutex is what keeps a stop from queueing behind
-     * an unrelated tree member's transition, up to a close tearing a
-     * container down; a tree still being rebuilt has no runtime to reach
-     * either way. Racing a close is benign, as its teardown cancels the same
-     * runs.
+     * an unrelated tree member's transition; a tree still being rebuilt has
+     * no runtime to reach either way. Racing a close is benign, as its
+     * teardown cancels the same runs.
      */
     suspend fun stopRun(id: String) {
         val (path, root) = treeOf(entries, store, id)
@@ -483,7 +473,7 @@ internal class SessionRegistry(
      * The rewind's mutating half; the caller holds the root's mutex and has
      * verified the tree idle and translated the request's cut point into
      * [lastSurviving]. Shielded like [teardown]: a caller's cancellation
-     * must not abandon a live environment or a half-applied plan.
+     * must not abandon in-flight runs, open logs, or a half-applied plan.
      */
     private suspend fun executeRewind(
         root: SessionEntry,
@@ -517,22 +507,11 @@ internal class SessionRegistry(
         plan: RewindPlan,
     ): List<String> {
         root.runtime = null
-        val harness: Harness
-        val deleted: List<String>
-        try {
-            runtime.abortRuns()
-            runtime.closeLogs() // The open writers hold the inode the cut replaces.
-            harness = Harness.load(Path.of(store.position(rootId).root.harnessPath))
-            deleted = applyPlan(plan)
-        } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
-            runCatching { runtime.environment.close() }
-            throw failure
-        }
-        try {
-            root.runtime = loadTree(root, rootId, harness, runtime.environment)
-        } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
-            runCatching { runtime.environment.close() }
-        }
+        runtime.abortRuns()
+        runtime.closeLogs() // The open writers hold the inode the cut replaces.
+        val harness = Harness.load(Path.of(store.position(rootId).root.harnessPath))
+        val deleted = applyPlan(plan)
+        runCatching { root.runtime = loadTree(root, rootId, harness, runtime.environment) }
         return deleted
     }
 
@@ -681,7 +660,7 @@ internal class SessionRegistry(
      * The `finally` is the point: the mutations this wraps outlive their
      * caller, [teardown] and [executeRewind] shielding themselves with
      * [NonCancellable] precisely so a client disconnecting mid-request cannot
-     * abandon a live environment. An announcement after the call would be the
+     * abandon them half-done. An announcement after the call would be the
      * one part such a disconnect skips, leaving a session closed or deleted
      * with nobody told and no later signal standing for the missed one.
      * Announcing a mutation that failed instead costs a subscriber one
@@ -710,8 +689,7 @@ internal class SessionRegistry(
             throw UnknownSessionException(id) // Deleted while waiting on the mutex.
         }
         val harness = Harness.load(Path.of(metadata.harnessPath))
-        val environment = metadata.environment.build()
-        closingOnFailure(environment) { loadTree(entry, id, harness, environment) }
+        loadTree(entry, id, harness, metadata.environment.build())
     }
 
     /** Loads the tree rooted at [id] from its stored log over [environment], with fresh open event logs. */
@@ -838,23 +816,11 @@ private suspend fun teardown(rootEntry: SessionEntry) {
     val runtime = rootEntry.runtime ?: return
     rootEntry.runtime = null
     // Shielded: a caller's cancellation (a client disconnecting
-    // mid-request) must not abandon a live environment.
+    // mid-request) must not abandon in-flight runs or open logs.
     withContext(NonCancellable + Dispatchers.IO) {
-        try {
-            runtime.abortRuns()
-            runtime.closeLogs()
-        } finally {
-            runtime.environment.close()
-        }
+        runtime.abortRuns()
+        runtime.closeLogs()
     }
-}
-
-/** Cleanup-and-rethrow: a failed construction must not leak [environment]. */
-private inline fun <T> closingOnFailure(environment: ExecutionEnvironment, block: () -> T): T = try {
-    block()
-} catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
-    runCatching { environment.close() }
-    throw failure
 }
 
 /**

@@ -46,8 +46,8 @@ Upstream bug in another repo; recorded here because it blocks this build.
 ./gradlew build
 ```
 
-Runs compilation, detekt (with detekt-formatting) and the test tiers that do
-not need Docker. What it runs, what it needs of the machine and what it costs:
+Runs compilation, detekt (with detekt-formatting) and every test tier. What
+it runs, what it needs of the machine and what it costs:
 [TESTING.md](TESTING.md).
 
 ## Linting & formatting
@@ -89,46 +89,14 @@ router needs the matching provider key and a build costs API spend — see
 [TESTING.md](TESTING.md) for why, and for what substituting a local model
 costs in reliability.
 
-## Container-backed execution
+## Execution is always local
 
-`ContainerExecutionEnvironment` runs agent tools inside a Docker container
-whose filesystem contains only the workspace: the host workspace is copied
-into the container's `/workspace` at construction and copied back out on
-`close()` — nothing from the host is mounted. Images are always resolved
-as `linux/amd64` — both when pulling and running — and are only fetched
-when not already present locally. Commands run as root inside the
-container, and the image chosen decides the runtime era (e.g. `node:12`).
-
-Images must provide the POSIX userland the project assumes (see the
-platform section below); any debian-based image qualifies. Startup fails
-with a clear error otherwise.
-
-`close()` removes the container; a JVM shutdown hook removes it on abnormal
-JVM termination as a best effort, so a hard kill can still leak one. Every
-container carries the `codes.momo.agent` label, making manual cleanup one
-command:
-
-```sh
-docker rm -f $(docker ps -aq --filter label=codes.momo.agent)
-```
-
-## Container integration tests
-
-The `containerTest` suites — `lib/src/containerTest/kotlin` exercising
-`ContainerExecutionEnvironment` and `server/src/containerTest/kotlin`
-exercising container-backed sessions — run against a local Docker daemon.
-One of them is the live end-to-end acceptance case run inside a container, so
-it needs a **running ai-router** on top of Docker. They are deliberately not
-part of `build` or `check`, so the build needs no Docker; run them
-explicitly:
-
-```sh
-./gradlew containerTest
-```
-
-The first run pulls the pinned test images (`debian:12-slim`, `node:12`,
-`alpine:3.20`) and is slow. Docker requirements are in the platform section
-below.
+Agent commands run directly on the host the process runs on, in the
+session's workspace folder — there is no isolation layer and no container
+mode. Where isolation is wanted (a benchmark harness, a cloud runner), the
+boundary is a container the embedder owns, with the whole stack running
+inside it: from in there the same local execution covers everything, and
+the container's teardown reaps whatever a run leaked.
 
 ## Agent server
 
@@ -165,8 +133,7 @@ serialized `AgentEvent` per line, appended live) — so every session
 survives a server restart: on startup the data directory is indexed and
 prior sessions appear as `closed`. A running agent and
 its environment are an ephemeral runtime attachment on top; closing a
-session drops the attachment (a container copies its workspace back to
-the host and is removed) and keeps the stored log.
+session drops the attachment and keeps the stored log.
 
 A session **belongs to the workspace folder it works in**, and that folder
 is the scope every request is read in: see *Workspace scope* below. Nothing
@@ -204,8 +171,10 @@ an optional title:
 
 ```json
 {"harnessPath": "<dir>", "environment": {"type": "local", "workspace": "<dir>"}, "title": "..."}
-{"harnessPath": "<dir>", "environment": {"type": "container", "image": "<img>", "workspace": "<dir>"}}
 ```
+
+`local` is the only environment type; execution is always local (see
+*Execution is always local*).
 
 A `privilege` key in the body is a `400 invalid_request`: a session's
 privilege is discovered, not chosen, and reported read-only (see the derived
@@ -579,15 +548,11 @@ child gets an error result in its own log.
 - **Windows** — unsupported.
 
 The project assumes a POSIX userland (`bash`, coreutils — `base64`
-included — `grep`, `find`, `sed`), UTF-8 everywhere, LF line endings, and a `docker` CLI usable
-without `sudo` (needed for container-backed execution and the
-`containerTest` suite).
+included — `grep`, `find`, `sed`), UTF-8 everywhere, and LF line endings.
 
 ### Command privileges
 
-Container-backed sessions are always root (see *Container-backed
-execution*) — inherent to the pinned run user, nothing to set up. A local
-environment *discovers* what it has when it is constructed and tells the
+An environment *discovers* what it has when it is constructed and tells the
 model that, so the prompt cannot disagree with the host.
 
 Nothing is ever granted or elevated by the library, and none of this is a
@@ -595,7 +560,7 @@ sandbox: what a command can reach follows entirely from the OS account the
 server process runs as. That is why the posture is not configurable — asking
 for a smaller number would change only what the model is told. To run an
 agent that genuinely cannot elevate, remove the grant from the account, or
-use a container.
+run the whole stack inside a container.
 
 Passwordless sudo is granted by host configuration: a sudoers entry for the
 OS user the server process runs as, added with `visudo -f`, never a plain

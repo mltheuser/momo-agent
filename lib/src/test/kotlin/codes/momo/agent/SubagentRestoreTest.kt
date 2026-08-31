@@ -1,7 +1,7 @@
 package codes.momo.agent
 
 import ai.router.sdk.models.ReasoningEffort
-import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.DisplayName
@@ -90,7 +90,7 @@ class SubagentRestoreTest {
                 editLog(tree.events),
                 restoredHarness,
                 client,
-                LocalExecutionEnvironment(workspace),
+                ExecutionEnvironment(workspace),
                 restoreListener(childEvents),
             )
             val result = runBlocking { parent.send("check on the helper", TEST_RUN_SETTINGS) }
@@ -135,7 +135,7 @@ class SubagentRestoreTest {
                 recorded.events,
                 harness,
                 client,
-                LocalExecutionEnvironment(workspace),
+                ExecutionEnvironment(workspace),
                 restored,
             )
             val result = runBlocking { parent.send("ask the helper", TEST_RUN_SETTINGS) }
@@ -198,7 +198,7 @@ class SubagentRestoreTest {
             ),
             onToolResults(assistantResponse(finishReason = "stop", text = "respawned"), saying = "spawned subagent"),
         ).client().use { client ->
-            val parent = Agent.load(tree.events, SUBAGENT_HARNESS, client, LocalExecutionEnvironment(workspace))
+            val parent = Agent.load(tree.events, SUBAGENT_HARNESS, client, ExecutionEnvironment(workspace))
             val result = runBlocking { parent.send("check on the helper", TEST_RUN_SETTINGS) }
 
             assertEquals(RunResult.Status.COMPLETED, result.status, "error: ${result.error}")
@@ -228,7 +228,7 @@ class SubagentRestoreTest {
                 tree.events,
                 SUBAGENT_HARNESS,
                 client,
-                LocalExecutionEnvironment(workspace),
+                ExecutionEnvironment(workspace),
                 failingLookup,
             )
             val result = runBlocking { parent.send("check on the helper", TEST_RUN_SETTINGS) }

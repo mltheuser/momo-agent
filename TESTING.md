@@ -1,6 +1,6 @@
 # Testing
 
-Three tiers, and one rule deciding which tier a test belongs to:
+Two tiers, and one rule deciding which tier a test belongs to:
 
 > A test is **live** if its assertion holds for any competent model — or if it
 > reaches no model at all and needs the real server process to mean anything.
@@ -14,11 +14,10 @@ Three tiers, and one rule deciding which tier a test belongs to:
 > the one case resting on that seam to pass for another reason. Nothing else
 > is a test we keep.
 
-| Tier             | Source sets                               | In `build`?       | Hang ceiling |
-| ---------------- | ----------------------------------------- | ----------------- | ------------ |
-| Live             | `lib/src/liveTest`, `server/src/liveTest` | yes               | 15 min       |
-| Mocked and units | `lib/src/test`, `server/src/test`         | yes               | 2 min        |
-| Container        | `*/src/containerTest`                     | no — needs Docker | 20 min       |
+| Tier             | Source sets                               | In `build`? | Hang ceiling |
+| ---------------- | ----------------------------------------- | ----------- | ------------ |
+| Live             | `lib/src/liveTest`, `server/src/liveTest` | yes         | 15 min       |
+| Mocked and units | `lib/src/test`, `server/src/test`         | yes         | 2 min        |
 
 The ceiling is a preemptive JUnit timeout on every suite, needing
 `thread.mode.default = SEPARATE_THREAD`, because Jupiter otherwise reports an
@@ -143,19 +142,6 @@ POSIX permissions, so `HarnessTest`'s unreadable `instructions.md` and
 `EventLogFailureTest`'s unwritable event log cannot be staged there at all.
 They guard a platform capability, not a model's mood.
 
-## The container tier
-
-Both suites run against a local Docker daemon, and sit deliberately outside
-`build`: it must not acquire a dependency on one. What they cover, and what
-Docker needs of the machine, is in [README.md](README.md) — Container
-integration tests.
-
-One case needs more than the daemon: `EndToEndAcceptanceContainerTest` runs
-the live tier's toy task inside a container and so needs a **running
-ai-router** as well, which is why `lib`'s `containerTest` shares the
-`liveTest` suite's configuration (router coordinates and `momo.examplesDir`)
-in the module build script.
-
 ## Wait for the run, not for its last frame
 
 A case that prompts and then issues a command the in-flight guards reject —
@@ -175,14 +161,13 @@ worth running in isolation and more than once, which is what
 
 Test compilations are `associateWith`-bound for `internal` access (see the
 module build scripts): every suite and every `testFixtures` set to its own
-module's main; the server's three suites to the server's `testFixtures` as
-well, whose helpers are `internal` because the API types they carry are; and
-its `containerTest` to its `test` on top of that.
+module's main; the server's suites to the server's `testFixtures` as well,
+whose helpers are `internal` because the API types they carry are.
 
 Shared helpers live once, never as per-suite copies: the lib's `testFixtures`
 for everything about agents and the fake router, consumed by every lib suite
 and by the server's too; the server's `testFixtures` for the HTTP shape of its
-API, consumed by all three of its suites; and what only the mocked suites can
+API, consumed by both of its suites; and what only the mocked suites can
 share — standing a fake-backed server up, and the assertions that mean
 something only against one — in `server/src/test`'s `FakeServerSupport`, which
 has to be there: the server's `testFixtures` depends on `lib`, not on `lib`'s
@@ -194,14 +179,13 @@ fixtures, so each suite that wants the fake router asks for it directly.
 ./gradlew build                    # compile + detekt + units, mocks and the live tier
 ./gradlew :lib:test :server:test   # the units and mocks alone — the one combination needing no router
 ./gradlew liveTest                 # the live tier alone
-./gradlew containerTest            # the container tier
 
 # One case, alone and uncached — the only way to catch an order-dependent pass
 ./gradlew :server:test --tests '*RewindTest.namingTheLastEventDeletesJustThatEvent*' --rerun-tasks
 ```
 
-`build` takes ~85–90 s end to end. Live and container results are never
-cached and never `UP-TO-DATE`: every invocation hits the backend again.
+`build` takes ~85–90 s end to end. Live results are never cached and never
+`UP-TO-DATE`: every invocation hits the backend again.
 `--rerun-tasks` matters for the last form: without it a green cached result
 answers instead of the run you asked for.
 
@@ -228,8 +212,6 @@ and it will never silently skip past a missing one.
    the faster of the two. Substituting a local model is one property away
    (see the README's live-test configuration table) at that measured
    reliability cost.
-4. **Docker**, for `containerTest` only — whose one end-to-end case wants the
-   running router of 2 and 3 on top of it.
 
 A freshly cloned ai-router does not build, for a reason worth knowing before
 losing an hour to it — see [README.md](README.md), Prerequisites.

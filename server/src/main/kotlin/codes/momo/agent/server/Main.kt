@@ -13,8 +13,8 @@ public fun main(args: Array<String>) {
     val client = AiRouterClient(config.aiRouterBaseUrl)
     val registry = SessionRegistry(config.dataDir, client)
     val templates = TemplateStore(config.dataDir)
-    // Close every live session — containers copy back and are removed —
-    // before the process dies; their stored logs make them resumable.
+    // Close every live session before the process dies; their stored logs
+    // make them resumable.
     Runtime.getRuntime().addShutdownHook(
         Thread {
             registry.close()

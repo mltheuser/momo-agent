@@ -37,8 +37,8 @@ dependencies {
 }
 
 kotlin {
-    // Give the fixtures and the live and container tests `internal` access to main.
-    val associated = setOf("testFixtures", "liveTest", "containerTest")
+    // Give the fixtures and the live tests `internal` access to main.
+    val associated = setOf("testFixtures", "liveTest")
     target.compilations.matching { it.name in associated }.configureEach {
         associateWith(target.compilations.getByName("main"))
     }
@@ -77,8 +77,8 @@ testing {
             }
         }
 
-        // Shared shape of the suites that drive a real backend: both talk to a
-        // running ai-router, so both carry its coordinates.
+        // The suite driving a real backend: it talks to a running ai-router,
+        // so it carries its coordinates.
         val integrationSuite: JvmTestSuite.() -> Unit = {
             useJUnitJupiter()
             dependencies {
@@ -115,19 +115,6 @@ testing {
                     // Real model latency, and a case may chain two agent runs,
                     // each carrying the fixtures' five-minute wall clock.
                     hangBackstop(minutes = 15)
-                }
-            }
-        }
-
-        // Deliberately NOT wired into `check`: `build` must not acquire a
-        // dependency on a Docker daemon.
-        register<JvmTestSuite>("containerTest") {
-            integrationSuite()
-            targets.all {
-                testTask.configure {
-                    description = "Runs the container integration tests against a local Docker daemon."
-                    // Model latency on top of an image pull on a cold daemon.
-                    hangBackstop(minutes = 20)
                 }
             }
         }

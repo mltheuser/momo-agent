@@ -23,7 +23,7 @@ import java.nio.file.Path
  *
  * Symlinks are deliberately left unresolved, twice over. The folder the
  * agent's commands actually run in is the unresolved path
- * ([codes.momo.agent.environment.LocalExecutionEnvironment]), so resolving
+ * ([codes.momo.agent.environment.ExecutionEnvironment]), so resolving
  * here would compare against something the session never used; and `realpath`
  * touches the filesystem, which would make a session whose workspace folder
  * was *deleted* unlistable and undeletable. The cost is that two spellings of

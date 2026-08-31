@@ -1,7 +1,7 @@
 package codes.momo.agent.tool
 
 import codes.momo.agent.environment.ExecResult
-import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.environment.completed
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.DisplayName
@@ -26,13 +26,13 @@ class ViewImageToolTest {
 
     // ─── Helpers ──────────────────────────────────────────────────────
 
-    /** Runs the tool for [path] against a real local environment over the temp workspace. */
+    /** Runs the tool for [path] against a real environment over the temp workspace. */
     private fun view(path: String): ToolResult = runBlocking {
-        ViewImageTool().execute(ViewImageArgs(path), LocalExecutionEnvironment(tempDir))
+        ViewImageTool().execute(ViewImageArgs(path), ExecutionEnvironment(tempDir))
     }
 
     private fun viewStubbed(vararg results: ExecResult): ToolResult = runBlocking {
-        ViewImageTool().execute(ViewImageArgs("/workspace/image.png"), FixedResultEnvironment(*results))
+        ViewImageTool().execute(ViewImageArgs("/workspace/image.png"), FixedResultRunner(*results).environment(tempDir))
     }
 
     // ─── Definition ───────────────────────────────────────────────────
@@ -121,16 +121,16 @@ class ViewImageToolTest {
     @Test
     @DisplayName("An oversized file is refused before encoding, naming its size and the limit")
     fun oversizedFileIsRefusedBeforeEncoding() {
-        val environment = FixedResultEnvironment(completed(stdout = " 9000000\n"))
+        val runner = FixedResultRunner(completed(stdout = " 9000000\n"))
 
         val result = runBlocking {
-            ViewImageTool().execute(ViewImageArgs("/workspace/image.png"), environment)
+            ViewImageTool().execute(ViewImageArgs("/workspace/image.png"), runner.environment(tempDir))
         }
 
         val error = assertIs<ToolResult.Error>(result)
         assertContains(error.message, "9000000")
         assertContains(error.message, MAX_IMAGE_BYTES.toString())
-        assertEquals(1, environment.callCount, "the refusal must come from the size check alone")
+        assertEquals(1, runner.callCount, "the refusal must come from the size check alone")
     }
 
     @Test

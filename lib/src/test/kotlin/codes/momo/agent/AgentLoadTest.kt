@@ -4,7 +4,7 @@ import ai.router.sdk.models.ContentPartType
 import ai.router.sdk.models.ReasoningEffort
 import ai.router.sdk.models.ToolCall
 import ai.router.sdk.models.ToolCallFunction
-import codes.momo.agent.environment.LocalExecutionEnvironment
+import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
 import kotlinx.coroutines.runBlocking
@@ -38,7 +38,7 @@ class AgentLoadTest {
 
     // ─── Fixture helpers ──────────────────────────────────────────────
 
-    private fun environment(): LocalExecutionEnvironment = LocalExecutionEnvironment(workspace)
+    private fun environment(): ExecutionEnvironment = ExecutionEnvironment(workspace)
 
     /** The event log recorded by one "first question" send against a [FakeLlm] over [rules]. */
     private fun recordedSession(
