@@ -23,6 +23,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Duration.Companion.seconds
 
 class ExecutionEnvironmentTest {
@@ -125,6 +126,31 @@ class ExecutionEnvironmentTest {
             "bash did not echo the background pid before the timeout kill — machine too loaded?",
         )
         assertProcessDies(timedOut.stdout.trim().toLong())
+    }
+
+    // ─── Background survivors ─────────────────────────────────────────
+
+    @Test
+    @DisplayName("A background job still holding the pipes does not hold the call: it returns when bash exits")
+    fun backgroundJobHoldingPipesDoesNotHoldTheCall() {
+        // `&` binds to the whole `&&` list, so bash forks a subshell for it;
+        // the redirect is on `sleep` only, so the subshell keeps the pipes
+        // open for as long as sleep lives. Waiting for EOF would wait 30s —
+        // past the exec timeout, which only guards the exit, not the drain.
+        val started = System.nanoTime()
+        val result = exec(
+            "bash",
+            "-c",
+            "true && sleep 30 > /dev/null 2>&1 & echo \$!; echo done",
+            timeout = 10.seconds,
+        )
+        val elapsed = (System.nanoTime() - started).nanoseconds
+
+        val completed = result.assertCompletedOk()
+        val lines = completed.stdout.trim().lines()
+        assertEquals("done", lines.last())
+        assertTrue(elapsed < 10.seconds, "the call waited on the survivor's pipe: took $elapsed")
+        ProcessHandle.of(lines.first().toLong()).ifPresent { it.destroyForcibly() }
     }
 
     // ─── stdin ────────────────────────────────────────────────────────

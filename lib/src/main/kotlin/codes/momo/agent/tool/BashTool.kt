@@ -101,9 +101,10 @@ private fun bashDescription(workspacePath: String, privilege: Privilege): String
         Commands are killed after ${Budgets.TOOL_TIMEOUT} and report a timeout error with any partial output. stdout
         and stderr come back in one result (stderr first) and share a budget of ${ToolRegistry.MAX_RESULT_CHARS} characters;
         truncation keeps the beginning and drops the end, so to see the end of long output, filter
-        it (e.g. `tail`, `grep`) instead of dumping it. Long-running processes (e.g. servers) MUST
-        be backgrounded with BOTH stdout and stderr redirected (to a file or /dev/null) — a
-        backgrounded process still holding either stream hangs the call until the timeout.
+        it (e.g. `tail`, `grep`) instead of dumping it. The call returns when the shell exits;
+        background processes outlive it, but their stdout/stderr are closed — a later write to
+        either fails (SIGPIPE). So background long-running processes (e.g. servers) with BOTH
+        streams redirected to a file or /dev/null.
     """.trimIndent()
     return listOf(
         "Runs a bash command (via `bash -c`) from the workspace root, $workspacePath.",

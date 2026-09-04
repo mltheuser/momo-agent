@@ -78,9 +78,11 @@ public class ExecutionEnvironment internal constructor(
      * - Each of stdout/stderr is captured up to [MAX_CAPTURED_BYTES]; the
      *   rest is drained but discarded — the process still runs to
      *   completion — and reported via the [ExecResult] truncation flags.
-     * - Only the direct child is waited for. Processes it leaves running
-     *   in the background are not: their later output is lost, and they
-     *   may outlive this call.
+     * - Only the direct child is waited for: the call returns once it has
+     *   exited and its output is read, even while background processes it
+     *   left behind still hold stdout/stderr. Those may outlive the call;
+     *   their later output is lost, and once the pipes are closed a write
+     *   to them fails (EPIPE).
      * - On [timeout] — no default; the caller supplies the policy — the
      *   process tree is killed and [ExecResult.TimedOut] returned with
      *   the output captured so far. A timeout is never an exception or
