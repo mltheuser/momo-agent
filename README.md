@@ -27,7 +27,7 @@ fails immediately during settings evaluation with an error naming the
 expected path.
 
 That same checkout is also the router `./gradlew build` talks to, since the
-build runs the live tier — one checkout, both roles. The rest of what a fresh
+build runs the live suite — one checkout, both roles. The rest of what a fresh
 checkout needs to get `build` green, including the API key, is in
 [TESTING.md](TESTING.md).
 
@@ -46,9 +46,9 @@ Upstream bug in another repo; recorded here because it blocks this build.
 ./gradlew build
 ```
 
-Runs compilation, detekt (with detekt-formatting) and every test tier. What
-it runs, what it needs of the machine and what it costs:
-[TESTING.md](TESTING.md).
+Runs compilation, detekt (with detekt-formatting) and the tests — one live
+suite driving the packaged server end to end, plus one unit test. What it
+runs, what it needs of the machine and what it costs: [TESTING.md](TESTING.md).
 
 ## Linting & formatting
 
@@ -59,16 +59,16 @@ Both scripts wrap detekt (with detekt-formatting) and cover all source sets:
 ./fmt.sh    # auto-fix formatting findings; remaining findings need manual fixes
 ```
 
-## Live integration tests
+## Live tests
 
-The `liveTest` suites run inside `build`, and on their own with:
+The live suite runs inside `build`, and on its own with:
 
 ```sh
-./gradlew liveTest
+./gradlew :server:liveTest
 ```
 
-What the tier is for, what it refuses to do, what it needs running and how it
-relates to the other two is in [TESTING.md](TESTING.md).
+What the suite is for, what it refuses to do and what it needs running is in
+[TESTING.md](TESTING.md).
 
 Configuration (Gradle property takes precedence over the environment
 variable, which takes precedence over the default):
@@ -81,7 +81,7 @@ variable, which takes precedence over the default):
 Example with overrides:
 
 ```sh
-./gradlew liveTest -PaiRouterBaseUrl=http://localhost:9999 -PaiRouterChatModel=some-model@provider
+./gradlew :server:liveTest -PaiRouterBaseUrl=http://localhost:9999 -PaiRouterChatModel=some-model@provider
 ```
 
 The default model is a cloud one reached *through* the local router, so the

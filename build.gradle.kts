@@ -13,8 +13,8 @@ plugins {
 
 // ─── Live-suite configuration ─────────────────────────────────────────
 //
-// Resolved once here so both modules' live suites share one set of
-// defaults. Each setting comes from a Gradle property, then an environment
+// Resolved once here, where the shared conventions live, and read by the
+// server's live suite. Each setting comes from a Gradle property, then an environment
 // variable, then the default; blank values (e.g. -PaiRouterBaseUrl= or an
 // exported-but-empty variable) count as unset. Resolving via `orNull` on
 // value-source providers keeps this configuration-cache safe.

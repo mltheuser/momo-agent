@@ -7,9 +7,10 @@ Shared build conventions live in the root build script.
 
 ## Build & verify
 
-- `./gradlew build` — compile, detekt and every test tier. The live tier
-  runs inside `check`, so a `build` needs a running ai-router and costs API
-  spend.
+- `./gradlew build` — compile, detekt and the tests: one live suite driving
+  the packaged server against a real router and model, plus one unit test.
+  The live suite runs inside `check`, so a `build` needs a running ai-router
+  and costs API spend.
 - `./lint.sh` / `./fmt.sh` — detekt check / auto-fix formatting.
 
 ## Conventions
@@ -31,9 +32,8 @@ Shared build conventions live in the root build script.
   back to an earlier point by cutting the stored log — never `revert` or
   `reverse`; retrying is the user's command that cuts a failed run's
   failure tail and resumes the run in place (a rewind plus an
-  `Agent.retry`). The server's mocked cascade cases
-  (`SubagentStopCascadeTest`) are where the stop/abort difference is
-  pinned.
+  `Agent.retry`). `SubagentTreeLiveTest`'s stop cascade is where the
+  stop/abort difference is pinned: both members end `STOPPED` and stay.
 - Some catch arms deliberately stay narrower than `Throwable` — so
   widening one in a tidy-up silently converts a failed JVM into a run that
   merely errored. Contract in `Agent.send`'s KDoc.
@@ -44,14 +44,14 @@ Shared build conventions live in the root build script.
   stored). The **variant names** are that contract and the field set is not:
   `session.json` tolerates keys it does not know, so a file can outlive its
   schema and *dropping* a stored field is safe — an old file's leftover key
-  is ignored rather than fatal (`favorite` was removed this way; the
-  obsolete-key case in `StoredMetadataTest` is the pin). The event log
+  is ignored rather than fatal (`favorite` was removed this way; nothing
+  pins it since the mocked suite went — keep the rule in mind). The event log
   deliberately does not tolerate the same move: there an unknown key is a
   wire-contract break worth failing on. Details in the event KDoc; storage
   layout in README, Sessions.
-- Shared test helpers live once in one shared source set — never a
-  per-suite copy. Which set, and how the suites are bound for `internal`
-  access: [TESTING.md](TESTING.md), Source sets and fixtures.
+- Shared test helpers live once, in `server/src/liveTest` — never a
+  per-class copy. What is there and how it is bound for `internal` access:
+  [TESTING.md](TESTING.md), Source sets and helpers.
 - Control characters in source files are written as visible escapes
   (`\u0007`), never raw bytes — editors strip raw bytes silently and
   diffs don't show it.
@@ -63,12 +63,12 @@ Shared build conventions live in the root build script.
 ## Docs
 
 - [TESTING.md](TESTING.md) — read when adding, moving or deleting a test,
-  running one tier at a time, or getting a fresh checkout's `build` green: the
-  three tiers, the rule deciding which one a test belongs to, what each needs,
-  the wait a case commanding a running session has to use, and where a shared
-  helper lives.
+  running one case alone, or getting a fresh checkout's `build` green: the
+  one tier and the rule deciding what a test is, the one permitted network
+  stand-in and its scope, the scenario list, the wait a case commanding a
+  running session has to use, and where a shared helper lives.
 - [README.md](README.md) — read when setting up the build, pointing the live
-  tier at another router or model, running or configuring the agent server,
+  suite at another router or model, running or configuring the agent server,
   working on or against its HTTP API (endpoints and wire format),
   granting or explaining the host's command privileges (sudoers), or
   checking platform assumptions.
