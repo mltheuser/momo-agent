@@ -38,10 +38,12 @@ class ConversationLiveTest {
         assertEquals(SessionStatus.IDLE, session.status)
 
         val events = http.withChangeStream { stream ->
-            assertEquals(SessionStatus.RUNNING, http.prompt(session.id, READ_AND_FLOOD_PROMPT).status)
-            stream.awaitFrames(2) // The run started.
-            val events = http.streamEvents(session.id)
-            stream.awaitFrames(3) // The run ended, announced behind the release of the run's claim.
+            stream.signalled("a run starting") {
+                assertEquals(SessionStatus.RUNNING, http.prompt(session.id, READ_AND_FLOOD_PROMPT).status)
+            }
+            // The run's end is announced behind the release of its claim, so
+            // the signal is what makes the idle status below safe to read.
+            val events = stream.signalled("a run ending") { http.streamEvents(session.id) }
             assertEquals(SessionStatus.IDLE, http.sessionInfo(session.id).status)
             events
         }

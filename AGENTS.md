@@ -37,18 +37,15 @@ Shared build conventions live in the root build script.
 - Some catch arms deliberately stay narrower than `Throwable` — so
   widening one in a tidy-up silently converts a failed JVM into a run that
   merely errored. Contract in `Agent.send`'s KDoc.
-- Stored session state is a persisted format: the `@SerialName`s on
-  `AgentEvent` and `RunResult.Status`, and the `SessionMetadata` variant
-  names in `session.json`, are a compatibility contract — never change them
-  (`Privilege` is *not* in this class: response contract only, never
-  stored). The **variant names** are that contract and the field set is not:
-  `session.json` tolerates keys it does not know, so a file can outlive its
-  schema and *dropping* a stored field is safe — an old file's leftover key
-  is ignored rather than fatal (`favorite` was removed this way; nothing
-  pins it since the mocked suite went — keep the rule in mind). The event log
-  deliberately does not tolerate the same move: there an unknown key is a
-  wire-contract break worth failing on. Details in the event KDoc; storage
-  layout in README, Sessions.
+- Stored session state is a persisted format, read strictly: both
+  `events.jsonl` and `session.json` fail loudly on a key their schema does
+  not know, surfacing the session as corrupt rather than guessing. So any
+  change to `AgentEvent`, `RunResult.Status` or `SessionMetadata` — a
+  `@SerialName`, a variant name, a field added or dropped — is a deliberate
+  break with existing stored sessions, to be made knowingly (with a wipe or
+  a migration), never by accident. `Privilege` is *not* stored: response
+  contract only. Details in the event KDoc; storage layout in README,
+  Sessions.
 - Shared test helpers live once, in `server/src/liveTest` — never a
   per-class copy. What is there and how it is bound for `internal` access:
   [TESTING.md](TESTING.md), Source sets and helpers.

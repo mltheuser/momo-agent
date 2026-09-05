@@ -80,7 +80,7 @@ takes no test-only knob for it — accepted, at ~5 s.
 
 | Class                     | Model? | Covers                                                                                                                                                                                                                                             |
 | ------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SessionSurfaceLiveTest`  | no     | Lifecycle with the change stream signalling each mutation once; 400s on every surface; 404s on every route and for a foreign workspace; rename/select-model on live and closed sessions; privilege and corrupt stored state; `/v1/models`; templates |
+| `SessionSurfaceLiveTest`  | no     | Lifecycle, each mutation followed by a change-stream signal; 400s on every surface; 404s on every route and for a foreign workspace; rename/select-model on live and closed sessions; privilege and corrupt stored state; `/v1/models`; templates |
 | `ConversationLiveTest`    | yes    | Create → prompt → stream → complete with a planted token and a truncated tool result, continuation across runs; the event stream's replay, fan-out and end on delete                                                                                |
 | `RunControlLiveTest`      | yes    | Mid-run 409s (prompt/rewind/retry) then a stop → `STOPPED`, idle, promptable; a close mid-run aborts and the next prompt resumes                                                                                                                    |
 | `FailedRunLiveTest`       | short  | Unknown model → `ERROR` with the router's 404, zero retries; `/retry` cuts and resumes in place; a completed run is not retryable                                                                                                                   |
@@ -94,6 +94,15 @@ The suite shares one server process (`LiveServerSupport.kt`); each case owns
 only the sessions it creates. `PersistenceLiveTest` and
 `RouterFailureLiveTest` start processes of their own, because a stored
 session is indexed at startup and a stand-in needs a process pointed at it.
+
+## The change stream is a doorbell
+
+`GET /v1/sessions/changes` promises one thing: after a listing mutation a
+frame arrives, and a re-read taken after that frame sees the change. Frames
+carry no data, and two raised close together may arrive as one. So a case
+never counts frames — it wraps a mutation in `ChangeStream.signalled(...)`,
+which fails if no frame follows, and asserts the state it re-reads. Anything
+finer would pin the stream's buffering, which is an implementation detail.
 
 ## Wait for the run, not for its last frame
 

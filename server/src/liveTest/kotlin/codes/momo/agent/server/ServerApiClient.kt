@@ -294,31 +294,37 @@ internal suspend fun HttpClient.awaitRunEnd(sessionId: String) {
 }
 
 /**
- * An open subscription to the change stream, counting the frames it has
- * received. Frames carry nothing to tell apart, so counting them is all a
- * subscriber can do — see [ChangeStream.awaitFrames].
+ * An open subscription to the change stream. Its frames carry nothing to
+ * tell apart and two raised together may arrive as one, so a case never
+ * counts them: it asserts the one promise a subscriber relies on, through
+ * [signalled] — a mutation is followed by a frame, after which a re-read
+ * sees the change.
  */
 internal class ChangeStream(private val received: () -> Int, private val ceiling: Duration) {
 
-    /** How many frames have arrived so far, the stream's opening one included. */
-    val frames: Int get() = received()
-
     /**
-     * Waits for the frame count to reach [count], failing if it does not — or
-     * if it overshoots, which is how a case pins one mutation to one frame
-     * rather than only checking a total.
+     * Runs [mutation], described as [what], and waits until at least one
+     * frame has arrived since — failing if none does within the ceiling.
+     * Returns what [mutation] returned.
      */
-    suspend fun awaitFrames(count: Int) {
-        val reached = withTimeoutOrNull(ceiling) {
-            while (received() < count) {
+    suspend fun <T> signalled(what: String, mutation: suspend () -> T): T {
+        val before = received()
+        val result = mutation()
+        awaitMoreThan(before, what)
+        return result
+    }
+
+    /** Waits until more than [count] frames have arrived; [what] names the change awaited. */
+    internal suspend fun awaitMoreThan(count: Int, what: String) {
+        val arrived = withTimeoutOrNull(ceiling) {
+            while (received() <= count) {
                 delay(POLL_INTERVAL)
             }
             true
         }
-        if (reached == null) {
-            fail("only ${received()} of $count change frames arrived within $ceiling")
+        if (arrived == null) {
+            fail("the change stream did not signal after $what within $ceiling")
         }
-        assertEquals(count, received(), "more change frames arrived than the case expected")
     }
 }
 
@@ -326,8 +332,7 @@ internal class ChangeStream(private val received: () -> Int, private val ceiling
  * Runs [block] with a subscription to the change stream open, disconnecting
  * as it returns. The stream's own opening frame has arrived before [block]
  * starts — it is emitted with the subscription, so waiting for it is what puts
- * a case's mutations behind the subscribe instead of racing it, and it counts
- * as the first frame.
+ * a case's mutations behind the subscribe instead of racing it.
  */
 internal suspend fun <T> HttpClient.withChangeStream(block: suspend (ChangeStream) -> T): T {
     val received = CopyOnWriteArrayList<String>()
@@ -344,7 +349,7 @@ internal suspend fun <T> HttpClient.withChangeStream(block: suspend (ChangeStrea
             }
         }
         val stream = ChangeStream({ received.size }, waitCeiling)
-        stream.awaitFrames(1) // The opening frame: the subscription is registered.
+        stream.awaitMoreThan(0, "subscribing") // The opening frame: the subscription is registered.
         try {
             block(stream)
         } finally {

@@ -417,10 +417,9 @@ private const val METADATA_FILE = "session.json"
 private const val EVENTS_FILE = "events.jsonl"
 
 /**
- * Session metadata tolerates keys it does not know, because a file on disk
- * outlives the schema that wrote it: a session stored while the environment
- * spec still carried a `privilege` must keep loading now that the privilege
- * is discovered instead. The event log stays strict by contrast — there an
- * unknown key is a wire-contract break worth failing on.
+ * Session metadata is read strictly, like the event log: a key the schema
+ * does not know is a stored-format break, surfaced as a corrupt session
+ * rather than papered over. A schema change is therefore a deliberate act
+ * with a migration or a wipe, never a silent drift.
  */
-private val metadataJson = Json { ignoreUnknownKeys = true }
+private val metadataJson = Json

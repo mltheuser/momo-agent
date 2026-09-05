@@ -42,20 +42,16 @@ class SessionSurfaceLiveTest {
     lateinit var tempDir: Path
 
     @Test
-    @DisplayName("Lifecycle: create, get, list, close, delete — each mutation signalling the change stream once")
+    @DisplayName("Lifecycle: create, get, list, close, delete — each mutation followed by a change-stream signal")
     fun lifecycleWithTheChangeStream() = withLiveServer { http ->
         val harness = harnessPath(tempDir)
         val workspace = localWorkspace(tempDir, "lifecycle")
 
         http.withChangeStream { stream ->
-            // One mutation at a time, each awaited before the next: a signal
-            // is a hint to re-read, so two raised together may arrive as
-            // one — and a signal that stopped arriving, or arrives twice,
-            // fails here rather than cancelling out in a total.
-            val first = http.createSession(harness, workspace)
-            stream.awaitFrames(2)
-            val second = http.createSession(harness, workspace)
-            stream.awaitFrames(3)
+            // Each listing mutation is followed by a change frame — the one
+            // promise a client relies on to know when to re-read the list.
+            val first = stream.signalled("creating a session") { http.createSession(harness, workspace) }
+            val second = stream.signalled("creating a second session") { http.createSession(harness, workspace) }
             assertNotEquals(first.id, second.id)
             assertTrue(first.id.isNotBlank())
             assertEquals("harness", first.title, "the title defaults to the harness folder's name")
@@ -74,27 +70,20 @@ class SessionSurfaceLiveTest {
             assertEquals(HttpStatusCode.OK, stopped.status, stopped.bodyAsText())
             assertEquals(SessionStatus.IDLE, stopped.body<SessionInfo>().status)
 
-            // Reads signal nothing: their frames would fill the count below early.
-            http.sessions(workspace)
-            http.sessionInfo(first.id)
-
             // Close parks: still listed, idempotent, the neighbour untouched —
             // and a close whose caller is gone still signals.
-            http.abandonedClose(first.id)
-            stream.awaitFrames(4)
+            stream.signalled("a close whose caller hung up") { http.abandonedClose(first.id) }
             val closed = http.sessionInfo(first.id)
             assertEquals(SessionStatus.CLOSED, closed.status)
             assertEquals(closed, http.sessions(workspace).single { it.id == first.id })
             assertEquals(SessionStatus.IDLE, http.sessionInfo(second.id).status, "sessions close independently")
-            val closedAgain = http.closeResponse(first.id)
+            val closedAgain = stream.signalled("closing again") { http.closeResponse(first.id) }
             assertEquals(HttpStatusCode.OK, closedAgain.status)
             assertEquals(SessionStatus.CLOSED, closedAgain.body<SessionInfo>().status)
-            stream.awaitFrames(5)
             val whileClosed = http.stopResponse(first.id)
             assertEquals(SessionStatus.CLOSED, whileClosed.body<SessionInfo>().status, "a stop does not attach")
 
-            http.deleteSession(first.id)
-            stream.awaitFrames(6)
+            stream.signalled("deleting") { http.deleteSession(first.id) }
             val lookup = http.sessionInfoResponse(first.id)
             assertEquals(HttpStatusCode.NotFound, lookup.status)
             assertEquals("unknown_session", lookup.body<ApiError>().code)
