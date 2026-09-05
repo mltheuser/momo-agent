@@ -116,33 +116,34 @@ internal class LiveServerProcess private constructor(
     companion object {
 
         /**
-         * Starts a server on a free port over [dataDir], returning once it
-         * answers requests. A port lost between being chosen and being bound
-         * costs an attempt rather than the caller.
+         * Starts a server on a free port over [dataDir], pointed at the
+         * router at [aiRouterBaseUrl] — the live one unless a case stands in
+         * for it — returning once it answers requests. A port lost between
+         * being chosen and being bound costs an attempt rather than the caller.
          */
-        fun start(dataDir: Path): LiveServerProcess {
+        fun start(dataDir: Path, aiRouterBaseUrl: String = liveBaseUrl): LiveServerProcess {
             // The server is useless without the router, and its own failure to
             // reach one is far less legible than saying so here.
             requireLiveAiRouter()
             repeat(START_ATTEMPTS - 1) {
-                val attempt = runCatching { startOnce(dataDir) }
+                val attempt = runCatching { startOnce(dataDir, aiRouterBaseUrl) }
                 attempt.onSuccess { return it }
                 // Only a stillborn process is worth another port; nothing else
                 // has a reason to go better on the next one.
                 attempt.onFailure { failure -> if (failure !is StillbornServer) throw failure }
             }
             // The last attempt reports instead of retrying.
-            return startOnce(dataDir)
+            return startOnce(dataDir, aiRouterBaseUrl)
         }
 
-        private fun startOnce(dataDir: Path): LiveServerProcess {
+        private fun startOnce(dataDir: Path, aiRouterBaseUrl: String): LiveServerProcess {
             val port = freePort()
             val transcript = StringBuilder()
             val builder = ProcessBuilder(
                 serverBin,
                 "--port=$port",
                 "--data-dir=$dataDir",
-                "--ai-router-base-url=$liveBaseUrl",
+                "--ai-router-base-url=$aiRouterBaseUrl",
             ).redirectErrorStream(true)
             // The start script resolves the JVM itself; hand it this one so the
             // suite does not depend on the launching shell's environment.
