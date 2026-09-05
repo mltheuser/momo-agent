@@ -12,10 +12,6 @@ import codes.momo.agent.onAnyTurn
 import codes.momo.agent.onOpeningTurn
 import codes.momo.agent.onToolResults
 import codes.momo.agent.toolCallResponse
-import io.ktor.client.HttpClient
-import io.ktor.client.call.body
-import io.ktor.client.request.post
-import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import org.junit.jupiter.api.DisplayName
@@ -37,15 +33,6 @@ class RetryRunTest {
 
     @TempDir
     lateinit var tempDir: Path
-
-    private suspend fun HttpClient.retryResponse(sessionId: String): HttpResponse =
-        post("/v1/sessions/$sessionId/retry")
-
-    private suspend fun HttpClient.retry(sessionId: String): SessionInfo {
-        val response = retryResponse(sessionId)
-        assertEquals(HttpStatusCode.Accepted, response.status, response.bodyAsText())
-        return response.body()
-    }
 
     @Test
     @DisplayName("Retrying a failed run cuts its failure tail and resumes it to completion, progress kept")
@@ -69,7 +56,7 @@ class RetryRunTest {
             val failed = sessionStore(tempDir).readEvents(id)
             assertEquals(RunResult.Status.ERROR, assertIs<AgentEvent.RunFinished>(failed.last()).status)
 
-            http.retry(id)
+            http.retryRun(id)
             http.awaitRunEnd(id)
 
             val events = sessionStore(tempDir).readEvents(id)

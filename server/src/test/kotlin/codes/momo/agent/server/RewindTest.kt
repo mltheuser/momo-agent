@@ -9,12 +9,7 @@ import codes.momo.agent.onOpeningTurn
 import codes.momo.agent.toolCallResponse
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.HttpResponse
-import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.content.TextContent
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import org.junit.jupiter.api.DisplayName
@@ -497,9 +492,3 @@ private data class TwoRuns(
     val preCutMax: Long,
     val firstRunStart: Long,
 )
-
-/** POSTs a rewind whose body is [body] verbatim, for the shapes the request type cannot express. */
-private suspend fun HttpClient.rawRewindResponse(sessionId: String, body: String): HttpResponse =
-    post("/v1/sessions/$sessionId/rewind") {
-        setBody(TextContent(body, ContentType.Application.Json))
-    }

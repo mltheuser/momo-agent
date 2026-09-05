@@ -6,13 +6,8 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.contentType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -321,10 +316,3 @@ class SessionLifecycleLiveTest {
 /** [workspace]'s listing entry for [sessionId]; the shared process also holds every other case's sessions. */
 private suspend fun HttpClient.ownSession(sessionId: String, workspace: EnvironmentSpec): SessionInfo =
     sessions(workspace).single { it.id == sessionId }
-
-/** POSTs a create-session request whose body is [body] verbatim. */
-private suspend fun HttpClient.rawCreateSessionResponse(body: String): HttpResponse =
-    post("/v1/sessions") {
-        contentType(ContentType.Application.Json)
-        setBody(body)
-    }

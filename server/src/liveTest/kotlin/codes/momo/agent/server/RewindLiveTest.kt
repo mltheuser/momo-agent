@@ -2,6 +2,8 @@ package codes.momo.agent.server
 
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -54,7 +56,22 @@ class RewindLiveTest {
         val survivors = firstRun.map { it.id }.filter { it < namedAt }
         val cutPoint = survivors.last()
 
-        val rewound = http.rewindSession(id, namedAt)
+        val rewound = coroutineScope {
+            // Parked past everything stored: the only event it can ever
+            // receive is one the rewind appends past the shrunken file.
+            val watcher = async {
+                http.streamEvents(id, afterSequenceId = preCutMax) { it is AgentEvent.ConversationRewound }
+            }
+            val rewound = http.rewindSession(id, namedAt)
+            val received = watcher.await()
+            assertEquals(
+                preCutMax + 1,
+                received.single().id,
+                "the parked subscriber's open stream receives the announcement, and nothing else",
+            )
+            assertIs<AgentEvent.ConversationRewound>(received.single().event)
+            rewound
+        }
 
         assertEquals(SessionStatus.IDLE, rewound.session.status, "a beheaded run reads as ended, the tree attached")
         assertTrue(rewound.deletedSessionIds.isEmpty())

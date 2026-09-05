@@ -10,10 +10,12 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.sse.SSE
 import io.ktor.client.plugins.sse.sse
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -96,6 +98,12 @@ internal suspend fun HttpClient.createSessionResponse(request: CreateSessionRequ
         setBody(request)
     }
 
+/** POSTs a create-session request whose body is [body] verbatim, for the shapes the request type cannot express. */
+internal suspend fun HttpClient.rawCreateSessionResponse(body: String): HttpResponse =
+    post("/v1/sessions") {
+        setBody(TextContent(body, ContentType.Application.Json))
+    }
+
 /** POSTs a prompt, asserting the 202 that says the run was accepted, not finished. */
 internal suspend fun HttpClient.prompt(
     sessionId: String,
@@ -128,10 +136,10 @@ internal suspend fun HttpClient.rawPromptResponse(sessionId: String, body: Strin
 internal suspend fun HttpClient.sessionInfo(sessionId: String): SessionInfo =
     get("/v1/sessions/$sessionId").body()
 
-/** GETs one session scoped to [workspace] — a session outside it answers 404, not 403. */
-internal suspend fun HttpClient.sessionInfoResponse(sessionId: String, workspace: String): HttpResponse =
+/** GETs one session, scoped to [workspace] when given — a session outside it answers 404, not 403. */
+internal suspend fun HttpClient.sessionInfoResponse(sessionId: String, workspace: String? = null): HttpResponse =
     get("/v1/sessions/$sessionId") {
-        parameter("workspace", workspace)
+        if (workspace != null) parameter("workspace", workspace)
     }
 
 /** The server's root-session listing for [workspace], the scope the route requires. */
@@ -196,6 +204,12 @@ internal suspend fun HttpClient.rewindResponse(sessionId: String, firstDeletedSe
         setBody(RewindRequest(firstDeletedSequenceId))
     }
 
+/** POSTs a rewind whose body is [body] verbatim, for the shapes the request type cannot express. */
+internal suspend fun HttpClient.rawRewindResponse(sessionId: String, body: String): HttpResponse =
+    post("/v1/sessions/$sessionId/rewind") {
+        setBody(TextContent(body, ContentType.Application.Json))
+    }
+
 /** POSTs a stop — no request body — whose response carries the session info as of the stop's return. */
 internal suspend fun HttpClient.stopResponse(sessionId: String): HttpResponse = post("/v1/sessions/$sessionId/stop")
 
@@ -216,6 +230,47 @@ internal suspend fun HttpClient.closeSession(sessionId: String): SessionInfo {
 }
 
 internal suspend fun HttpClient.closeResponse(sessionId: String): HttpResponse = post("/v1/sessions/$sessionId/close")
+
+/** DELETEs a session, asserting the 204 that says it and its stored artifacts are gone. */
+internal suspend fun HttpClient.deleteSession(sessionId: String) {
+    val response = deleteResponse(sessionId)
+    assertEquals(HttpStatusCode.NoContent, response.status, response.bodyAsText())
+}
+
+internal suspend fun HttpClient.deleteResponse(sessionId: String): HttpResponse = delete("/v1/sessions/$sessionId")
+
+/** POSTs a retry — no request body — asserting the 202 that says the failed run was resumed, not finished. */
+internal suspend fun HttpClient.retryRun(sessionId: String): SessionInfo {
+    val response = retryResponse(sessionId)
+    assertEquals(HttpStatusCode.Accepted, response.status, response.bodyAsText())
+    return response.body()
+}
+
+internal suspend fun HttpClient.retryResponse(sessionId: String): HttpResponse = post("/v1/sessions/$sessionId/retry")
+
+/** GETs the event stream route as a plain request, for the status it answers before any frame. */
+internal suspend fun HttpClient.eventsResponse(sessionId: String): HttpResponse = get("/v1/sessions/$sessionId/events")
+
+/** GETs the model catalog the server proxies from ai-router. */
+internal suspend fun HttpClient.modelsResponse(): HttpResponse = get("/v1/models")
+
+/** GETs every stored template's name. */
+internal suspend fun HttpClient.templateNames(): List<String> = get("/v1/templates").body()
+
+internal suspend fun HttpClient.templateResponse(name: String): HttpResponse = get("/v1/templates/$name")
+
+/** PUTs a template, asserting 200, and returns it as served. */
+internal suspend fun HttpClient.putTemplate(name: String, body: String): TemplateResponse {
+    val response = putTemplateResponse(name, body)
+    assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+    return response.body()
+}
+
+internal suspend fun HttpClient.putTemplateResponse(name: String, body: String): HttpResponse =
+    put("/v1/templates/$name") {
+        contentType(ContentType.Application.Json)
+        setBody(PutTemplateRequest(body))
+    }
 
 // ─── Waits ────────────────────────────────────────────────────────────
 
@@ -268,9 +323,9 @@ internal class ChangeStream(private val received: () -> Int, private val ceiling
  * a case's mutations behind the subscribe instead of racing it, and it counts
  * as the first frame.
  */
-internal suspend fun HttpClient.withChangeStream(block: suspend (ChangeStream) -> Unit) {
+internal suspend fun <T> HttpClient.withChangeStream(block: suspend (ChangeStream) -> T): T {
     val received = CopyOnWriteArrayList<String>()
-    coroutineScope {
+    return coroutineScope {
         val subscription = launch {
             sse("/v1/sessions/changes") {
                 incoming

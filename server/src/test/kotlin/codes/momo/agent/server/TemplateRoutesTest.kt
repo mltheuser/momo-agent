@@ -1,14 +1,8 @@
 package codes.momo.agent.server
 
-import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
-import io.ktor.client.request.put
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.HttpResponse
-import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.contentType
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -35,21 +29,21 @@ class TemplateRoutesTest {
         withSessionServer(tempDir) { http ->
             assertEquals(emptyList(), http.get("/v1/templates").body<List<String>>())
 
-            val created = http.putTemplate("review", "Review this diff.")
+            val created = http.putTemplateResponse("review", "Review this diff.")
             assertEquals(HttpStatusCode.OK, created.status)
             assertEquals(TemplateResponse("review", "Review this diff."), created.body())
             val file = tempDir.resolve("data/templates/review.md")
             assertTrue(file.isRegularFile(), "the template lands as $file")
             assertEquals("Review this diff.", file.readText())
 
-            http.putTemplate("bugfix", "Fix the bug.")
+            http.putTemplateResponse("bugfix", "Fix the bug.")
             assertEquals(listOf("bugfix", "review"), http.get("/v1/templates").body<List<String>>())
 
             val read = http.get("/v1/templates/review")
             assertEquals(HttpStatusCode.OK, read.status)
             assertEquals(TemplateResponse("review", "Review this diff."), read.body())
 
-            http.putTemplate("review", "Review this diff carefully.")
+            http.putTemplateResponse("review", "Review this diff carefully.")
             assertEquals("Review this diff carefully.", tempDir.resolve("data/templates/review.md").readText())
             assertEquals(
                 TemplateResponse("review", "Review this diff carefully."),
@@ -91,7 +85,7 @@ class TemplateRoutesTest {
                 assertEquals(HttpStatusCode.BadRequest, get.status, "GET $encoded")
                 assertEquals("invalid_request", get.body<ApiError>().code, "GET $encoded")
 
-                val put = http.putTemplate(encoded, "text")
+                val put = http.putTemplateResponse(encoded, "text")
                 assertEquals(HttpStatusCode.BadRequest, put.status, "PUT $encoded")
                 assertEquals("invalid_request", put.body<ApiError>().code, "PUT $encoded")
             }
@@ -102,16 +96,10 @@ class TemplateRoutesTest {
     @DisplayName("A blank template body is a 400 invalid_request and nothing lands on disk")
     fun blankBodyIsRejected() {
         withSessionServer(tempDir) { http ->
-            val response = http.putTemplate("review", "   ")
+            val response = http.putTemplateResponse("review", "   ")
             assertEquals(HttpStatusCode.BadRequest, response.status)
             assertEquals("invalid_request", response.body<ApiError>().code)
             assertEquals(emptyList(), http.get("/v1/templates").body<List<String>>())
         }
     }
 }
-
-private suspend fun HttpClient.putTemplate(name: String, body: String): HttpResponse =
-    put("/v1/templates/$name") {
-        contentType(ContentType.Application.Json)
-        setBody(PutTemplateRequest(body))
-    }
