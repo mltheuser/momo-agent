@@ -43,7 +43,7 @@ val aiRouterChatModel: String by rootProject.extra
 testing {
     suites {
         // The one unit test the tree keeps: the rewind cascade as pure log
-        // analysis (TESTING.md).
+        // analysis (docs/testing.md).
         val test by getting(JvmTestSuite::class) {
             useJUnitJupiter()
             dependencies {
@@ -54,7 +54,7 @@ testing {
 
         // The live suite — the suite — drives the installed distribution as a
         // real OS process over real HTTP, Main.kt included, against a running
-        // ai-router and a real model, and runs in `check` (TESTING.md).
+        // ai-router and a real model, and runs in `check` (docs/testing.md).
         register<JvmTestSuite>("liveTest") {
             useJUnitJupiter()
             dependencies {

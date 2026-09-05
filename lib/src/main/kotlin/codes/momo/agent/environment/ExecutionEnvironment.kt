@@ -35,9 +35,9 @@ public class ExecutionEnvironment internal constructor(
      * front and discovering the [privilege] its commands run with.
      *
      * @throws EnvironmentStartupException when [workspace] is not an
-     *   existing directory, or baseline binaries (see the README's platform
-     *   section) are missing from `PATH` — naming everything that is
-     *   missing.
+     *   existing directory, or baseline binaries (see
+     *   docs/execution-environment.md) are missing from `PATH` — naming
+     *   everything that is missing.
      */
     public constructor(workspace: Path) : this(workspace, System.getenv("PATH"))
 

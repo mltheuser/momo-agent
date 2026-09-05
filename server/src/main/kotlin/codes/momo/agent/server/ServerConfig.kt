@@ -5,7 +5,7 @@ import java.nio.file.Path
 /**
  * Server process configuration. Each setting resolves from its CLI argument
  * (`--name=value`), then its environment variable, then the default —
- * see the README's server section for the table.
+ * see docs/configuration.md for the table.
  */
 internal data class ServerConfig(
     val port: Int,

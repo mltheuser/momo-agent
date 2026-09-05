@@ -12,7 +12,7 @@ if (!sdkDir.isDirectory || !(File(sdkDir, "build.gradle.kts").isFile || File(sdk
         "ai-router SDK checkout not found at: $sdkDir — " +
             "clone https://github.com/mltheuser/ai-router there or edit the path in settings.gradle.kts. " +
             "The checkout is all this build needs to configure; what a green `build` needs on top of it " +
-            "is in TESTING.md, What a fresh checkout needs."
+            "is in docs/testing.md, What a fresh checkout needs."
     )
 }
 

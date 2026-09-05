@@ -22,4 +22,4 @@ dependencies {
 }
 
 // The library has no test suite of its own: it is tested end to end through
-// the server's live suite, the only tier the tree keeps (TESTING.md).
+// the server's live suite, the only tier the tree keeps (docs/testing.md).
