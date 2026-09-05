@@ -71,7 +71,7 @@ read and surfaces the session as corrupt (`500 corrupt_session`).
 
 - The schema is `AgentEvent` (with `RunResult.Status`, `ReasoningEffort`) and `SessionMetadata` (with `EnvironmentSpec`).
 - Any change to a `@SerialName`, a variant name or a field is a break with every stored session. Make it knowingly, with a wipe or a migration.
-- Fields added later default when absent (`depth`, `model`, `attachments`, `error`, `subagentType`, `media`), so older logs still load.
+- Optional fields (`depth`, `model`, `attachments`, `error`, `subagentType`, `media`) default when absent.
 - `Privilege` is a response contract only; it is never stored.
 - A trailing line torn by process death mid-write is tolerated and never served.
 - Writes to `session.json` and rewind cuts of `events.jsonl` are atomic replacements (`AtomicReplace.kt`).

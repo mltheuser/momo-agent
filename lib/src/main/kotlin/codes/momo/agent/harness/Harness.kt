@@ -36,12 +36,11 @@ public class Harness internal constructor(
         if (duplicates.isNotEmpty()) {
             fail("'tools' contains duplicate tool names: ${duplicates.joinToString(", ")}.")
         }
-        val retired = tools.filter { it in SUBAGENT_TOOL_NAMES }
-        if (retired.isNotEmpty()) {
+        val subagentTools = tools.filter { it in SUBAGENT_TOOL_NAMES }
+        if (subagentTools.isNotEmpty()) {
             fail(
-                "'tools' lists ${retired.joinToString(", ") { "'$it'" }} — the subagent tools are " +
-                    "no longer listed in 'tools'; a harness that declares a 'subagents' map is " +
-                    "offered them automatically.",
+                "'tools' lists ${subagentTools.joinToString(", ") { "'$it'" }}; the subagent tools are " +
+                    "not listed in 'tools' but offered to a harness that declares a 'subagents' map.",
             )
         }
     }

@@ -20,7 +20,7 @@ directory holding the entry point, and `make build` fails on a missing
 directory.
 
 Fix: recreate `cmd/ai-router/main.go` as `package main` calling
-`cli.Execute()`. This is an upstream bug in that repo.
+`cli.Execute()`.
 
 ## Gradle tasks
 

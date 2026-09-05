@@ -70,7 +70,7 @@ Body: `{"code": "...", "message": "..."}`.
 | 404 | `unknown_session` | No such session, or session outside the given `workspace` |
 | 404 | `unknown_template` | No file backs the template name |
 | 409 | `conflict` | Run in flight where none may be; nothing to retry |
-| 409 | `unrevivable_subagent` | Stored spawn has no type or a type the harness no longer declares |
+| 409 | `unrevivable_subagent` | Stored spawn has no type, or a type the harness does not declare |
 | 500 | `corrupt_session` | Stored `session.json` or `events.jsonl` no longer parses |
 | 500 | `event_log_failed` | The session's log stopped persisting; new runs refused |
 | 500 | `internal_error` | Anything else |

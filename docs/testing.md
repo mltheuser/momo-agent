@@ -19,7 +19,7 @@ Two exceptions:
 | Live suite | `server/src/liveTest` | yes | 15 min |
 | `RewindPlanTest` | `server/src/test` | yes | 2 min |
 
-The `lib` module has no tests. Lib-only surface (`Agent.load` called directly, `RunResult` as a return value) stays untested by decision.
+The `lib` module has no tests. Lib-only surface (`Agent.load` called directly, `RunResult` as a return value) is untested.
 
 ## What the live suite holds itself to
 
@@ -78,4 +78,4 @@ Live results are never cached. Use `--rerun-tasks` for a single case, or a cache
 
 1. A current ai-router checkout at the path in `settings.gradle.kts` ([building.md](building.md), including the clone gotcha).
 2. That router running: `set -a && source .env && set +a && ./bin/ai-router serve` from the checkout.
-3. `AI_ROUTER_ANTHROPIC_API_KEY` in ai-router's `.env`. The default model is a cloud model; a build costs API spend. A local model can be substituted ([configuration.md](configuration.md)) at a measured reliability cost.
+3. `AI_ROUTER_ANTHROPIC_API_KEY` in ai-router's `.env`. The default model is a cloud model; a build costs API spend. A local model can be substituted ([configuration.md](configuration.md)); small local models fail planted-token reads.

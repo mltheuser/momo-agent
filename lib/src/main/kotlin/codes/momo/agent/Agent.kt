@@ -324,12 +324,12 @@ public class Agent internal constructor(
         val events = eventListener.storedEventsFor(sessionId) ?: return null
         if (type == null) {
             throw SubagentRevivalException(
-                "subagent '$name' was spawned without a type (a log predating typed spawning) " +
+                "subagent '$name' was spawned without a type " +
                     "and cannot be revived — spawn a fresh subagent instead.",
             )
         }
         val childHarness = harness.subagents[type]?.harness ?: throw SubagentRevivalException(
-            "subagent '$name' was spawned as type '$type', which the harness no longer declares. " +
+            "subagent '$name' was spawned as type '$type', which the harness does not declare. " +
                 "Declared types: ${harness.subagents.keys.ifEmpty { setOf("(none)") }.joinToString(", ")}.",
         )
         val session = restoredSession(events, childHarness)

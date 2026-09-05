@@ -127,8 +127,7 @@ internal object HarnessLoader {
     } catch (exception: UnknownPropertyException) {
         if (exception.propertyName == "model") {
             fail(
-                "$manifestFile: the 'model' key is no longer part of harness.yaml — a harness is " +
-                    "instructions plus tools, and a run's model comes with each prompt.",
+                "$manifestFile: harness.yaml has no 'model' key; a run's model comes with each prompt.",
                 exception,
             )
         } else {

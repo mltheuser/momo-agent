@@ -55,7 +55,7 @@ Vocabulary: abort (close/delete/shutdown, no recorded outcome) is not stop
 ## Revival
 
 - Prompting any dormant member rebuilds the tree's runtime and revives the chain from the root to that member from stored logs. Other children stay dormant until used.
-- A stored spawn without a type, or with a type the harness no longer declares, is `409 unrevivable_subagent` when prompted or renamed directly. A parent's `prompt_subagent` to it gets an error result.
+- A stored spawn without a type, or with a type the harness does not declare, is `409 unrevivable_subagent` when prompted or renamed directly. A parent's `prompt_subagent` to it gets an error result.
 - A `prompt_subagent` call the run never answered (abort, stop, crash) gets a synthesized result in the parent's transcript on load: what ended the run, and whether the child received the message.
 
 ## Rewind cascade

@@ -33,10 +33,9 @@ subagents:
 | `subagents.<type>.path` | yes | Another harness folder, relative to this folder. Absolute paths are rejected. `.` references the folder itself. |
 | `subagents.<type>.description` | yes | Non-blank one-liner the model sees when choosing a type. |
 
-Unknown keys are rejected (kaml strict mode). Two keys draw specific errors:
-
-- `model`: retired. A run's model comes with each prompt, not from the harness.
-- `spawn_subagent` or `prompt_subagent` under `tools`: retired. Declaring `subagents` offers them.
+Unknown keys are rejected (kaml strict mode). There is no `model` key: a run's
+model comes with each prompt. `spawn_subagent` and `prompt_subagent` are not
+listed under `tools`; declaring `subagents` offers them.
 
 ## Loading rules
 

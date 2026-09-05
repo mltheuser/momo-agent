@@ -57,7 +57,6 @@ design substance. No trailers. Fast-forward merged into `main`.
 
 ## Outside this repo
 
-Issue index, design decisions and per-issue outcomes live in the enclosing
-momo-codes workspace: `../planning/issues/agent-lib/README.md`, and
-`../planning/issues/vscode-client/README.md` for server gaps delivered
-through the client's issues. Not present in a standalone clone.
+Issue index and design decisions live in the enclosing momo-codes workspace:
+`../planning/issues/agent-lib/README.md` and
+`../planning/issues/vscode-client/README.md`.
