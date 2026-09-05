@@ -1,7 +1,7 @@
 package codes.momo.agent.server
 
+import ai.router.sdk.models.ChatUsage
 import codes.momo.agent.AgentEvent
-import codes.momo.agent.RESPONSE_USAGE
 import codes.momo.agent.RunResult
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -12,10 +12,13 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration
 
 /**
- * The rewind cascade as pure log analysis: which children a deleted range
- * deletes, which it cuts and where, and which it leaves alone — including
- * the timestamp correlation binding a deleted `prompt_subagent` call to the
- * child run it drove.
+ * The rewind cascade as pure log analysis — the one unit test the tree
+ * keeps, because the cases below cannot be staged cheaply against a real
+ * model: which children a deleted range cuts and where, which it leaves
+ * alone, the timestamp correlation binding a deleted `prompt_subagent` call
+ * to the child run it drove, and the order the cuts come out in. The
+ * simplest rule — a deleted spawn deletes its child's subtree — is pinned
+ * live, in `SubagentTreeLiveTest`.
  */
 class RewindPlanTest {
 
@@ -31,7 +34,7 @@ class RewindPlanTest {
         timestampMillis = at,
         status = RunResult.Status.COMPLETED,
         finalMessage = "done",
-        usage = RESPONSE_USAGE,
+        usage = ChatUsage(0, 0, 0, 0, 0),
         turnsUsed = 1,
         elapsed = Duration.ZERO,
     )
@@ -63,26 +66,7 @@ class RewindPlanTest {
     private fun plan(cut: Long, vararg logs: Pair<String, List<AgentEvent>>): RewindPlan =
         rewindPlan("root", cut, logs.toMap()::get)
 
-    // ─── The two cascade rules ────────────────────────────────────────
-
-    @Test
-    @DisplayName("A spawn in the deleted range deletes that child's subtree; a surviving sibling is untouched")
-    fun deletedSpawnDeletesTheChild() {
-        val root = listOf(
-            started(0, at = 0, id = "root"),
-            run(1, at = 10),
-            spawned(2, at = 11, name = "kept", sessionId = "kept-child"),
-            finished(3, at = 20),
-            run(4, at = 30),
-            spawned(5, at = 31, name = "doomed", sessionId = "doomed-child"),
-            finished(6, at = 40),
-        )
-
-        val plan = plan(3, "root" to root)
-
-        assertEquals(listOf("doomed-child"), plan.deletedSubtreeRoots)
-        assertEquals(listOf("root" to 3L), plan.cuts, "no surviving child's log is touched")
-    }
+    // ─── The cascade over prompt calls ────────────────────────────────
 
     @Test
     @DisplayName("A deleted prompt call cuts the child strictly before the run it drove, by the timestamp window")
@@ -248,24 +232,5 @@ class RewindPlanTest {
         val plan = plan(2, "root" to root, "mid" to mid, "leaf" to leaf)
 
         assertEquals(listOf("root" to 2L, "mid" to 1L, "leaf" to 0L), plan.cuts)
-    }
-
-    @Test
-    @DisplayName("A child whose log is already gone is skipped: nothing to cut, no failure")
-    fun missingChildLogIsSkipped() {
-        val root = listOf(
-            started(0, at = 0, id = "root"),
-            spawned(1, at = 1, name = "helper", sessionId = "gone-child"),
-            finished(2, at = 5),
-            run(3, at = 10),
-            promptCall(4, at = 11, callId = "call-1", name = "helper"),
-            callFinished(5, at = 20, callId = "call-1"),
-            finished(6, at = 21),
-        )
-
-        val plan = plan(2, "root" to root)
-
-        assertEquals(listOf("root" to 2L), plan.cuts)
-        assertTrue(plan.deletedSubtreeRoots.isEmpty())
     }
 }

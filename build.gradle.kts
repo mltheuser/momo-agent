@@ -35,6 +35,22 @@ subprojects {
     group = "codes.momo"
     version = "0.1.0"
 
+    // A per-test ceiling orders of magnitude above what a suite legitimately
+    // takes: JUnit enforces none of its own, so anything deadlocking below the
+    // suites' own bounded waits would stall the test JVM with no output at all.
+    // The thread mode is what makes it preemptive — a timeout enforced on the
+    // test's own thread is only reported once the test returns, which is never.
+    // The live suite gets a server process to start, real model latency and
+    // chained 90-second waits; anything else is pure logic in milliseconds.
+    tasks.withType<Test>().configureEach {
+        val minutes = if (name == "liveTest") 15 else 2
+        systemProperty("junit.jupiter.execution.timeout.default", "${minutes}m")
+        systemProperty("junit.jupiter.execution.timeout.thread.mode.default", "SEPARATE_THREAD")
+        testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        // Never UP-TO-DATE: a unit run is cheap and a live run is the point.
+        outputs.upToDateWhen { false }
+    }
+
     repositories {
         mavenCentral()
     }
