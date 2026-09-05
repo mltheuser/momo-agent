@@ -1,4 +1,4 @@
-package codes.momo.agent
+package codes.momo.agent.server
 
 import java.awt.Color
 import java.awt.Font
@@ -11,7 +11,7 @@ import javax.imageio.ImageIO
  * planted visual fact for vision cases: the word reaches the model only if
  * the image itself does.
  */
-public fun writeWordImage(path: Path, word: String) {
+internal fun writeWordImage(path: Path, word: String) {
     val image = BufferedImage(400, 160, BufferedImage.TYPE_INT_RGB)
     val graphics = image.createGraphics()
     graphics.color = Color.WHITE

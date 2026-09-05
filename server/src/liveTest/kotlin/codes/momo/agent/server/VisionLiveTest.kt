@@ -2,8 +2,6 @@ package codes.momo.agent.server
 
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
-import codes.momo.agent.harness.writeHarness
-import codes.momo.agent.writeWordImage
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir

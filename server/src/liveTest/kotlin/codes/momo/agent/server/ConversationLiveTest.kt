@@ -2,7 +2,6 @@ package codes.momo.agent.server
 
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
-import codes.momo.agent.liveChatModel
 import codes.momo.agent.tool.ToolRegistry
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CompletableDeferred

@@ -9,8 +9,6 @@ import ai.router.sdk.models.ContentPartType
 import ai.router.sdk.models.ModelInfo
 import ai.router.sdk.models.ModelList
 import ai.router.sdk.models.ProviderType
-import codes.momo.agent.liveBaseUrl
-import codes.momo.agent.liveChatModel
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout

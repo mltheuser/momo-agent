@@ -18,31 +18,24 @@ formatting:
     active: true
 
 complexity:
-  # A shared fixture helper takes one knob per scenario dimension (rules,
-  # budgets, harness, settings, catalog...), each defaulted so call sites name
-  # only what their case is about. Relax the parameter cap for test sources only.
+  # A shared test helper takes one knob per scenario dimension (tools,
+  # subagents, instructions...), each defaulted so call sites name only what
+  # their case is about. Relax the parameter cap for test sources only.
   LongParameterList:
-    excludes: ['**/test/**', '**/testFixtures/**', '**/liveTest/**', '**/containerTest/**']
-  # Tests may build whole requests inside a single test function, so they can
-  # run long by design. Relax the method-length cap for test sources only.
+    excludes: ['**/test/**', '**/liveTest/**']
+  # A live case walks one realistic user flow end to end inside a single
+  # test function, so it runs long by design. Relax the method-length cap
+  # for test sources only.
   LongMethod:
-    excludes: ['**/test/**', '**/testFixtures/**', '**/liveTest/**', '**/containerTest/**']
+    excludes: ['**/test/**', '**/liveTest/**']
   # Test classes bundle one function per scenario plus helpers, so they run
   # over the function cap by design. Relax it for test sources only.
   TooManyFunctions:
-    excludes: ['**/test/**', '**/testFixtures/**', '**/liveTest/**', '**/containerTest/**']
-
-performance:
-  # A test hands its scripted rules on as a vararg — `FakeLlm(*rules)` and the
-  # harnesses wrapping it — and the array copy is irrelevant at test scale. The
-  # bundled default already excludes the plain test source sets — extend the
-  # same relaxation to the shared fixtures.
-  SpreadOperator:
-    excludes: ['**/test/**', '**/testFixtures/**', '**/liveTest/**', '**/containerTest/**']
+    excludes: ['**/test/**', '**/liveTest/**']
 
 style:
   # Tests intentionally hard-code prompts, ports and model strings inline to
   # read as self-contained documentation. Allow magic numbers in test sources
   # only; main code is still held to the default.
   MagicNumber:
-    excludes: ['**/test/**', '**/testFixtures/**', '**/liveTest/**', '**/containerTest/**']
+    excludes: ['**/test/**', '**/liveTest/**']

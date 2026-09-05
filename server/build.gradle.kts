@@ -60,7 +60,6 @@ testing {
             dependencies {
                 implementation(project())
                 implementation(project(":lib"))
-                implementation(testFixtures(project(":lib")))
                 implementation(libs.ktor.client.core)
                 implementation(libs.ktor.client.cio)
                 implementation(libs.ktor.client.content.negotiation)

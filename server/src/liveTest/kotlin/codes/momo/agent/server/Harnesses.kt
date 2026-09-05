@@ -1,4 +1,4 @@
-package codes.momo.agent.harness
+package codes.momo.agent.server
 
 import java.nio.file.Path
 import kotlin.io.path.createDirectories
@@ -8,7 +8,7 @@ import kotlin.io.path.writeText
  * Writes a valid harness folder at [folder] and returns it; [subagents]
  * maps declared type names to the folder paths they reference.
  */
-public fun writeHarness(
+internal fun writeHarness(
     folder: Path,
     tools: List<String> = listOf("bash"),
     subagents: Map<String, String> = emptyMap(),
@@ -34,4 +34,4 @@ public fun writeHarness(
 }
 
 /** Writes a valid harness folder under [tempDir] and returns its path as a string. */
-public fun harnessPath(tempDir: Path): String = writeHarness(tempDir.resolve("harness")).toString()
+internal fun harnessPath(tempDir: Path): String = writeHarness(tempDir.resolve("harness")).toString()

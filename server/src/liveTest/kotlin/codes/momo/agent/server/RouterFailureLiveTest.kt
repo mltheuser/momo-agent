@@ -2,7 +2,6 @@ package codes.momo.agent.server
 
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
-import codes.momo.agent.harness.harnessPath
 import codes.momo.agent.server.FaultyRouter.Reply
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.runBlocking

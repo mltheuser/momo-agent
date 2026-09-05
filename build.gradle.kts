@@ -80,7 +80,6 @@ subprojects {
                 files(
                     "src/main/kotlin",
                     "src/test/kotlin",
-                    "src/testFixtures/kotlin",
                     "src/liveTest/kotlin",
                 ),
             )
