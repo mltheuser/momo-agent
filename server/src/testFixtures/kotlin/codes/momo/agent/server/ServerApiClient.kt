@@ -188,6 +188,12 @@ internal suspend fun HttpClient.selectModelResponse(
         setBody(SelectModelRequest(model, reasoningEffort))
     }
 
+/** POSTs a select-model whose body is [body] verbatim, for the shapes the request type cannot express. */
+internal suspend fun HttpClient.rawSelectModelResponse(sessionId: String, body: String): HttpResponse =
+    post("/v1/sessions/$sessionId/select-model") {
+        setBody(TextContent(body, ContentType.Application.Json))
+    }
+
 /**
  * POSTs a rewind cutting from [firstDeletedSequenceId] on, asserting 200, and
  * returns the session as cut plus the cascade's deletions.
