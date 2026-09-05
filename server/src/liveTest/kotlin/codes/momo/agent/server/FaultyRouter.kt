@@ -33,15 +33,6 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration.Companion.minutes
 
-/**
- * The one permitted fake: a network stand-in for router *failures*, never
- * for model behaviour. A real server process is pointed at it over
- * `--ai-router-base-url`; each `POST /v1/chat/completions` it receives
- * consumes the next scripted [Reply], and once the script is spent every
- * request is [Reply.Forward]ed verbatim to the live router — so a case
- * plants a failure and the real model answers whatever follows it. It
- * scripts no conversations: what the model says is never its business.
- */
 internal class FaultyRouter private constructor() : AutoCloseable {
 
     private val script = ConcurrentLinkedQueue<Reply>()
@@ -51,28 +42,21 @@ internal class FaultyRouter private constructor() : AutoCloseable {
     private val server: EmbeddedServer<*, *> =
         embeddedServer(io.ktor.server.cio.CIO, host = "127.0.0.1", port = 0) { standIn() }
 
-    /** How the stand-in answers one chat completion request. */
     sealed interface Reply {
 
-        /** An HTTP error with ai-router's error envelope — 503 reads as transient to the lib, 404 as terminal. */
         data class Status(val code: Int) : Reply
 
-        /** A 200 whose body is not JSON at all. */
         data object Malformed : Reply
 
-        /** A 200 carrying a well-formed completion whose `finish_reason` is `error`. */
         data object FinishReasonError : Reply
 
-        /** The request proxied verbatim to the live router, its response returned as is. */
         data object Forward : Reply
     }
 
     val baseUrl: String get() = "http://127.0.0.1:${runBlocking { server.engine.resolvedConnectors().single().port }}"
 
-    /** Chat completion requests received so far, scripted and forwarded alike. */
     val chatRequests: Int get() = received.get()
 
-    /** Queues [replies] for the next chat completion requests, in order; anything after them forwards. */
     fun script(vararg replies: Reply) {
         script.addAll(replies)
     }
@@ -115,10 +99,8 @@ internal class FaultyRouter private constructor() : AutoCloseable {
 
     companion object {
 
-        /** Starts a stand-in on a free loopback port. */
         fun start(): FaultyRouter = FaultyRouter().also { it.server.start(wait = false) }
 
-        /** ai-router's own field omission, so the stand-in's JSON reads like the router's. */
         private val wire = Json {
             encodeDefaults = false
             explicitNulls = false
@@ -130,7 +112,6 @@ internal class FaultyRouter private constructor() : AutoCloseable {
             }
         }
 
-        /** A minimal usable catalog: the one model the tier converses with, chat plus tools. */
         private val CATALOG = ModelList(
             `object` = "list",
             data = listOf(

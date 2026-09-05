@@ -13,10 +13,6 @@ public data class PromptSubagentArgs(
     val message: String,
 )
 
-/**
- * One blocking conversational round with a child in the session's
- * [Subagents]: sends the message and returns the child's final message.
- */
 public class PromptSubagentTool internal constructor(
     private val subagents: Subagents,
 ) : Tool<PromptSubagentArgs>(
@@ -36,7 +32,6 @@ public class PromptSubagentTool internal constructor(
     }
 }
 
-/** LLM-facing contract of [PromptSubagentTool] — the model only knows what this says. */
 private val PROMPT_SUBAGENT_DESCRIPTION: String = """
     Sends a message to a subagent created with spawn_subagent, waits while it works, and returns
     the message it ends its turn with. Each prompt is one run bounded by the subagent's own turn

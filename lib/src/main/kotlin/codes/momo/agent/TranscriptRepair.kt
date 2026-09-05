@@ -4,11 +4,6 @@ import ai.router.sdk.models.ChatMessage
 import ai.router.sdk.models.ToolCall
 import codes.momo.agent.tool.PromptSubagentTool
 
-/**
- * The tool calls of the trailing tool-calling message in [messages] that
- * have no result yet, in call order. Only the trailing turn can dangle:
- * earlier turns completed before the next LLM call.
- */
 internal fun unansweredToolCalls(messages: List<ChatMessage>): List<ToolCall> {
     val lastCallerIndex = messages.indexOfLast { !it.toolCalls.isNullOrEmpty() }
     if (lastCallerIndex < 0) {
@@ -20,10 +15,6 @@ internal fun unansweredToolCalls(messages: List<ChatMessage>): List<ToolCall> {
     return messages[lastCallerIndex].toolCalls.orEmpty().filterNot { it.id in answered }
 }
 
-/**
- * Tool-result messages answering every call [unansweredToolCalls] finds in
- * [messages], each with the [toolCallRepairText] its facts produce.
- */
 internal fun toolCallRepairs(
     messages: List<ChatMessage>,
     startedCallIds: Set<String>,
@@ -32,14 +23,6 @@ internal fun toolCallRepairs(
     toolResultMessage(call.id, toolCallRepairText(call.function.name, call.id in startedCallIds, runStatus))
 }
 
-/**
- * The model-facing text of a synthesized result for a call its run never
- * answered. It states what the caller needs in order to continue well: what
- * ended the run — [runStatus], null for a run with no recorded outcome, an
- * abort — and whether the call had [started] executing when it did. For a
- * prompt_subagent call that distinction decides whether the subagent ever
- * received the message, so those calls name it explicitly.
- */
 internal fun toolCallRepairText(toolName: String, started: Boolean, runStatus: RunResult.Status?): String {
     val cut = when (runStatus) {
         RunResult.Status.STOPPED -> "a user stopped the run"

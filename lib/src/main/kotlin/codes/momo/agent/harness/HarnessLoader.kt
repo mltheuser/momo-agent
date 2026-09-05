@@ -10,29 +10,19 @@ import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.readText
 
-/**
- * Wire format of `harness.yaml` v1. kaml's strict mode (the default) rejects
- * unknown keys, keeping the format deliberate.
- */
 @Serializable
 internal data class HarnessManifest(
     val tools: List<String>,
     val subagents: Map<String, SubagentManifestEntry> = emptyMap(),
 )
 
-/** One `subagents` entry: the referenced harness folder and its model-facing description. */
 @Serializable
 internal data class SubagentManifestEntry(
-    /** Harness folder path, resolved against the declaring harness folder. */
+
     val path: String,
     val description: String,
 )
 
-/**
- * Loads a harness folder — and, recursively, every harness folder its
- * `subagents` entries reference — into a validated [Harness]; every failure
- * is a [HarnessValidationException] naming the offending file.
- */
 internal object HarnessLoader {
 
     private const val MANIFEST_NAME = "harness.yaml"
@@ -45,20 +35,12 @@ internal object HarnessLoader {
         return root
     }
 
-    /**
-     * One recursive loading pass. [loaded] keys every harness by its
-     * canonicalized folder — the load-once key behind [Harness.load]'s
-     * cycle-termination contract. Every [SubagentType] handed out stays
-     * unresolved until [seal] back-patches it from the completed map — no
-     * loader state is reachable from the returned graph.
-     */
     private class Loading {
 
         private val loaded = HashMap<Path, Harness>()
 
         private val pending = mutableListOf<Pair<SubagentType, Path>>()
 
-        /** Resolves every type handed out during the pass; called once, after the last folder loaded. */
         fun seal() {
             pending.forEach { (type, childKey) -> type.resolveTo(loaded.getValue(childKey)) }
         }
@@ -88,9 +70,7 @@ internal object HarnessLoader {
         ): Harness {
             val manifest = parseManifest(manifestFile)
             val instructions = readFileText(instructionsFile)
-            // Child folders are canonicalized before the children load: the
-            // types resolve by key, which is what lets a composition
-            // reference itself.
+
             val childFolders = manifest.subagents.mapValues { (type, entry) ->
                 if (Path.of(entry.path).isAbsolute) {
                     fail(
@@ -112,7 +92,6 @@ internal object HarnessLoader {
                     folder = canonicalFolder,
                 )
             } catch (exception: HarnessValidationException) {
-                // Invariant errors from Harness's init lack the file context.
                 fail("$manifestFile: ${exception.message}", exception)
             }
             loaded[canonicalFolder] = harness
@@ -120,7 +99,6 @@ internal object HarnessLoader {
             return harness
         }
 
-        /** The canonical key of the folder [type] references; missing folders fail naming the reference. */
         private fun referencedFolder(manifestFile: Path, type: String, childFolder: Path): Path {
             if (!childFolder.isDirectory()) {
                 fail(
@@ -147,8 +125,6 @@ internal object HarnessLoader {
     private fun parseManifest(manifestFile: Path): HarnessManifest = try {
         Yaml.default.decodeFromString(HarnessManifest.serializer(), readFileText(manifestFile))
     } catch (exception: UnknownPropertyException) {
-        // Matched on the key itself, so every value form — including null —
-        // draws the retirement message.
         if (exception.propertyName == "model") {
             fail(
                 "$manifestFile: the 'model' key is no longer part of harness.yaml — a harness is " +
@@ -168,7 +144,6 @@ internal object HarnessLoader {
         exception,
     )
 
-    /** [folder]'s canonical form, the loaded-once key; symlink loops and vanished folders fail as validation. */
     private fun canonical(folder: Path): Path = try {
         folder.toRealPath()
     } catch (exception: IOException) {

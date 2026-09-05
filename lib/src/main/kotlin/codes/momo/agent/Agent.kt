@@ -12,7 +12,6 @@ import ai.router.sdk.models.ToolCall
 import ai.router.sdk.models.ToolDefinition
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
-import codes.momo.agent.harness.HarnessValidationException
 import codes.momo.agent.tool.SUBAGENT_TOOL_NAMES
 import codes.momo.agent.tool.ToolRegistry
 import codes.momo.agent.tool.ToolResult
@@ -29,19 +28,7 @@ import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration
 import kotlin.time.TimeSource
 
-/**
- * One agent session over a loaded [Harness]: [send] advances the LLM/tool
- * loop against the session's accumulated conversation, under [RunBudgets].
- * Everything the session does is reported to its [AgentEventListener] as
- * the session's [AgentEvent] log.
- *
- * Collaborator lifecycles stay with the embedder: the agent never closes
- * [client].
- *
- * @throws HarnessValidationException when the harness names a tool the
- *   library does not provide.
- */
-@Suppress("TooManyFunctions") // One cohesive surface: the session's run loop plus its user commands.
+@Suppress("TooManyFunctions")
 public class Agent internal constructor(
     private val harness: Harness,
     private val client: AiRouterClient,
@@ -51,7 +38,6 @@ public class Agent internal constructor(
     session: SessionState,
 ) {
 
-    /** Creates a fresh session titled [title], with a generated [sessionId]. */
     public constructor(
         harness: Harness,
         client: AiRouterClient,
@@ -73,8 +59,7 @@ public class Agent internal constructor(
         val coreRegistry =
             coreToolRegistry(environment.workspacePath, environment.privilege, subagents, harness.subagents)
         harness.requireToolsKnown(coreRegistry.names)
-        // The depth cap withholds rather than fails: a hallucinated call
-        // outside the offered set draws the standard unknown-tool error.
+
         val offered = if (harness.subagents.isNotEmpty() && depth < Budgets.MAX_SUBAGENT_DEPTH) {
             harness.tools + SUBAGENT_TOOL_NAMES
         } else {
@@ -86,28 +71,19 @@ public class Agent internal constructor(
 
     private val running = AtomicBoolean(false)
 
-    /** Whether a [send] run is in flight right now. */
     public val isRunning: Boolean
         get() = running.get()
 
     private val emitter = AgentEventEmitter(eventListener, session.nextSequenceId)
 
-    /** Stable identity of this session, recoverable from its event log. */
     public val sessionId: String = session.id
 
-    /** User-facing session title; every assignment emits [AgentEvent.SessionRenamed]. */
     public var title: String = session.title
         set(value) {
             field = value
             emitter.emit { id, at -> AgentEvent.SessionRenamed(id, at, value) }
         }
 
-    /**
-     * Emits an [AgentEvent.ModelSelected] recording the client's model pick
-     * for the session's next prompt — user metadata the log carries like
-     * [title]; what the event means, and what it deliberately does not, is
-     * on its own KDoc.
-     */
     public fun recordModelSelection(model: String, reasoningEffort: ReasoningEffort? = null) {
         require(model.isNotBlank()) { "A recorded model selection must name a model." }
         emitter.emit { id, at -> AgentEvent.ModelSelected(id, at, model, reasoningEffort) }
@@ -118,9 +94,7 @@ public class Agent internal constructor(
         addAll(session.conversation)
     }
 
-    // Volatile: [stop] reads it on whatever thread the user command arrives
-    // on, while the run itself writes it from the run's own.
-    @Volatile
+    @Volatile // stop() reads it from the caller's thread; the run writes it from its own.
     private var currentRun: RunState? = null
 
     init {
@@ -129,58 +103,11 @@ public class Agent internal constructor(
         }
     }
 
-    /**
-     * Sends [text] as the next user message and runs the loop to a terminal
-     * outcome: each turn is one LLM call, followed by executing every
-     * requested tool call sequentially, in order, until the model answers
-     * without tool calls or a budget ends the run. Budget breaches,
-     * terminal LLM failures, a [stop] and every [Exception] the run raises
-     * are reported through the returned [RunResult], never thrown — bar the
-     * [CancellationException] of cancelling this coroutine, which propagates
-     * rather than becoming a result.
-     *
-     * Runs accumulate: each continues the previous conversation with
-     * fresh budget counters. [settings] carries this run's model settings
-     * (see [RunSettings]).
-     *
-     * Markdown image links in [text] resolve best-effort into images the
-     * model sees alongside the verbatim prompt (see
-     * [resolvePromptAttachments]); a link that fails to load stays plain
-     * text, silently.
-     *
-     * After every outcome — cancellation included —
-     * the stored conversation stays well-formed for the next call: tool
-     * calls the run never finished are answered with synthesized results
-     * naming how the run ended and whether the call had started (see
-     * [toolCallRepairText]).
-     *
-     * @throws IllegalArgumentException when [text] is blank.
-     * @throws IllegalStateException when a send is already running.
-     * @throws Throwable when the run raises one that is no [Exception] — an
-     *   [Error] from a listener, say. It propagates once the run has ended
-     *   as [RunResult.Status.ERROR] and its [AgentEvent.RunFinished] has
-     *   been emitted best-effort: a JVM that has failed must not be
-     *   reported as a run that merely errored.
-     */
     public suspend fun send(text: String, settings: RunSettings): RunResult {
         require(text.isNotBlank()) { "A user message must not be blank." }
         return guardedRun(text, settings)
     }
 
-    /**
-     * Runs the loop to a terminal outcome over the conversation exactly as
-     * it stands — no new user message, no [AgentEvent.RunStarted]: an
-     * [AgentEvent.RunResumed] opens the run in the log, which otherwise
-     * reads as the beheaded run simply continuing. Everything else matches
-     * [send], its budgets, outcome reporting and thrown contract included.
-     *
-     * This is the resume behind a failed run's retry: load the session from
-     * its log cut back to before the failed LLM call, then call this.
-     *
-     * @throws IllegalArgumentException when the conversation is not waiting
-     *   on the model — its last message is no user message or tool result.
-     * @throws IllegalStateException when a run is already in flight.
-     */
     public suspend fun retry(settings: RunSettings): RunResult {
         require(history.last().role == ROLE_USER || history.last().role == ROLE_TOOL) {
             "Nothing to retry: the conversation is not waiting on the model."
@@ -192,18 +119,14 @@ public class Agent internal constructor(
         check(running.compareAndSet(false, true)) {
             "A run is already running on this agent — await the active one before starting another."
         }
-        // The loop runs under a job of its own, so a stop cancels the loop
-        // while leaving this coroutine live to record the run's outcome.
+
         val run = RunState(settings, loop = Job(coroutineContext[Job]))
         try {
             return executeRun(text, run)
         } finally {
-            // The loop's job is a child of the caller's: leaving it
-            // incomplete would keep the caller from ever completing.
             run.loop.complete()
             running.set(false)
-            // Signalled last of all, so a [stop] returning on it finds the
-            // run over in every respect: guard cleared, outcome recorded.
+
             run.ended.complete()
         }
     }
@@ -221,39 +144,22 @@ public class Agent internal constructor(
         }
     }
 
-    /**
-     * Stops the run in flight, if any, and returns once it has ended: its
-     * loop is cancelled — killing the process tree of a tool mid-execution
-     * with it, and cascading into the runs of children the loop is blocked
-     * on — and every run the stop cuts ends as [RunResult.Status.STOPPED],
-     * its [AgentEvent.RunFinished] recorded like any other outcome. Nothing
-     * else is touched: the session stays usable and immediately promptable,
-     * over the same collaborators.
-     *
-     * A stop the run beats is a no-op: none in flight, one that already
-     * ended, or one whose outcome the loop had decided — that outcome
-     * stands. Since it awaits the run, it must be called from outside it:
-     * from a tool or a listener of the run it stops, it would wait forever.
-     */
     public suspend fun stop() {
         val run = currentRun ?: return
         run.loop.cancel(RunStoppedException())
         run.ended.join()
     }
 
-    /** One run to its outcome; a null [text] is a [retry], which opens no run of its own in the log. */
     private suspend fun executeRun(text: String?, run: RunState): RunResult {
         currentRun = run
         val attachments = if (text == null) emptyList() else resolvePromptAttachments(text, environment)
         if (text != null) {
             history += userMessage(text, attachments)
         }
-        // Outlive the try: the arm that records them cannot also rethrow.
+
         var fatal: Throwable? = null
         var status: RunResult.Status? = null
         try {
-            // Inside the try, so a listener raising on the opening event ends
-            // the run through the arms below like any later one would.
             emitRunOpening(text, run.settings, attachments)
             status = withContext(run.loop) { runLoop(run) }
         } catch (cancellation: CancellationException) {
@@ -265,13 +171,13 @@ public class Agent internal constructor(
             run.failure = failure
             status = RunResult.Status.ERROR
         } catch (@Suppress("TooGenericExceptionCaught") raised: Throwable) {
+            // Non-Exception throwables (a failed JVM) are rethrown after the RunFinished is emitted; keep the split.
             run.failure = raised
             fatal = raised
             status = RunResult.Status.ERROR
         } finally {
             currentRun = null
-            // A finally so the repair also runs on external cancellation —
-            // where status stays null, read as an abort.
+
             history += toolCallRepairs(history, run.startedCallIds, status)
         }
         val result = RunResult(
@@ -285,13 +191,8 @@ public class Agent internal constructor(
         )
         if (result.status == RunResult.Status.ERROR) {
             try {
-                // The one place a run ending ERROR logs its reason.
                 logger.error("A run on session $sessionId ended in error.", result.error)
             } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
-                // An embedder-supplied provider that throws must not replace
-                // the terminal RunFinished below — and a broken logger leaves
-                // nowhere to report itself. An Error still propagates, like
-                // the emitter's arm.
             }
         }
         if (fatal == null) {
@@ -302,17 +203,8 @@ public class Agent internal constructor(
         throw fatal
     }
 
-    /**
-     * Advances the run until an outcome: while wall clock remains, each
-     * pass takes one LLM turn, then executes its tool calls.
-     */
     private suspend fun runLoop(run: RunState): RunResult.Status {
         while (true) {
-            // A stopped child run *returns* to its caller, so the tool call
-            // that just finished may leave this loop cancelled: a cut loop
-            // never starts another turn — nor, below, another call of the
-            // batch, so a call the cut beat stays unstarted and its
-            // synthesized result says so.
             coroutineContext.ensureActive()
             if (run.remaining <= Duration.ZERO) {
                 return run.decide(RunResult.Status.TIMEOUT)
@@ -329,13 +221,10 @@ public class Agent internal constructor(
         }
     }
 
-    /** The run-ending status this turn produced, or null when the loop continues with its tool calls. */
     private fun turnOutcome(run: RunState, response: ChatResponse): RunResult.Status? {
         val toolCalls = response.message.toolCalls.orEmpty()
         return when {
             response.finishReason == FINISH_REASON_ERROR -> {
-                // A provider-side failure can arrive as a successful HTTP
-                // response; its text must not read as the model's answer.
                 run.failure = IllegalStateException("the LLM reported a failed response (finish_reason 'error').")
                 RunResult.Status.ERROR
             }
@@ -345,15 +234,12 @@ public class Agent internal constructor(
                 RunResult.Status.COMPLETED
             }
 
-            // The pending calls stay unexecuted: no LLM call is left to
-            // ever see their results.
             run.turnsUsed >= budgets.maxTurns -> RunResult.Status.TURNS_EXHAUSTED
 
             else -> null
         }
     }
 
-    /** One turn: one successful LLM call — retries cost wall-clock, not turns. */
     private suspend fun takeTurn(run: RunState): ChatResponse {
         val request = ChatRequest(
             model = run.settings.model,
@@ -388,7 +274,6 @@ public class Agent internal constructor(
         return response
     }
 
-    /** One dispatched (or registry-rejected) call. */
     private suspend fun executeCall(run: RunState, call: ToolCall) {
         run.startedCallIds += call.id
         emitter.emit { id, at ->
@@ -412,13 +297,6 @@ public class Agent internal constructor(
         }
     }
 
-    /**
-     * Constructs the child agent [Subagents] registers as [name]: a fresh
-     * session titled [name] at one level deeper, running the harness this
-     * agent's harness declares as [type] and sharing this agent's
-     * collaborators and budget values — announced in this session's log as
-     * [AgentEvent.SubagentSpawned] before the child emits its first event.
-     */
     internal fun spawnChild(
         name: String,
         type: String,
@@ -427,8 +305,7 @@ public class Agent internal constructor(
     ): Agent {
         val childHarness = harness.subagents.getValue(type).harness
         val session = SessionState.Fresh(title = name, depth = depth + 1)
-        // The listener is asked first, so an embedder tracking children has
-        // registered the session by the time the spawn event is observable.
+
         val listener = eventListener.subagentListener(name, session.id)
         emitter.emit { id, at ->
             AgentEvent.SubagentSpawned(id, at, name, session.id, type, modelId, reasoningEffort)
@@ -443,15 +320,6 @@ public class Agent internal constructor(
         )
     }
 
-    /**
-     * Reconstructs the dormant child registered as [name] from the stored
-     * log this session's listener serves for [sessionId], wired like a
-     * fresh spawn under the harness this agent's harness declares as
-     * [type]; null when the listener does not know the session.
-     *
-     * @throws SubagentRevivalException on the conditions it documents — a
-     *   configuration error, never read as a lost log.
-     */
     internal suspend fun reviveChild(name: String, sessionId: String, type: String?): Agent? {
         val events = eventListener.storedEventsFor(sessionId) ?: return null
         if (type == null) {
@@ -478,12 +346,6 @@ public class Agent internal constructor(
         )
     }
 
-    /**
-     * Runs [block] — the wait on a child's run — with its duration excluded
-     * from the current run's wall clock: blocked time is the child's to
-     * account for, not this agent's. [block] receives the active run's
-     * [RunSettings].
-     */
     internal suspend fun <T> awaitingChildRun(block: suspend (RunSettings) -> T): T {
         val active = checkNotNull(currentRun) { "a child can only be awaited from within a run." }
         val blockedSince = TimeSource.Monotonic.markNow()
@@ -494,12 +356,10 @@ public class Agent internal constructor(
         }
     }
 
-    /** Mutable accounting for one [send] run, over the [loop] job it runs under. */
     private inner class RunState(val settings: RunSettings, val loop: CompletableJob) {
 
         val start = TimeSource.Monotonic.markNow()
 
-        /** Completed once the run has ended in full — what [stop] returns on. */
         val ended: CompletableJob = Job()
 
         var decided: RunResult.Status? = null
@@ -509,10 +369,8 @@ public class Agent internal constructor(
         var finalMessage: String? = null
         var failure: Throwable? = null
 
-        /** The calls whose execution began — what the transcript repair reads receipt from. */
         val startedCallIds: MutableSet<String> = mutableSetOf()
 
-        /** Time spent blocked on child runs. */
         var blocked: Duration = Duration.ZERO
 
         val elapsed: Duration
@@ -521,36 +379,11 @@ public class Agent internal constructor(
         val remaining: Duration
             get() = budgets.maxWallClock - elapsed
 
-        /**
-         * Records [status] as this run's outcome and returns it: a
-         * cancelling job discards the value its block returns, so an
-         * outcome the loop does not record as it reaches it is one a stop
-         * landing on the return replaces with [RunResult.Status.STOPPED].
-         */
         fun decide(status: RunResult.Status): RunResult.Status = status.also { decided = it }
     }
 
     public companion object {
 
-        /**
-         * Reconstructs a session from its stored event log: the transcript
-         * is derived from the log's verbatim payloads under the system
-         * prompt [harness] produces now, tool calls the log left unanswered
-         * are answered with the synthesized results the live run appended
-         * (see [toolCallRepairText]), and new events
-         * continue the log's sequence IDs. Loading emits nothing. The
-         * session's subagent-tree position is restored with it: its depth,
-         * and its spawned children as dormant entries — each with its
-         * recorded type and model override — revived on use through
-         * [eventListener]'s [AgentEventListener.storedEventsFor], under
-         * the harness [harness] declares for that type.
-         *
-         * @throws IllegalArgumentException when [events] is not a stored
-         *   session log (its first event must be
-         *   [AgentEvent.SessionStarted]).
-         * @throws HarnessValidationException when the log calls tools
-         *   [harness] does not include.
-         */
         public fun load(
             events: List<AgentEvent>,
             harness: Harness,
@@ -563,29 +396,11 @@ public class Agent internal constructor(
 
 private val logger: Logger = LoggerFactory.getLogger(Agent::class.java)
 
-/**
- * Cancellation cause marking an [Agent.stop]: the one cancellation a run
- * reports as an outcome instead of propagating. Library-internal — it never
- * leaves the run whose loop it cancelled.
- */
 private class RunStoppedException : CancellationException("The run was stopped.")
 
-/**
- * Whether this cancellation is a stop reaching the run — the marker looked
- * for along the cause chain rather than compared by identity, since a
- * cancellation can arrive as a stack-trace-recovered copy that carries the
- * original as its cause.
- */
 private fun CancellationException.isRunStopped(): Boolean =
     generateSequence<Throwable>(this) { it.cause }.any { it is RunStoppedException }
 
-/**
- * The system prompt: the harness instructions plus the library-owned fact
- * about who is on the other end — the human user, or for a [subagent] the
- * parent blocked on its reply. Workspace facts are deliberately absent:
- * where commands run and how to name files belong to the description of
- * the tool that acts on the workspace, stated once there.
- */
 internal fun systemPromptFor(harness: Harness, subagent: Boolean): String =
     harness.instructions.trimEnd() +
         "\n\n" + (if (subagent) SUBAGENT_GUIDANCE else USER_GUIDANCE)
@@ -602,24 +417,11 @@ private const val SUBAGENT_GUIDANCE: String =
         "message is delivered to it as the result of this prompt. Work autonomously to completion " +
         "and end your turn early only when you are genuinely blocked on input from your spawner."
 
-/**
- * The direct child with session identity [sessionId], revived from its
- * stored log first when dormant — or null when no such child is
- * registered. Every child is constructed exactly once, by this library:
- * navigating the tree always yields the child session's one live
- * instance.
- */
 public suspend fun Agent.subagentBySessionId(sessionId: String): Agent? = subagents.childBySessionId(sessionId)
 
-/**
- * The direct child with session identity [sessionId] while it is live —
- * never reviving a dormant one, so observation cannot materialize agents
- * as a side effect.
- */
 public suspend fun Agent.liveSubagentBySessionId(sessionId: String): Agent? =
     subagents.liveChildBySessionId(sessionId)
 
-/** The embedder-supplied child listener, degraded to no-op — never a failed child construction — when it throws. */
 private fun AgentEventListener.subagentListener(name: String, sessionId: String): AgentEventListener = try {
     listenerForSubagent(name, sessionId)
 } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
@@ -641,18 +443,10 @@ private fun AgentEventEmitter.emitRunFinished(result: RunResult) {
     }
 }
 
-/**
- * Emits [result]'s terminal event while [fatal] is on its way out to the
- * caller, guaranteeing that a failure of the emit itself never replaces it:
- * whatever the emit raises is suppressed onto [fatal] instead.
- */
 private fun AgentEventEmitter.emitRunFinishedUnder(fatal: Throwable, result: RunResult) {
     try {
         emitRunFinished(result)
     } catch (@Suppress("TooGenericExceptionCaught") emitFailure: Throwable) {
-        // A listener rethrowing its cached throwable, or a preallocated
-        // OutOfMemoryError, hands back the very instance being thrown —
-        // which self-suppression would turn into the caller's failure.
         if (emitFailure !== fatal) {
             fatal.addSuppressed(emitFailure)
         }
@@ -662,14 +456,6 @@ private fun AgentEventEmitter.emitRunFinishedUnder(fatal: Throwable, result: Run
 private fun textMessage(role: String, text: String): ChatMessage =
     ChatMessage(role = role, content = listOf(ContentPart(type = ContentPartType.TEXT, text = text)))
 
-/**
- * The user message a prompt becomes — with [attachments] present, each
- * resolved markdown image link keeps its markdown verbatim as text and an
- * image content part follows it, so the model sees both the picture and
- * where it came from; the text parts concatenated always equal the original
- * prompt. Replay reconstructs stored prompts through this same builder, so
- * a restored conversation matches the live one exactly.
- */
 internal fun userMessage(
     text: String,
     attachments: List<AgentEvent.RunStarted.Attachment> = emptyList(),
@@ -693,12 +479,6 @@ internal fun userMessage(
     return ChatMessage(role = ROLE_USER, content = parts)
 }
 
-/**
- * The tool message appended for one answered call — with [media] present,
- * the image content part alone stands in for the text, which stays a
- * stored-log marker. Replay reconstructs stored results through this same
- * builder, so a restored conversation matches the live one exactly.
- */
 internal fun toolResultMessage(
     callId: String,
     text: String,

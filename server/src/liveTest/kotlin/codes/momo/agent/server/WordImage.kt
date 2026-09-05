@@ -6,11 +6,6 @@ import java.awt.image.BufferedImage
 import java.nio.file.Path
 import javax.imageio.ImageIO
 
-/**
- * Renders [word] as large black text on white into a PNG at [path] — a
- * planted visual fact for vision cases: the word reaches the model only if
- * the image itself does.
- */
 internal fun writeWordImage(path: Path, word: String) {
     val image = BufferedImage(400, 160, BufferedImage.TYPE_INT_RGB)
     val graphics = image.createGraphics()

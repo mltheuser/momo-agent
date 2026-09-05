@@ -2,11 +2,6 @@ package codes.momo.agent.server
 
 import java.nio.file.Path
 
-/**
- * Server process configuration. Each setting resolves from its CLI argument
- * (`--name=value`), then its environment variable, then the default —
- * see docs/configuration.md for the table.
- */
 internal data class ServerConfig(
     val port: Int,
     val dataDir: Path,
@@ -25,10 +20,6 @@ internal data class ServerConfig(
 
         private const val MAX_PORT = 65535
 
-        /**
-         * @throws IllegalArgumentException on an unknown or malformed
-         *   argument, or a port outside 1..65535.
-         */
         fun resolve(args: List<String>, env: Map<String, String>): ServerConfig {
             val options = parseOptions(args)
 

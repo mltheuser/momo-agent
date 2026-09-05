@@ -22,12 +22,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * How a run survives, or records, the router failing underneath it — the
- * failures a healthy router cannot be asked for, planted by [FaultyRouter]
- * on the wire while a real model answers everything else. One server
- * process, pointed at the stand-in, serves every case here.
- */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class RouterFailureLiveTest {
 
@@ -96,7 +90,6 @@ class RouterFailureLiveTest {
         http.awaitRunEnd(id)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status, "the session stays attached and idle")
 
-        // Promptable afterwards, with the script spent: the real router answers.
         http.prompt(id, "Reply with exactly this token and nothing else: $TOKEN")
         val recovered = assertIs<AgentEvent.RunFinished>(
             http.streamEvents(id, afterSequenceId = failed.last().id).last().event,
@@ -127,5 +120,4 @@ class RouterFailureLiveTest {
     }
 }
 
-/** Planted in the prompt: the model can only echo it if the forwarded request reached it. */
 private const val TOKEN: String = "plugh-7731"

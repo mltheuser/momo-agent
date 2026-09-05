@@ -36,17 +36,15 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
-/** Body of a create-session request. */
 @Serializable
 internal data class CreateSessionRequest(
-    /** Server-local path of the harness folder. */
+
     val harnessPath: String,
     val environment: EnvironmentSpec,
-    /** Optional session title; defaults to the harness folder's name. */
+
     val title: String? = null,
 )
 
-/** Body of a prompt request: the user message text the next run answers, plus the run's [RunSettings] fields. */
 @Serializable
 internal data class PromptRequest(
     val prompt: String,
@@ -54,34 +52,25 @@ internal data class PromptRequest(
     val reasoningEffort: ReasoningEffort? = null,
 )
 
-/** Body of a rename request: the session's new title. */
 @Serializable
 internal data class RenameRequest(val title: String)
 
-/** Body of a select-model request: the model the session's next prompt should carry. */
 @Serializable
 internal data class SelectModelRequest(
     val model: String,
-    /** Null asks for the provider default. */
+
     val reasoningEffort: ReasoningEffort? = null,
 )
 
-/** Body of a rewind request: the sequence ID of the first event the cut deletes. */
 @Serializable
 internal data class RewindRequest(val firstDeletedSequenceId: Long)
 
-/** A rewind's response: the session as cut, plus every session the cascade deleted. */
 @Serializable
 internal data class RewindResponse(val session: SessionInfo, val deletedSessionIds: List<String>)
 
-/** Every failing response's body: a machine-readable [code] plus a human [message]. */
 @Serializable
 internal data class ApiError(val code: String, val message: String)
 
-/**
- * The agent server's HTTP surface over [registry]; [client] backs the
- * model-catalog proxy and [templates] the template routes.
- */
 internal fun Application.agentServer(registry: SessionRegistry, client: AiRouterClient, templates: TemplateStore) {
     install(ContentNegotiation) {
         json()
@@ -135,13 +124,11 @@ internal fun Application.agentServer(registry: SessionRegistry, client: AiRouter
     }
 }
 
-/** Mirrors ai-router's own field omission: defaulted and null catalog fields stay off the wire. */
 private val catalogJson = Json {
     encodeDefaults = false
     explicitNulls = false
 }
 
-/** `GET /v1/models`: ai-router's catalog in its own response shape, filtered by [usableModels]. */
 private fun Route.modelRoutes(client: AiRouterClient) {
     get("/v1/models") {
         call.respondText(catalogJson.encodeToString(client.usableModels()), ContentType.Application.Json)
@@ -186,8 +173,6 @@ private fun Route.singleSessionRoutes(registry: SessionRegistry) {
     post("/select-model") {
         val request = call.receive<SelectModelRequest>()
         if (request.model.isBlank()) {
-            // Pre-empts the lib's blank-model require: the rule must
-            // read as a 400 here, not a 500 from the failed emission.
             throw BadRequestException("A model must not be blank.")
         }
         call.respond(registry.selectModel(call.sessionId(), request.model, request.reasoningEffort))
@@ -218,47 +203,23 @@ private fun Route.singleSessionRoutes(registry: SessionRegistry) {
     }
 }
 
-/**
- * `GET /v1/sessions/changes`: one data-less `change` frame per
- * [SessionRegistry.sessionsChanged] signal, whose KDoc carries what a
- * subscriber may read into one.
- *
- * The opening frame is emitted from `onSubscription`, so it stands after the
- * subscription is registered: a client re-reads on every connect, and a
- * signal raised from then on cannot fall into the gap behind it.
- *
- * A constant path segment outranks `/{id}` whatever the registration order,
- * so `changes` can never name a session — as no generated session ID could
- * be that string anyway.
- */
 private fun Route.changeStreamRoute(registry: SessionRegistry) {
     route("/changes") {
         sse {
-            // A dead peer only surfaces on a failed write, and this stream can
-            // sit idle for hours: the comment frame reclaims its subscribers.
             heartbeat()
             registry.sessionsChanged.onSubscription { emit(Unit) }.collect { send(event = CHANGE_EVENT) }
         }
     }
 }
 
-/**
- * The session's event log as an SSE stream: `id:` carries the event's
- * sequenceId, `data:` the event JSON exactly as stored, and a
- * `Last-Event-ID` header resumes strictly after it.
- *
- * The unknown-session check runs as a route-scoped plugin: once the SSE
- * handler runs, the 200 is already committed, too late for a 404.
- */
 private fun Route.eventStreamRoute(registry: SessionRegistry) {
+    // A plugin, not a handler check: once the SSE handler runs the 200 is committed and a 404 is impossible.
     val knownSessionGuard = createRouteScopedPlugin("KnownSessionGuard") {
         onCall { call -> registry.requireKnown(call.sessionId()) }
     }
     route("/events") {
         install(knownSessionGuard)
         sse {
-            // A dead peer only surfaces on a failed write: the periodic
-            // comment frame reclaims subscribers parked on an idle stream.
             heartbeat()
             val afterSequenceId = call.request.header("Last-Event-ID")?.toLongOrNull() ?: BEFORE_FIRST_EVENT
             registry.eventsAfter(call.sessionId(), afterSequenceId).collect { event ->
@@ -268,13 +229,11 @@ private fun Route.eventStreamRoute(registry: SessionRegistry) {
     }
 }
 
-/** @throws BadRequestException when the prompt or the model is blank. */
 private fun PromptRequest.validated(): PromptRequest {
     if (prompt.isBlank()) {
         throw BadRequestException("A prompt must not be blank.")
     }
-    // Pre-empts RunSettings' own blank-model require: the rule must read
-    // as a 400 here, not a 500 from the failed construction.
+
     if (model.isBlank()) {
         throw BadRequestException("A model must not be blank.")
     }
@@ -291,12 +250,10 @@ private suspend fun ApplicationCall.respondError(status: HttpStatusCode, code: S
     respond(status, ApiError(code, message))
 }
 
-/** Ktor wraps deserialization failures; the innermost message names the actual problem. */
 private val Throwable.rootMessage: String
     get() {
         val root = generateSequence(this) { it.cause }.last()
         return root.message ?: root.javaClass.simpleName
     }
 
-/** The change stream's one frame name; its frames carry no data. */
 private const val CHANGE_EVENT: String = "change"

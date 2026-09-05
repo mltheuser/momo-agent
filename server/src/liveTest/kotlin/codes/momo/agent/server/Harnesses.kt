@@ -4,10 +4,6 @@ import java.nio.file.Path
 import kotlin.io.path.createDirectories
 import kotlin.io.path.writeText
 
-/**
- * Writes a valid harness folder at [folder] and returns it; [subagents]
- * maps declared type names to the folder paths they reference.
- */
 internal fun writeHarness(
     folder: Path,
     tools: List<String> = listOf("bash"),
@@ -33,5 +29,4 @@ internal fun writeHarness(
     return folder
 }
 
-/** Writes a valid harness folder under [tempDir] and returns its path as a string. */
 internal fun harnessPath(tempDir: Path): String = writeHarness(tempDir.resolve("harness")).toString()

@@ -11,18 +11,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 
-/**
- * The rewind cascade as pure log analysis — the one unit test the tree
- * keeps, because the cases below cannot be staged cheaply against a real
- * model: which children a deleted range cuts and where, which it leaves
- * alone, the timestamp correlation binding a deleted `prompt_subagent` call
- * to the child run it drove, and the order the cuts come out in. The
- * simplest rule — a deleted spawn deletes its child's subtree — is pinned
- * live, in `SubagentTreeLiveTest`.
- */
 class RewindPlanTest {
-
-    // ─── Event builders (sequence IDs and timestamps chosen per case) ─
 
     private fun started(seq: Long, at: Long, id: String) =
         AgentEvent.SessionStarted(seq, at, sessionId = id, title = id)
@@ -66,8 +55,6 @@ class RewindPlanTest {
     private fun plan(cut: Long, vararg logs: Pair<String, List<AgentEvent>>): RewindPlan =
         rewindPlan("root", cut, logs.toMap()::get)
 
-    // ─── The cascade over prompt calls ────────────────────────────────
-
     @Test
     @DisplayName("A deleted prompt call cuts the child strictly before the run it drove, by the timestamp window")
     fun deletedPromptCallCutsTheDrivenChild() {
@@ -85,13 +72,13 @@ class RewindPlanTest {
         )
         val child = listOf(
             started(0, at = 11, id = "child"),
-            run(1, at = 13), // Driven by call-1: inside [12, 20].
+            run(1, at = 13),
             finished(2, at = 19),
-            run(3, at = 30), // A human prompted the child directly in between: it survives.
+            run(3, at = 30),
             finished(4, at = 35),
-            run(5, at = 42), // Driven by call-2: inside [41, 60] — the cut lands just before it.
+            run(5, at = 42),
             finished(6, at = 59),
-            run(7, at = 70), // A later human-driven run: deleted with everything after the cut.
+            run(7, at = 70),
             finished(8, at = 75),
         )
 
@@ -110,7 +97,7 @@ class RewindPlanTest {
             finished(2, at = 5),
             run(3, at = 10),
             promptCall(4, at = 12, callId = "call-1", name = "helper"),
-            // No ToolCallFinished: the run was cut short by a close.
+
         )
         val child = listOf(
             started(0, at = 1, id = "child"),
@@ -131,15 +118,14 @@ class RewindPlanTest {
             spawned(1, at = 1, name = "helper", sessionId = "child"),
             finished(2, at = 5),
             run(3, at = 10),
-            // The child was busy (or the message blank): the call drew an
-            // error result and no child run sits inside [12, 14].
+
             promptCall(4, at = 12, callId = "call-1", name = "helper"),
             callFinished(5, at = 14, callId = "call-1"),
             finished(6, at = 20),
         )
         val child = listOf(
             started(0, at = 1, id = "child"),
-            run(1, at = 30), // Started after the call's window closed.
+            run(1, at = 30),
             finished(2, at = 40),
         )
 
@@ -170,9 +156,6 @@ class RewindPlanTest {
 
         val plan = plan(2, "root" to root, "new-child" to newChild)
 
-        // The call binds to the latest spawn before it — the rebound name —
-        // whose subtree the deletion already covers; the old child's log is
-        // no longer reachable by that name and stays untouched.
         assertEquals(listOf("new-child"), plan.deletedSubtreeRoots)
         assertEquals(listOf("root" to 2L), plan.cuts)
     }
@@ -191,7 +174,7 @@ class RewindPlanTest {
         )
         val mid = listOf(
             started(0, at = 1, id = "mid"),
-            run(1, at = 12), // Driven by the deleted call: the cut lands before it.
+            run(1, at = 12),
             spawned(2, at = 13, name = "leaf", sessionId = "doomed-leaf"),
             promptCall(3, at = 14, callId = "call-2", name = "kept-leaf"),
             finished(4, at = 49),
@@ -218,14 +201,14 @@ class RewindPlanTest {
         val mid = listOf(
             started(0, at = 1, id = "mid"),
             spawned(1, at = 2, name = "leaf", sessionId = "leaf"),
-            run(2, at = 12), // Driven by call-1.
+            run(2, at = 12),
             promptCall(3, at = 13, callId = "call-2", name = "leaf"),
             callFinished(4, at = 30, callId = "call-2"),
             finished(5, at = 89),
         )
         val leaf = listOf(
             started(0, at = 2, id = "leaf"),
-            run(1, at = 14), // Driven by call-2.
+            run(1, at = 14),
             finished(2, at = 29),
         )
 

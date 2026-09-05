@@ -28,12 +28,6 @@ public data class SpawnSubagentArgs(
     val reasoningEffort: ReasoningEffort? = null,
 )
 
-/**
- * Allocates a child agent of a declared subagent type in the session's
- * [Subagents]; nothing is sent to it — conversing is [PromptSubagentTool]'s
- * job. The description enumerates the declaring harness's types, so it is
- * generated per instance.
- */
 public class SpawnSubagentTool internal constructor(
     private val subagents: Subagents,
     subagentTypes: Map<String, SubagentType>,
@@ -43,9 +37,6 @@ public class SpawnSubagentTool internal constructor(
     argsSerializer = SpawnSubagentArgs.serializer(),
 ) {
 
-    // Not timeoutExempt: unlike prompting, spawning awaits no child run —
-    // its only wait is the model-validation fetch, which the dispatch
-    // backstop caps like any other tool's work.
     override suspend fun execute(args: SpawnSubagentArgs, environment: ExecutionEnvironment): ToolResult =
         subagents.spawn(args.name, args.type, args.modelId, args.reasoningEffort)
 
@@ -55,7 +46,6 @@ public class SpawnSubagentTool internal constructor(
     }
 }
 
-/** LLM-facing contract of [SpawnSubagentTool] — the model only knows what this says. */
 private fun spawnSubagentDescription(subagentTypes: Map<String, SubagentType>): String = buildString {
     append(
         """

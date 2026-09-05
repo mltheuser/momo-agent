@@ -6,16 +6,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/**
- * The children a session has spawned, keyed by their caller-chosen names —
- * the session-owned collaborator behind the subagent tools. Each child is
- * of one of the parent harness's [declaredTypes], remembered together with
- * its spawn-time model and effort overrides; [spawnModels] answers whether
- * a requested model override exists. The map outlives individual runs: a
- * later run can prompt a child an earlier one spawned. A restored session
- * starts with its log's spawned children as dormant entries, revived on
- * first use.
- */
 internal class Subagents(
     private val parent: Agent,
     private val declaredTypes: Set<String>,
@@ -23,11 +13,6 @@ internal class Subagents(
     spawned: Map<String, SpawnedChild>,
 ) {
 
-    /**
-     * One registered child: live, or dormant — known only by its spawn
-     * facts until revived. [type], [modelId] and [reasoningEffort] carry
-     * what the spawn's [AgentEvent.SubagentSpawned] records, nulls included.
-     */
     private sealed interface Child {
         val sessionId: String
 
@@ -55,8 +40,6 @@ internal class Subagents(
         override val reasoningEffort: ReasoningEffort?,
     ) : Child
 
-    // Guards the map so a parent-run tool call and an embedder navigating
-    // by session ID cannot revive the same child twice.
     private val mutex = Mutex()
 
     private val children = LinkedHashMap<String, Child>()
@@ -67,16 +50,8 @@ internal class Subagents(
         }
     }
 
-    /** The live child spawned as [name], for test access into the tree. */
     operator fun get(name: String): Agent? = (children[name] as? Live)?.agent
 
-    /**
-     * Two lock takes with the catalog fetch between them, never under one:
-     * [mutex] also serializes the lookups the embedder serves reads through,
-     * and a held fetch would block them for its whole wait. The cheap checks
-     * run first so their error priority reads unchanged, and the insert
-     * re-checks the name — a concurrent spawn may have taken it meanwhile.
-     */
     suspend fun spawn(
         name: String,
         type: String,
@@ -94,7 +69,6 @@ internal class Subagents(
         }
     }
 
-    /** Why the spawn cannot proceed on what this map and the harness know; null when it can. Caller holds [mutex]. */
     private fun rejectSpawn(name: String, type: String, modelId: String?): ToolResult.Error? = when {
         name.isBlank() -> ToolResult.Error("subagent name must not be blank.")
 
@@ -124,20 +98,14 @@ internal class Subagents(
         }
     }
 
-    /** The child registered under [sessionId], revived when dormant; null when unknown. */
     suspend fun childBySessionId(sessionId: String): Agent? = mutex.withLock {
         children.entries.firstOrNull { it.value.sessionId == sessionId }?.let { resolve(it.key)?.agent }
     }
 
-    /** The child registered under [sessionId] while it is live; never revives. */
     suspend fun liveChildBySessionId(sessionId: String): Agent? = mutex.withLock {
         children.values.firstNotNullOfOrNull { child -> (child as? Live)?.agent?.takeIf { it.sessionId == sessionId } }
     }
 
-    /**
-     * The live child registered as [name], reviving a dormant one; the
-     * caller holds [mutex].
-     */
     private suspend fun resolve(name: String): Live? = when (val child = children[name]) {
         null -> null
 
@@ -154,16 +122,9 @@ internal class Subagents(
         }
     }
 
-    /**
-     * One blocking child run — under the child's spawn-time model and
-     * effort overrides where it has them: the child's final message is the
-     * result verbatim; a run ending any other way becomes an error result
-     * the parent can react to.
-     */
     private suspend fun promptChild(child: Live, name: String, message: String): ToolResult = try {
         parent.awaitingChildRun { settings ->
-            // The spawn-time pins: a null pin inherits the driving run's
-            // setting, a set one — [ReasoningEffort.NONE] included — overrides.
+
             val pinned = settings.copy(
                 model = child.modelId ?: settings.model,
                 reasoningEffort = child.reasoningEffort ?: settings.reasoningEffort,
@@ -173,8 +134,6 @@ internal class Subagents(
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (_: IllegalStateException) {
-        // The child's own busy guard, reaching the model as data — possible
-        // once children are promptable from outside the parent's loop.
         ToolResult.Error("subagent '$name' is still working on an earlier prompt — try again once it finishes.")
     }
 
@@ -188,9 +147,6 @@ internal class Subagents(
 private fun RunResult.asToolResult(name: String): ToolResult = when (status) {
     RunResult.Status.COMPLETED -> ToolResult.Success(finalMessage.orEmpty())
 
-    // The one status whose advice inverts: a user chose this, so re-prompting
-    // undoes their intent. A stop of the parent's own run lands here too —
-    // the cascade ends the child's run as STOPPED and its send returns.
     RunResult.Status.STOPPED -> ToolResult.Error(
         "subagent '$name' run ended as STOPPED — a user deliberately stopped it. The subagent received this " +
             "prompt and keeps whatever progress it made. Do not prompt it again to retry that work; report " +

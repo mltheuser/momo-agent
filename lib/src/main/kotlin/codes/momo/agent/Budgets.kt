@@ -4,36 +4,21 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 
-/**
- * Library-wide execution budgets, enforced by the agent loop and the tool
- * layer at input boundaries: a tool dispatch is bounded by the smaller of
- * [TOOL_TIMEOUT] and the run's remaining wall clock, an LLM call starts
- * only while wall clock remains — the wall clock never cancels work
- * mid-result.
- */
 public object Budgets {
 
-    /** Maximum number of turns per run (a turn = one LLM call). */
     public const val MAX_TURNS: Int = 256
 
-    /** Maximum wall-clock time per run. */
     public val MAX_WALL_CLOCK: Duration = 3.days
 
-    /** Timeout for a single tool execution. */
     public val TOOL_TIMEOUT: Duration = 24.hours
 
-    /**
-     * Maximum subagent nesting depth: agents this many spawns below the
-     * root are not offered the subagent tools.
-     */
     public const val MAX_SUBAGENT_DEPTH: Int = 5
 }
 
-/** A specific loop's budget values. */
 internal data class RunBudgets(
     val maxTurns: Int = Budgets.MAX_TURNS,
     val maxWallClock: Duration = Budgets.MAX_WALL_CLOCK,
     val toolTimeout: Duration = Budgets.TOOL_TIMEOUT,
-    /** Sleeps between a failed LLM call and its retries, one entry per retry. */
+
     val retryBackoffs: List<Duration> = RETRY_BACKOFFS,
 )

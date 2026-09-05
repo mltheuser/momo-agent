@@ -11,33 +11,16 @@ import kotlinx.serialization.json.Json
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
-/*
- * The live router the suite runs against — its coordinates, and the one
- * check that turns an absent backend into an actionable message instead of
- * a connection-refused stack trace from wherever the first call landed.
- * Configuration arrives as system properties set by the `liveTest` Gradle
- * task (see the module build script).
- */
-
-/** Base URL of the running ai-router the live tests talk to. */
 internal val liveBaseUrl: String
     get() = requiredSystemProperty("aiRouter.baseUrl")
 
-/** Model the live tests converse with. */
 internal val liveChatModel: String
     get() = requiredSystemProperty("aiRouter.chatModel")
 
-/**
- * Fails, once per JVM and loudly, unless the configured router is reachable
- * and serves the configured model. The live tier never skips: this is the
- * one place that names the URL, the model, what the router does offer, and
- * the command that starts one.
- */
 internal fun requireLiveAiRouter() {
     reachable.getOrElse { failure -> throw IllegalStateException(unreachableMessage(failure), failure) }
 }
 
-/** Probed once per JVM: every class in the suite shares the verdict. */
 private val reachable: Result<Unit> by lazy {
     runCatching {
         val available = runBlocking {
@@ -51,12 +34,6 @@ private val reachable: Result<Unit> by lazy {
     }
 }
 
-/**
- * The SDK's default client waits ten minutes on a call, long enough to look
- * like a hang rather than a failure; the probe gets one that answers in
- * seconds. Supplying a client also takes over encoding, so this reproduces
- * the SDK's own settings.
- */
 private fun probeHttpClient(): HttpClient = HttpClient(CIO) {
     install(ContentNegotiation) {
         json(

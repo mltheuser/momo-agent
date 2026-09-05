@@ -6,27 +6,13 @@ import ai.router.sdk.models.ModelInfo
 import ai.router.sdk.models.ModelList
 import kotlinx.coroutines.CancellationException
 
-/**
- * The router's catalog filtered to the models an agent run can use —
- * capabilities including both chat and tools. ai-router's server-side
- * capability filter takes a single capability, so tools is filtered here.
- * Spawn-time model validation and the agent server's model listing both
- * read this one filter.
- */
 public suspend fun AiRouterClient.usableModels(): ModelList {
     val catalog = listModels(capability = Capability.CHAT)
     return catalog.copy(data = catalog.data.filter { it.hasCapability(Capability.TOOLS) })
 }
 
-/**
- * Validates a spawn's model_id against [usableModels]: an id is valid only
- * as a catalog entry's fully-qualified `model` string, with or without its
- * `@provider` suffix — exactly the forms the router resolves. Consulted only
- * when a spawn pins a model, so the inherit path never fetches the catalog.
- */
 internal class SpawnModels(private val client: AiRouterClient) {
 
-    /** Why [modelId] cannot be spawned with — null when it can. */
     suspend fun rejectionFor(modelId: String): String? {
         val usable = try {
             client.usableModels().data
@@ -39,7 +25,6 @@ internal class SpawnModels(private val client: AiRouterClient) {
     }
 }
 
-/** Whether this id addresses [entry]: its `model` string verbatim, or that string without the `@provider` suffix. */
 private fun String.addresses(entry: ModelInfo): Boolean =
     this == entry.model || this == entry.model.substringBeforeLast('@')
 
@@ -51,7 +36,6 @@ private fun unknownModelMessage(modelId: String, usable: List<ModelInfo>): Strin
     append("\nPass one of these verbatim; the '@provider' suffix may be dropped to let the router choose.")
 }
 
-/** Up to [limit] candidates closest to [query] under [approximateSubstringDistance], deterministically ordered. */
 internal fun closestModels(query: String, candidates: List<String>, limit: Int = SUGGESTION_LIMIT): List<String> {
     val distance = candidates.associateWith { approximateSubstringDistance(query, it) }
     return candidates
@@ -59,13 +43,6 @@ internal fun closestModels(query: String, candidates: List<String>, limit: Int =
         .take(limit)
 }
 
-/**
- * Edit distance from [query] to the closest substring of [candidate],
- * case-insensitively: Levenshtein where the candidate's leading characters
- * are free (row zero stays 0) and so are its trailing ones (the answer is
- * the last row's minimum) — so a short query like "opus 5" scores by the
- * best-matching stretch of a long fully-qualified id.
- */
 internal fun approximateSubstringDistance(query: String, candidate: String): Int {
     val q = query.lowercase()
     val c = candidate.lowercase()

@@ -66,4 +66,4 @@ Every session is an append-only log of `AgentEvent`s. Each event carries a
 
 The log is the single source of truth: `Agent.load` rebuilds the conversation
 from it, the server derives `SessionInfo` from it, and the SSE stream serves
-it verbatim. Field-level detail is in the KDoc of `AgentEvent.kt`.
+it verbatim. Field names and defaults are the data class fields in `AgentEvent.kt`.

@@ -19,9 +19,9 @@ Map of the code: [docs/architecture.md](docs/architecture.md).
 
 - Style reference is the ai-router Kotlin SDK checkout: warnings as errors, `explicitApi` Strict, detekt with zero findings. Dependency versions live once, in `gradle/libs.versions.toml`.
 - Narrow platform support is a declared invariant; never work around it in code ([docs/execution-environment.md](docs/execution-environment.md)).
-- Comments and KDoc say only what naming and structure cannot. State each contract fact in exactly one place. KDoc is self-contained: no planning-doc or issue references.
+- The code carries almost no comments. Contracts and rationale live in `docs/`; a comment is allowed only for a non-obvious local hazard that a reader of the line would otherwise undo. No KDoc, no planning-doc or issue references.
 - Control characters in source are written as visible escapes (`\u0007`), never raw bytes.
-- Some catch arms stay narrower than `Throwable` on purpose. Widening one converts a failed JVM into a run that merely errored. Contract in `Agent.send`'s KDoc.
+- In `Agent.executeRun` the `Exception` and `Throwable` catch arms stay separate. Merging them converts a failed JVM into a run that merely errored: a non-`Exception` throwable is rethrown after the `run_finished` event is emitted.
 
 ## Vocabulary
 

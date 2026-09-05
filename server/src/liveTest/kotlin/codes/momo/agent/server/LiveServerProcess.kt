@@ -12,12 +12,6 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
-/**
- * The agent server as an operating-system process, started from the
- * distribution's own start script so `Main.kt` runs exactly as it does for
- * a user. Everything the process writes is drained and kept, so a failure
- * can report it.
- */
 internal class LiveServerProcess private constructor(
     val port: Int,
     val dataDir: Path,
@@ -25,26 +19,18 @@ internal class LiveServerProcess private constructor(
     private val transcript: StringBuilder,
 ) : AutoCloseable {
 
-    /**
-     * Kills the process should this JVM exit while it is still running — a
-     * cancelled build otherwise orphans a server holding a port and, for a
-     * `@TempDir` data directory, racing its deletion.
-     */
     private val exitHook = Thread({ terminate() }, "kill-live-server-$port")
 
     val baseUrl: String get() = "http://127.0.0.1:$port"
 
-    /** Everything the process has written to stdout and stderr so far. */
     fun output(): String = synchronized(transcript) { transcript.toString() }
 
-    /** Kills the process outright, skipping its own shutdown hook — a crash, not a stop. */
     fun crash() {
         releaseExitHook()
         process.destroyForcibly()
         process.waitFor()
     }
 
-    /** SIGTERM, so the server's own shutdown hook closes the sessions; escalates only if it does not die. */
     override fun close() {
         releaseExitHook()
         terminate()
@@ -58,11 +44,6 @@ internal class LiveServerProcess private constructor(
         }
     }
 
-    /**
-     * A process ended on purpose leaves no hook behind. Removing one is
-     * refused once a shutdown is under way, which is precisely when the hook
-     * is already doing this itself.
-     */
     private fun releaseExitHook() {
         runCatching { Runtime.getRuntime().removeShutdownHook(exitHook) }
     }
@@ -81,19 +62,6 @@ internal class LiveServerProcess private constructor(
         error(diagnostics("the server did not accept requests within $READY_TIMEOUT"))
     }
 
-    /**
-     * The server ships no logging backend, so readiness is what the socket
-     * answers, not what it prints. Probed over `HttpURLConnection` rather
-     * than the suite's Ktor client because starting a process is not a
-     * suspending business, and a blocking probe beats a `runBlocking` per
-     * poll for one status code.
-     *
-     * The listing is scoped to a workspace and a probe without one is a
-     * `400`, so the probe names the root — an absolute path no session's
-     * workspace is, making the answer an empty list rather than work. It stays
-     * this endpoint rather than `/v1/models`, which proxies ai-router: that
-     * service's health is not this process's readiness.
-     */
     private fun respondsOk(): Boolean = try {
         val connection = URI("$baseUrl/v1/sessions?workspace=/").toURL().openConnection() as HttpURLConnection
         connection.connectTimeout = PROBE_TIMEOUT_MILLIS
@@ -113,24 +81,15 @@ internal class LiveServerProcess private constructor(
 
     companion object {
 
-        /**
-         * Starts a server on a free port over [dataDir], pointed at the
-         * router at [aiRouterBaseUrl] — the live one unless a case stands in
-         * for it — returning once it answers requests. A port lost between
-         * being chosen and being bound costs an attempt rather than the caller.
-         */
         fun start(dataDir: Path, aiRouterBaseUrl: String = liveBaseUrl): LiveServerProcess {
-            // The server is useless without the router, and its own failure to
-            // reach one is far less legible than saying so here.
             requireLiveAiRouter()
             repeat(START_ATTEMPTS - 1) {
                 val attempt = runCatching { startOnce(dataDir, aiRouterBaseUrl) }
                 attempt.onSuccess { return it }
-                // Only a stillborn process is worth another port; nothing else
-                // has a reason to go better on the next one.
+
                 attempt.onFailure { failure -> if (failure !is StillbornServer) throw failure }
             }
-            // The last attempt reports instead of retrying.
+
             return startOnce(dataDir, aiRouterBaseUrl)
         }
 
@@ -143,8 +102,7 @@ internal class LiveServerProcess private constructor(
                 "--data-dir=$dataDir",
                 "--ai-router-base-url=$aiRouterBaseUrl",
             ).redirectErrorStream(true)
-            // The start script resolves the JVM itself; hand it this one so the
-            // suite does not depend on the launching shell's environment.
+
             builder.environment()["JAVA_HOME"] = System.getProperty("java.home")
             val process = builder.start()
             thread(isDaemon = true, name = "live-server-$port") {
@@ -154,17 +112,11 @@ internal class LiveServerProcess private constructor(
             }
             val server = LiveServerProcess(port, dataDir, process, transcript)
             Runtime.getRuntime().addShutdownHook(server.exitHook)
-            // A process that never became ready must not outlive the attempt.
+
             runCatching { server.awaitReady() }.onFailure { server.close() }.getOrThrow()
             return server
         }
 
-        /**
-         * `ServerConfig` rejects port 0, so the port is chosen here and the
-         * socket closed again. It can be taken back before the child JVM binds
-         * it a second later — this JVM's own loopback clients draw from the
-         * same ephemeral range — which is what [start] retries for.
-         */
         private fun freePort(): Int = ServerSocket(0).use { it.localPort }
 
         private val serverBin: String = checkNotNull(System.getProperty("momo.serverBin")) {
@@ -183,5 +135,4 @@ internal class LiveServerProcess private constructor(
     }
 }
 
-/** A process that died during startup — a port taken since it was chosen being the one cause worth a retry. */
 private class StillbornServer(message: String) : IllegalStateException(message)

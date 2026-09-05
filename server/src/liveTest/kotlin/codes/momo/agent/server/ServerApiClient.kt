@@ -43,24 +43,9 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
-/*
- * The server's HTTP API as its tests speak it: one client, the request and
- * response wrappers, and the waits over them. Every suite drives the same
- * API over the same wire, so what stays in a suite is what differs — which
- * server the client points at, how long a wait there may take, and which
- * model its prompts default to.
- */
-
-/** Creates a workspace folder named [name] under [tempDir] and returns it as a local environment spec. */
 internal fun localWorkspace(tempDir: Path, name: String = "workspace"): EnvironmentSpec.Local =
     EnvironmentSpec.Local(tempDir.resolve(name).createDirectories().toString())
 
-/**
- * A client for the server at [baseUrl], with the SSE and JSON plugins the API
- * needs and [wait] as its ceiling: it bounds one request, so a wedged call
- * fails the suite instead of stalling it, and — read back as [waitCeiling] —
- * every wait run over the client.
- */
 internal fun serverHttpClient(baseUrl: String, wait: Duration): HttpClient = HttpClient(CIO) {
     install(ContentNegotiation) {
         json()
@@ -75,13 +60,9 @@ internal fun serverHttpClient(baseUrl: String, wait: Duration): HttpClient = Htt
     }
 }.also { it.attributes.put(WAIT_CEILING, wait) }
 
-/** The ceiling the client was built with — how long a wait over it may take. */
 internal val HttpClient.waitCeiling: Duration
     get() = attributes[WAIT_CEILING]
 
-// ─── API calls ────────────────────────────────────────────────────────
-
-/** POSTs a create-session request, asserting 201. */
 internal suspend fun HttpClient.createSession(
     harnessPath: String,
     environment: EnvironmentSpec,
@@ -98,13 +79,11 @@ internal suspend fun HttpClient.createSessionResponse(request: CreateSessionRequ
         setBody(request)
     }
 
-/** POSTs a create-session request whose body is [body] verbatim, for the shapes the request type cannot express. */
 internal suspend fun HttpClient.rawCreateSessionResponse(body: String): HttpResponse =
     post("/v1/sessions") {
         setBody(TextContent(body, ContentType.Application.Json))
     }
 
-/** POSTs a prompt, asserting the 202 that says the run was accepted, not finished. */
 internal suspend fun HttpClient.prompt(
     sessionId: String,
     prompt: String,
@@ -127,7 +106,6 @@ internal suspend fun HttpClient.promptResponse(
         setBody(PromptRequest(prompt, model, reasoningEffort))
     }
 
-/** POSTs a prompt whose body is [body] verbatim, for the shapes the request type cannot express. */
 internal suspend fun HttpClient.rawPromptResponse(sessionId: String, body: String): HttpResponse =
     post("/v1/sessions/$sessionId/prompt") {
         setBody(TextContent(body, ContentType.Application.Json))
@@ -136,13 +114,11 @@ internal suspend fun HttpClient.rawPromptResponse(sessionId: String, body: Strin
 internal suspend fun HttpClient.sessionInfo(sessionId: String): SessionInfo =
     get("/v1/sessions/$sessionId").body()
 
-/** GETs one session, scoped to [workspace] when given — a session outside it answers 404, not 403. */
 internal suspend fun HttpClient.sessionInfoResponse(sessionId: String, workspace: String? = null): HttpResponse =
     get("/v1/sessions/$sessionId") {
         if (workspace != null) parameter("workspace", workspace)
     }
 
-/** The server's root-session listing for [workspace], the scope the route requires. */
 internal suspend fun HttpClient.sessions(workspace: EnvironmentSpec): List<SessionInfo> =
     sessions(workspace.workspace)
 
@@ -154,7 +130,6 @@ internal suspend fun HttpClient.sessionsResponse(workspace: String?): HttpRespon
         if (workspace != null) parameter("workspace", workspace)
     }
 
-/** POSTs a rename, asserting 200, and returns the updated session info. */
 internal suspend fun HttpClient.renameSession(sessionId: String, title: String): SessionInfo {
     val response = renameResponse(sessionId, title)
     assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
@@ -167,7 +142,6 @@ internal suspend fun HttpClient.renameResponse(sessionId: String, title: String)
         setBody(RenameRequest(title))
     }
 
-/** POSTs a select-model, asserting 200, and returns the updated session info. */
 internal suspend fun HttpClient.selectModel(
     sessionId: String,
     model: String,
@@ -188,16 +162,11 @@ internal suspend fun HttpClient.selectModelResponse(
         setBody(SelectModelRequest(model, reasoningEffort))
     }
 
-/** POSTs a select-model whose body is [body] verbatim, for the shapes the request type cannot express. */
 internal suspend fun HttpClient.rawSelectModelResponse(sessionId: String, body: String): HttpResponse =
     post("/v1/sessions/$sessionId/select-model") {
         setBody(TextContent(body, ContentType.Application.Json))
     }
 
-/**
- * POSTs a rewind cutting from [firstDeletedSequenceId] on, asserting 200, and
- * returns the session as cut plus the cascade's deletions.
- */
 internal suspend fun HttpClient.rewindSession(sessionId: String, firstDeletedSequenceId: Long): RewindResponse {
     val response = rewindResponse(sessionId, firstDeletedSequenceId)
     assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
@@ -210,25 +179,17 @@ internal suspend fun HttpClient.rewindResponse(sessionId: String, firstDeletedSe
         setBody(RewindRequest(firstDeletedSequenceId))
     }
 
-/** POSTs a rewind whose body is [body] verbatim, for the shapes the request type cannot express. */
 internal suspend fun HttpClient.rawRewindResponse(sessionId: String, body: String): HttpResponse =
     post("/v1/sessions/$sessionId/rewind") {
         setBody(TextContent(body, ContentType.Application.Json))
     }
 
-/** POSTs a stop — no request body — whose response carries the session info as of the stop's return. */
 internal suspend fun HttpClient.stopResponse(sessionId: String): HttpResponse = post("/v1/sessions/$sessionId/stop")
 
-/**
- * POSTs a close and abandons the request mid-flight, as a client that
- * disconnects does — the server finishes the close regardless, so what a case
- * over this asserts is what survives the caller going away.
- */
 internal suspend fun HttpClient.abandonedClose(sessionId: String) {
     withTimeoutOrNull(ABANDON_AFTER) { closeResponse(sessionId) }
 }
 
-/** POSTs a close, asserting 200, and returns the parked session info. */
 internal suspend fun HttpClient.closeSession(sessionId: String): SessionInfo {
     val response = closeResponse(sessionId)
     assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
@@ -237,7 +198,6 @@ internal suspend fun HttpClient.closeSession(sessionId: String): SessionInfo {
 
 internal suspend fun HttpClient.closeResponse(sessionId: String): HttpResponse = post("/v1/sessions/$sessionId/close")
 
-/** DELETEs a session, asserting the 204 that says it and its stored artifacts are gone. */
 internal suspend fun HttpClient.deleteSession(sessionId: String) {
     val response = deleteResponse(sessionId)
     assertEquals(HttpStatusCode.NoContent, response.status, response.bodyAsText())
@@ -245,7 +205,6 @@ internal suspend fun HttpClient.deleteSession(sessionId: String) {
 
 internal suspend fun HttpClient.deleteResponse(sessionId: String): HttpResponse = delete("/v1/sessions/$sessionId")
 
-/** POSTs a retry — no request body — asserting the 202 that says the failed run was resumed, not finished. */
 internal suspend fun HttpClient.retryRun(sessionId: String): SessionInfo {
     val response = retryResponse(sessionId)
     assertEquals(HttpStatusCode.Accepted, response.status, response.bodyAsText())
@@ -254,18 +213,14 @@ internal suspend fun HttpClient.retryRun(sessionId: String): SessionInfo {
 
 internal suspend fun HttpClient.retryResponse(sessionId: String): HttpResponse = post("/v1/sessions/$sessionId/retry")
 
-/** GETs the event stream route as a plain request, for the status it answers before any frame. */
 internal suspend fun HttpClient.eventsResponse(sessionId: String): HttpResponse = get("/v1/sessions/$sessionId/events")
 
-/** GETs the model catalog the server proxies from ai-router. */
 internal suspend fun HttpClient.modelsResponse(): HttpResponse = get("/v1/models")
 
-/** GETs every stored template's name. */
 internal suspend fun HttpClient.templateNames(): List<String> = get("/v1/templates").body()
 
 internal suspend fun HttpClient.templateResponse(name: String): HttpResponse = get("/v1/templates/$name")
 
-/** PUTs a template, asserting 200, and returns it as served. */
 internal suspend fun HttpClient.putTemplate(name: String, body: String): TemplateResponse {
     val response = putTemplateResponse(name, body)
     assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
@@ -278,9 +233,6 @@ internal suspend fun HttpClient.putTemplateResponse(name: String, body: String):
         setBody(PutTemplateRequest(body))
     }
 
-// ─── Waits ────────────────────────────────────────────────────────────
-
-/** Waits until [sessionId]'s active run ends, however it ends, polling over HTTP. */
 internal suspend fun HttpClient.awaitRunEnd(sessionId: String) {
     val ended = withTimeoutOrNull(waitCeiling) {
         while (sessionInfo(sessionId).status == SessionStatus.RUNNING) {
@@ -293,20 +245,8 @@ internal suspend fun HttpClient.awaitRunEnd(sessionId: String) {
     }
 }
 
-/**
- * An open subscription to the change stream. Its frames carry nothing to
- * tell apart and two raised together may arrive as one, so a case never
- * counts them: it asserts the one promise a subscriber relies on, through
- * [signalled] — a mutation is followed by a frame, after which a re-read
- * sees the change.
- */
 internal class ChangeStream(private val received: () -> Int, private val ceiling: Duration) {
 
-    /**
-     * Runs [mutation], described as [what], and waits until at least one
-     * frame has arrived since — failing if none does within the ceiling.
-     * Returns what [mutation] returned.
-     */
     suspend fun <T> signalled(what: String, mutation: suspend () -> T): T {
         val before = received()
         val result = mutation()
@@ -314,7 +254,6 @@ internal class ChangeStream(private val received: () -> Int, private val ceiling
         return result
     }
 
-    /** Waits until more than [count] frames have arrived; [what] names the change awaited. */
     internal suspend fun awaitMoreThan(count: Int, what: String) {
         val arrived = withTimeoutOrNull(ceiling) {
             while (received() <= count) {
@@ -328,19 +267,13 @@ internal class ChangeStream(private val received: () -> Int, private val ceiling
     }
 }
 
-/**
- * Runs [block] with a subscription to the change stream open, disconnecting
- * as it returns. The stream's own opening frame has arrived before [block]
- * starts — it is emitted with the subscription, so waiting for it is what puts
- * a case's mutations behind the subscribe instead of racing it.
- */
 internal suspend fun <T> HttpClient.withChangeStream(block: suspend (ChangeStream) -> T): T {
     val received = CopyOnWriteArrayList<String>()
     return coroutineScope {
         val subscription = launch {
             sse("/v1/sessions/changes") {
                 incoming
-                    .filter { it.event != null } // Heartbeat comment frames name no event.
+                    .filter { it.event != null }
                     .collect { frame ->
                         assertNull(frame.data, "a change frame carries no data")
                         assertNull(frame.id, "a change frame carries no id")
@@ -349,7 +282,7 @@ internal suspend fun <T> HttpClient.withChangeStream(block: suspend (ChangeStrea
             }
         }
         val stream = ChangeStream({ received.size }, waitCeiling)
-        stream.awaitMoreThan(0, "subscribing") // The opening frame: the subscription is registered.
+        stream.awaitMoreThan(0, "subscribing")
         try {
             block(stream)
         } finally {
@@ -358,17 +291,8 @@ internal suspend fun <T> HttpClient.withChangeStream(block: suspend (ChangeStrea
     }
 }
 
-/** One received SSE frame, decoded: its `id:` sequence number plus its `data:` event. */
 internal data class SseEvent(val id: Long, val event: AgentEvent)
 
-/**
- * Subscribes to [sessionId]'s SSE event stream — strictly after
- * [afterSequenceId] when given, via `Last-Event-ID` — and collects until
- * [until] matches (that event included), then disconnects. A stream the
- * server itself ends — the session deleted under it — returns whatever
- * arrived instead. [onSubscribed] runs once the subscription is open, for
- * a case that must not act until this stream is standing.
- */
 internal suspend fun HttpClient.streamEvents(
     sessionId: String,
     afterSequenceId: Long? = null,
@@ -383,7 +307,7 @@ internal suspend fun HttpClient.streamEvents(
         ) {
             onSubscribed()
             incoming
-                .filter { it.data != null } // Heartbeat comment frames carry no data.
+                .filter { it.data != null }
                 .map { frame ->
                     SseEvent(
                         id = checkNotNull(frame.id) { "every event frame carries an id" }.toLong(),
@@ -404,7 +328,6 @@ internal suspend fun HttpClient.streamEvents(
     return received.toList()
 }
 
-/** Reports what the session was doing, which is the useful half of a wait that ran out. */
 private suspend fun HttpClient.failWait(
     sessionId: String,
     problem: String,
@@ -417,23 +340,12 @@ private suspend fun HttpClient.failWait(
     )
 }
 
-/**
- * How often a wait re-asks: brief enough that a mocked run's end is never
- * what a case waits on, long enough that following a live run for a minute
- * is not traffic worth counting.
- */
 internal val POLL_INTERVAL: Duration = 20.milliseconds
 
 private val WAIT_CEILING: AttributeKey<Duration> = AttributeKey("momo.waitCeiling")
 
-/** Every server a suite talks to is on loopback, so a connect is either instant or never. */
 private val CONNECT_TIMEOUT: Duration = 10.seconds
 
 private const val EVENT_TAIL: Int = 10
 
-/**
- * How long an abandoned request is left in flight: long enough to reach the
- * server and start its work, short enough to be gone well before that work
- * ends. A close tears an environment down, which is orders of magnitude more.
- */
 private val ABANDON_AFTER: Duration = 1.milliseconds

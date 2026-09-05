@@ -30,11 +30,6 @@ public class ViewImageTool : Tool<ViewImageArgs>(
     }
 }
 
-/**
- * Refusal bound on the raw file size: base64 expansion (~4/3x) must fit
- * through [ExecutionEnvironment.MAX_CAPTURED_BYTES], and the encoded image
- * must stay within provider per-image bounds (Anthropic's is 10 MB).
- */
 internal const val MAX_IMAGE_BYTES: Long = 5L * 1024 * 1024
 
 internal suspend fun loadImage(path: String, environment: ExecutionEnvironment): ToolResult {

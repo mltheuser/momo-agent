@@ -10,19 +10,12 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import kotlinx.serialization.Serializable
 
-/** Body of a put-template request: the template's text. */
 @Serializable
 internal data class PutTemplateRequest(val body: String)
 
-/** A template as served: its name and its stored text. */
 @Serializable
 internal data class TemplateResponse(val name: String, val body: String)
 
-/**
- * The template endpoints under `/v1/templates`. Templates are global, so —
- * like `/v1/models` — the routes read no `?workspace=`. There is no delete:
- * a template is removed by deleting its file.
- */
 internal fun Route.templateRoutes(store: TemplateStore) {
     route("/v1/templates") {
         get {

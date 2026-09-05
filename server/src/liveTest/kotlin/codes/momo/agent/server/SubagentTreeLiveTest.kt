@@ -13,17 +13,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 
-/**
- * A subagent tree against a real model: the child a delegation spawns is a
- * session of its own — listed under its parent, running its own harness,
- * renamable and promptable through its own ID, and gone with the rewind
- * that deletes its spawn — and a stop on the parent cascades into the
- * child's run as a stop, never an abort.
- *
- * Delegation is made forcing rather than hopeful: the pass phrase exists
- * only in the child type's instructions, so the parent has no way to
- * produce it except by actually spawning a child and prompting it.
- */
 class SubagentTreeLiveTest {
 
     @TempDir
@@ -71,11 +60,9 @@ class SubagentTreeLiveTest {
             "the listing holds roots only: a child is reached through its parent's log",
         )
 
-        // Renaming the child leaves the root's title alone.
         assertEquals("diligent oracle", http.renameSession(spawn.sessionId, "diligent oracle").title)
         assertEquals(root.title, http.sessionInfo(root.id).title, "a child's rename must not retitle the root")
 
-        // A human prompt reaches the idle child, in its own conversation.
         http.prompt(spawn.sessionId, "Repeat the pass phrase you gave, verbatim, without using any tools.")
         assertEquals(SessionStatus.IDLE, http.sessionInfo(root.id).status, "no parent is driving this run")
         val childAnswer = assertIs<AgentEvent.RunFinished>(http.streamEvents(spawn.sessionId).last().event)
@@ -83,7 +70,6 @@ class SubagentTreeLiveTest {
         assertContains(assertNotNull(childAnswer.finalMessage), PASS_PHRASE, ignoreCase = true)
         http.awaitRunEnd(spawn.sessionId)
 
-        // Rewinding the root to before the spawn deletes the child's subtree.
         val rewound = http.rewindSession(root.id, spawn.sequenceId)
         assertEquals(listOf(spawn.sessionId), rewound.deletedSessionIds, "the deleted spawn takes its child")
         assertEquals(HttpStatusCode.NotFound, http.sessionInfoResponse(spawn.sessionId).status, "the child is gone")
@@ -105,7 +91,7 @@ class SubagentTreeLiveTest {
         http.prompt(rootId, "Have the worker run the command `sleep 30 && echo done` and report what it printed.")
 
         val childId = http.spawnedChildId(rootId)
-        // Waited for, not raced: the stop lands inside the child's sleep.
+
         http.streamEvents(childId, until = { it is AgentEvent.ToolCallStarted })
 
         assertEquals(HttpStatusCode.OK, http.stopResponse(rootId).status)
@@ -119,14 +105,13 @@ class SubagentTreeLiveTest {
             )
             assertEquals(List(events.size) { it.toLong() }, events.map { it.id }, "$id's log has gaps")
         }
-        // Idle, not closed: the tree stayed attached, both members still there.
+
         http.awaitRunEnd(rootId)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(rootId).status)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(childId).status)
     }
 }
 
-/** The child [rootId] spawns, read off its stream as soon as the spawn is logged. */
 private suspend fun HttpClient.spawnedChildId(rootId: String): String =
     assertIs<AgentEvent.SubagentSpawned>(
         streamEvents(rootId, until = { it is AgentEvent.SubagentSpawned }).last().event,
@@ -134,7 +119,6 @@ private suspend fun HttpClient.spawnedChildId(rootId: String): String =
 
 private const val ORACLE_TYPE: String = "oracle"
 
-/** Planted in the child's instructions and nowhere else — not in the parent's, not in the workspace. */
 private const val PASS_PHRASE: String = "plover-8261"
 
 private val ORACLE_INSTRUCTIONS: String = """

@@ -13,14 +13,6 @@ public data class BashArgs(
     val command: String,
 )
 
-/**
- * general-purpose shell tool: one bash command per call.
- *
- * [workspacePath] and [privilege] are the absolute workspace root commands
- * run in and the rights they run with, both named in the description: the
- * model learns them from the tool that owns them, so both must come from
- * the environment this tool is executed against.
- */
 public class BashTool(workspacePath: String, privilege: Privilege) : Tool<BashArgs>(
     name = "bash",
     description = bashDescription(workspacePath, privilege),
@@ -40,26 +32,12 @@ public class BashTool(workspacePath: String, privilege: Privilege) : Tool<BashAr
         }
     }
 
-    /**
-     * Whether either raw stream captured anything — [formatStreams] is never
-     * empty (it emits `(empty)` markers), so emptiness is tested here.
-     */
     private val ExecResult.hasOutput: Boolean
         get() = stdout.isNotEmpty() || stderr.isNotEmpty()
 
-    /**
-     * stderr leads: the dispatch bound keeps the head of the result, and
-     * diagnostics must survive an oversized stdout, not the other way round.
-     */
     private fun ExecResult.formatStreams(): String =
         section("stderr", stderr, stderrTruncated) + section("stdout", stdout, stdoutTruncated)
 
-    /**
-     * One labeled stream section, always ending in exactly the newline that
-     * puts the next header at the start of a line. `truncated` is the exec
-     * primitive's per-stream capture cap, not the (far smaller) dispatch
-     * bound.
-     */
     private fun section(label: String, content: String, truncated: Boolean): String {
         val header = if (truncated) "$label (truncated)" else label
         return when {
@@ -70,12 +48,6 @@ public class BashTool(workspacePath: String, privilege: Privilege) : Tool<BashAr
     }
 }
 
-/**
- * LLM-facing contract of [BashTool] — the model only knows what this says,
- * so the workspace root and the privilege wording are stated here and
- * nowhere else: one place to read where commands run, with what rights, and
- * how to name files.
- */
 private fun bashDescription(workspacePath: String, privilege: Privilege): String {
     val rights = when (privilege) {
         Privilege.ROOT -> """

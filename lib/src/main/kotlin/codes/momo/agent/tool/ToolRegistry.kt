@@ -11,13 +11,6 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
-/**
- * Immutable, name-addressed set of [Tool]s and the single seam through
- * which tool calls are dispatched; the model-friendly result conventions
- * live once, in [execute].
- *
- * @throws IllegalArgumentException when [tools] contains duplicate names.
- */
 public class ToolRegistry(tools: List<Tool<*>>) {
 
     private val toolsByName: Map<String, Tool<*>> = tools.associateBy { it.name }
@@ -29,47 +22,18 @@ public class ToolRegistry(tools: List<Tool<*>>) {
         }
     }
 
-    /** The known-tool set harness validation runs against. */
     public val names: Set<String>
         get() = toolsByName.keys
 
-    /**
-     * The sub-registry holding exactly [toolNames], sharing this
-     * registry's tool instances — so a name outside the subset errors as
-     * unknown, listing only the subset as available.
-     */
     internal fun restrictedTo(toolNames: List<String>): ToolRegistry =
         ToolRegistry(toolNames.map { toolsByName.getValue(it) })
 
-    /**
-     * The LLM-facing definitions for [toolNames] (typically a harness's
-     * tool list), in the given order.
-     *
-     * @throws IllegalArgumentException on a name not in the registry — a
-     *   caller bug; validate against [names] up front.
-     */
     public fun definitions(toolNames: List<String>): List<ToolDefinition> =
         toolNames.map { name ->
             val tool = requireNotNull(toolsByName[name]) { unknownToolMessage(name) }
             tool.definition
         }
 
-    /**
-     * Executes tool [name] with the model-provided [arguments] against
-     * [environment], bounded by [timeout] ([Tool.timeoutExempt] tools run
-     * unbounded). Every outcome is a
-     * [ToolExecution] whose result the model can react to; only coroutine
-     * cancellation and JVM [Error]s escape:
-     *
-     * - unknown [name] or undecodable arguments → [ToolResult.Error]
-     *   naming the problem (unknown argument keys are ignored — small
-     *   models often add stray fields);
-     * - an unexpected exception from the tool → [ToolResult.Error];
-     * - exceeding [timeout] → [ToolResult.TimedOut];
-     * - text over the tool's [Tool.maxResultChars] (default
-     *   [MAX_RESULT_CHARS]) → truncated, with a marker naming the
-     *   applied limit appended.
-     */
     public suspend fun execute(
         name: String,
         arguments: JsonObject,
@@ -101,8 +65,7 @@ public class ToolRegistry(tools: List<Tool<*>>) {
         } catch (@Suppress("TooGenericExceptionCaught") exception: Exception) {
             return invalidArgumentsError(tool, exception)
         }
-        // The grace applies only when the per-tool budget is the binding
-        // constraint; a smaller wall-clock remainder must fire sharp.
+
         val backstop = if (timeout >= Budgets.TOOL_TIMEOUT) timeout + TIMEOUT_GRACE else timeout
         return try {
             if (tool.timeoutExempt) invocation() else withTimeout(backstop) { invocation() }
@@ -133,42 +96,27 @@ public class ToolRegistry(tools: List<Tool<*>>) {
 
     private fun String.boundedResultText(limit: Int): String {
         if (length <= limit) return this
-        // Strings are UTF-16 in memory; cutting a surrogate pair in half
-        // leaves text that cannot be re-encoded to UTF-8 for the model.
+
         val cut = if (this[limit - 1].isHighSurrogate()) limit - 1 else limit
         return take(cut) + truncationMarker(limit)
     }
 
     public companion object {
 
-        /**
-         * Default per-result cap on model-facing text: where
-         * [ExecutionEnvironment.MAX_CAPTURED_BYTES] protects the JVM
-         * heap, this far smaller bound protects the model's context.
-         * A tool with legitimately larger payloads overrides
-         * [Tool.maxResultChars].
-         */
         public const val MAX_RESULT_CHARS: Int = 96 * 1024
 
-        /** Appended to capped text so the model knows output was cut short at [limit]. */
         public fun truncationMarker(limit: Int): String =
             "\n[output truncated: exceeded $limit characters]"
 
-        /**
-         * Headroom the dispatch timer adds over [Budgets.TOOL_TIMEOUT] so
-         * a tool's own budget-bound exec call, started after the dispatch
-         * timer, can report its timeout first — see [Tool.execute].
-         */
         private val TIMEOUT_GRACE: Duration = 10.seconds
     }
 }
 
-/** One [ToolRegistry.execute] dispatch: the model-facing result plus the facts only dispatch knows. */
 public data class ToolExecution(
-    /** The outcome, its payload bounded to the tool's [Tool.maxResultChars] (failure framing adds slightly more). */
+
     val result: ToolResult,
-    /** Whether bounding cut the payload short. */
+
     val truncated: Boolean,
-    /** Wall-clock time the dispatch took. */
+
     val duration: Duration,
 )

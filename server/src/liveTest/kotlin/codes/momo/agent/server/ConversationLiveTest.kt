@@ -18,12 +18,6 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/**
- * The ordinary conversation, end to end: a real server process, real HTTP
- * and SSE, and a real model behind it. One path carries the whole
- * create-prompt-stream-complete flow plus a continuation run; the other the
- * event stream's contract — replay, fan-out, and its end on a delete.
- */
 class ConversationLiveTest {
 
     @TempDir
@@ -41,8 +35,7 @@ class ConversationLiveTest {
             stream.signalled("a run starting") {
                 assertEquals(SessionStatus.RUNNING, http.prompt(session.id, READ_AND_FLOOD_PROMPT).status)
             }
-            // The run's end is announced behind the release of its claim, so
-            // the signal is what makes the idle status below safe to read.
+
             val events = stream.signalled("a run ending") { http.streamEvents(session.id) }
             assertEquals(SessionStatus.IDLE, http.sessionInfo(session.id).status)
             events
@@ -73,8 +66,6 @@ class ConversationLiveTest {
         assertEquals(finished.turnsUsed, info.lastRun?.turnsUsed, "lastRun reports the completed run's consumption")
         assertEquals(ModelSelection(liveChatModel), info.modelSelection, "the run's model is the shown selection")
 
-        // The second run continues the first's conversation: the token is
-        // gone from the workspace, so only the transcript can hold it.
         Path.of(workspace.workspace).resolve("secret.txt").toFile().delete()
         http.prompt(session.id, "Without using any tools, repeat the exact token you read earlier.")
         val recalled = assertIs<AgentEvent.RunFinished>(
@@ -110,9 +101,7 @@ class ConversationLiveTest {
         http.awaitRunEnd(id)
         coroutineScope {
             val subscribed = CompletableDeferred<Unit>()
-            // Nothing on this side ends the stream, so only the delete can —
-            // and the wait is the suite's, so a delete that leaves the
-            // subscriber parked fails the case instead of hanging it.
+
             val watcher = async { http.streamEvents(id, until = untilTheServerEnds(subscribed)) }
             subscribed.await()
             http.deleteSession(id)
@@ -125,25 +114,17 @@ class ConversationLiveTest {
     }
 }
 
-/** An end condition that never matches; it only reports through [subscribed] that the log is arriving. */
 private fun untilTheServerEnds(subscribed: CompletableDeferred<Unit>): (AgentEvent) -> Boolean = {
     subscribed.complete(Unit)
     false
 }
 
-/** The planted needle the server's agent can only obtain from the workspace. */
 private const val TOKEN: String = "plugh-5507"
 
-/**
- * Two dictated commands: the read that surfaces the token, and a flood whose
- * 200 000 bytes of output overrun the model-facing result cap — so the
- * truncation lands in the log without the model having to invent it.
- */
 private const val READ_AND_FLOOD_PROMPT: String =
     "Two steps, using the bash tool. First, run `cat secret.txt` and note the token it prints. " +
         "Second, run exactly this command verbatim: `yes x | head -c 200000` — its output is deliberately " +
         "large and gets cut off; that is fine, do not retry or shorten it. Then reply with one sentence " +
         "containing the token verbatim."
 
-/** A prompt that is over in one turn: the stream cases are about the frames, not the work. */
 private const val READY_PROMPT: String = "Reply with the single word: ready."

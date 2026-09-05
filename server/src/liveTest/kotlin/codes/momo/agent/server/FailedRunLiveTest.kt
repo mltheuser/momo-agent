@@ -16,14 +16,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * A run the router refuses outright, and the retry over it. An unknown model
- * is the one terminal failure the real router produces on demand: a 404
- * `not_found_error` that must not be retried, recorded as the run's error
- * and leaving the session idle. The retry cuts the failure tail and resumes
- * the same run under the same settings — so it fails the same way — until a
- * prompt with a real model completes, after which there is nothing to retry.
- */
 class FailedRunLiveTest {
 
     @TempDir
@@ -53,10 +45,6 @@ class FailedRunLiveTest {
         val runStart = failed.single { it.event is AgentEvent.RunStarted }.id
         val callStart = failed.single { it.event is AgentEvent.LlmCallStarted }.id
 
-        // The retry: one request cuts the failure tail — everything from the
-        // failed LLM call on — and resumes the run under its recorded model.
-        // A 404 is answered in milliseconds, so the 202's own status may
-        // already read idle: the run is asserted through its log instead.
         http.retryRun(id)
         val retried = http.streamEvents(id, afterSequenceId = failed.last().id)
         val rewound = assertIs<AgentEvent.ConversationRewound>(retried.first().event)
@@ -70,7 +58,6 @@ class FailedRunLiveTest {
         assertEquals(404, failedAgain.error?.statusCode)
         http.awaitRunEnd(id)
 
-        // A prompt naming a real model completes over the same session.
         http.prompt(id, "Reply with the single word: ready.")
         val completed = assertIs<AgentEvent.RunFinished>(
             http.streamEvents(id, afterSequenceId = retried.last().id).last().event,
@@ -88,9 +75,4 @@ class FailedRunLiveTest {
     }
 }
 
-/**
- * A model the router does not serve. The `:cloud` tag keeps the router's
- * refusal a plain not-found — an untagged id makes it ask which tag was
- * meant instead.
- */
 private const val UNKNOWN_MODEL: String = "no-such-model:cloud"

@@ -3,32 +3,17 @@ package codes.momo.agent.harness
 import codes.momo.agent.tool.SUBAGENT_TOOL_NAMES
 import java.nio.file.Path
 
-/**
- * Validated, immutable in-memory representation of a harness folder: its
- * tools, instructions, and declared subagent types. The constructor
- * enforces the invariants, so every instance — built directly or via
- * [load] — is valid. Instances compare by identity: a composition may
- * reference itself (`self: .`), so the graph has no structural equality.
- *
- * [instructions] is exposed raw; prompt composition is owned by the agent
- * loop. Execution budgets are library-fixed — see [codes.momo.agent.Budgets].
- */
 public class Harness internal constructor(
-    /** Tool names in manifest order. */
+
     public val tools: List<String>,
-    /** Raw content of `instructions.md`. */
+
     public val instructions: String,
-    /**
-     * Declared subagent types by name. A non-empty map is what offers the
-     * subagent tools; loading resolves every entry, so a child harness is
-     * available without filesystem access at spawn time.
-     */
+
     public val subagents: Map<String, SubagentType>,
-    /** Canonical folder this harness was loaded from; null when constructed programmatically. */
+
     public val folder: Path? = null,
 ) {
 
-    /** A harness declaring no subagent types. */
     public constructor(tools: List<String>, instructions: String) : this(tools, instructions, emptyMap())
 
     init {
@@ -75,10 +60,6 @@ public class Harness internal constructor(
         }
     }
 
-    /**
-     * Verifies every tool is contained in [knownTools]; called at agent
-     * construction time so an unknown tool fails up front, not at first use.
-     */
     public fun requireToolsKnown(knownTools: Set<String>) {
         val unknown = tools.filterNot { it in knownTools }
         if (unknown.isNotEmpty()) {
@@ -94,34 +75,19 @@ public class Harness internal constructor(
 
     public companion object {
 
-        /**
-         * Loads and validates [folder], which must contain `harness.yaml`
-         * and `instructions.md`, together with every harness folder its
-         * `subagents` entries reference, recursively. Each folder loads
-         * once, so self-references and reference cycles terminate.
-         */
         public fun load(folder: Path): Harness = HarnessLoader.load(folder)
 
         private fun fail(message: String): Nothing = throw HarnessValidationException(message)
     }
 }
 
-/**
- * One declared subagent type: [description] is the model-facing one-liner
- * the spawn tool enumerates, [harness] the loaded harness a child of this
- * type runs. The loader assigns [harness] only once the whole loading
- * pass has finished — the deferral that lets a composition reference
- * itself — and the volatile hand-off keeps a loaded graph safe to share
- * across threads without synchronization.
- */
 public class SubagentType internal constructor(
     public val description: String,
 ) {
 
-    @Volatile
+    @Volatile // Assigned once the whole load pass finished, so a composition may reference itself.
     private var resolved: Harness? = null
 
-    /** The loaded harness a spawned child of this type runs. */
     public val harness: Harness
         get() = checkNotNull(resolved) { "unresolved subagent type — Harness.load wires every type before returning." }
 

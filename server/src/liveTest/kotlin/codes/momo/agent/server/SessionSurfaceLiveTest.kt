@@ -28,14 +28,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * The server's HTTP surface short of a chat completion, against the real
- * server process: the session lifecycle and its change stream, every 400
- * and 404 the routes answer, the dormant-session writes, the catalog proxy
- * and the templates. None of it reaches a model, so these cases cost the
- * suite milliseconds and share its one process — each owning only what it
- * creates.
- */
 class SessionSurfaceLiveTest {
 
     @TempDir
@@ -48,8 +40,7 @@ class SessionSurfaceLiveTest {
         val workspace = localWorkspace(tempDir, "lifecycle")
 
         http.withChangeStream { stream ->
-            // Each listing mutation is followed by a change frame — the one
-            // promise a client relies on to know when to re-read the list.
+
             val first = stream.signalled("creating a session") { http.createSession(harness, workspace) }
             val second = stream.signalled("creating a second session") { http.createSession(harness, workspace) }
             assertNotEquals(first.id, second.id)
@@ -65,13 +56,10 @@ class SessionSurfaceLiveTest {
             assertEquals(first, http.sessionInfo(first.id))
             assertEquals(setOf(first, second), http.sessions(workspace).toSet(), "get and list agree")
 
-            // A stop with nothing in flight is an idempotent no-op that attaches nothing.
             val stopped = http.stopResponse(first.id)
             assertEquals(HttpStatusCode.OK, stopped.status, stopped.bodyAsText())
             assertEquals(SessionStatus.IDLE, stopped.body<SessionInfo>().status)
 
-            // Close parks: still listed, idempotent, the neighbour untouched —
-            // and a close whose caller is gone still signals.
             stream.signalled("a close whose caller hung up") { http.abandonedClose(first.id) }
             val closed = http.sessionInfo(first.id)
             assertEquals(SessionStatus.CLOSED, closed.status)
@@ -102,7 +90,6 @@ class SessionSurfaceLiveTest {
         val workspace = localWorkspace(tempDir)
         val missing = tempDir.resolve("no-such-folder").toString()
 
-        // Create.
         http.createSessionResponse(CreateSessionRequest(missing, workspace))
             .assertRejected("invalid_harness", "a missing harness folder", names = missing)
         val broken = writeHarness(tempDir.resolve("broken"), subagents = mapOf("helper" to "../nowhere")).toString()
@@ -115,9 +102,7 @@ class SessionSurfaceLiveTest {
                 harness
             )}, "environment": {"type": "martian", "workspace": "/tmp"}}""",
         ).assertRejected("invalid_request", "an unknown environment type")
-        // A well-formed privilege value, so this pins the absence of the
-        // field: a client still asking for a posture is told, instead of
-        // quietly getting whatever the host has.
+
         http.rawCreateSessionResponse(
             """{"harnessPath": ${Json.encodeToString(harness)}, "environment": {"type": "local", """ +
                 """"workspace": ${Json.encodeToString(workspace.workspace)}, "privilege": "passwordless_sudo"}}""",
@@ -126,20 +111,17 @@ class SessionSurfaceLiveTest {
         val id = http.createSession(harness, workspace).id
         val before = http.streamEvents(id, until = { it is AgentEvent.SessionStarted })
 
-        // Prompt.
         http.promptResponse(id, "   ").assertRejected("invalid_request", "a blank prompt")
         http.promptResponse(id, "go", model = "   ").assertRejected("invalid_request", "a blank model")
         http.rawPromptResponse(id, """{"prompt": "go"}""").assertRejected("invalid_request", "a missing model")
         http.rawPromptResponse(id, """{"prompt": "go", "model": "m", "reasoningEffort": "ultra"}""")
             .assertRejected("invalid_request", "an unknown reasoning effort")
 
-        // Rename and select-model.
         http.renameResponse(id, "   ").assertRejected("invalid_request", "a blank title")
         http.selectModelResponse(id, "   ").assertRejected("invalid_request", "a blank model selection")
         http.rawSelectModelResponse(id, """{"reasoningEffort": "high"}""")
             .assertRejected("invalid_request", "a selection without a model")
 
-        // Rewind: the first event, a preserved event, an absent ID, malformed bodies.
         http.rewindResponse(id, before.first().id).assertRejected("invalid_request", "naming the session_started")
         http.renameSession(id, "Renamed, then named as a cut point")
         val renamed = http.streamEvents(id, afterSequenceId = before.last().id) { it is AgentEvent.SessionRenamed }
@@ -149,11 +131,9 @@ class SessionSurfaceLiveTest {
             http.rawRewindResponse(id, body).assertRejected("invalid_request", "rewind body '$body'")
         }
 
-        // Workspace parameter.
         http.sessionsResponse(workspace = null).assertRejected("invalid_request", "an unscoped listing")
         http.sessionsResponse(workspace = "relative/path").assertRejected("invalid_request", "a relative workspace")
 
-        // Nothing above touched the log beyond the one rename this case made.
         val after = http.streamEvents(id, until = { it is AgentEvent.SessionRenamed })
         assertEquals(before + renamed, after, "a rejected request leaves the log as it was")
         assertEquals("Renamed, then named as a cut point", http.sessionInfo(id).title)
@@ -208,7 +188,6 @@ class SessionSurfaceLiveTest {
 
         for ((id, expectedStatus) in listOf(live to SessionStatus.IDLE, closed to SessionStatus.CLOSED)) {
             coroutineScope {
-                // Subscribed first — dormant or not — so the tail has to serve the appended events.
                 val watcher = async { http.streamEvents(id, until = { it is AgentEvent.ModelSelected }) }
                 val renamed = http.renameSession(id, "Chosen title")
                 assertEquals("Chosen title", renamed.title)
@@ -236,17 +215,11 @@ class SessionSurfaceLiveTest {
         "Privilege is reported while attached and null when closed; corrupt stored state is loud, never poison"
     )
     fun privilegeAndCorruptState() = withLiveServer { http ->
-        // Which posture the host grants is its business — CI, a root
-        // container and a NOPASSWD dev box all differ — so only its
-        // presence is asserted, never its value.
+
         val workspace = localWorkspace(tempDir, "shared")
         val healthy = http.createSession(harnessPath(tempDir), workspace)
         assertNotNull(healthy.privilege, "a built environment must report the posture it found")
 
-        // One workspace, so the corrupt session is inside the very listing
-        // the healthy one is read from: skipped for being unreadable, not
-        // for being somebody else's. Scoped to a session this case owns, so
-        // the shared process stays sound for every other case.
         val corrupt = http.createSession(harnessPath(tempDir), workspace)
         sharedLiveServer.dataDir.resolve("sessions/${corrupt.id}/session.json").writeText("not json")
         try {
@@ -255,9 +228,6 @@ class SessionSurfaceLiveTest {
             assertEquals(HttpStatusCode.InternalServerError, lookup.status)
             assertEquals("corrupt_session", lookup.body<ApiError>().code)
         } finally {
-            // Unconditionally, so a failed assertion cannot leave the corrupt
-            // session to the cases sharing this process — and this is the
-            // assertion that unreadable metadata is still deletable.
             http.deleteSession(corrupt.id)
         }
         assertEquals(HttpStatusCode.NotFound, http.sessionInfoResponse(corrupt.id).status)
@@ -272,7 +242,7 @@ class SessionSurfaceLiveTest {
         val body = response.bodyAsText()
 
         assertEquals(HttpStatusCode.OK, response.status, body)
-        // ai-router's shape survives the proxy: envelope plus snake_case item fields.
+
         assertContains(body, "\"provider_type\"")
         val served = response.body<ModelList>()
         assertEquals("list", served.`object`)
@@ -294,7 +264,7 @@ class SessionSurfaceLiveTest {
         "Templates: PUT lands as a file, the list sorts, GET reads back, a blank body is 400, a missing name 404"
     )
     fun templates() = withLiveServer { http ->
-        // Names unique to this case: the shared process's template store is global.
+
         val review = "surface-review"
         val bugfix = "surface-bugfix"
         val file = sharedLiveServer.dataDir.resolve("templates/$review.md")
@@ -320,7 +290,6 @@ class SessionSurfaceLiveTest {
     }
 }
 
-/** Asserts a 400 carrying [code], the message naming [names] when given; [what] says which rejection this is. */
 private suspend fun HttpResponse.assertRejected(code: String, what: String, names: String? = null) {
     assertEquals(HttpStatusCode.BadRequest, status, "$what: ${bodyAsText()}")
     val error = body<ApiError>()

@@ -11,13 +11,6 @@ import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
-/**
- * Commands against a run in flight, with the window opened by the run itself:
- * a dictated `sleep 5` tool call, waited for rather than raced, so every
- * command below lands mid-execution wherever the model's latency happens to
- * be. Stop and close differ on purpose — a stop records `stopped` and keeps
- * the tree attached; a close aborts and leaves the log to repair on reload.
- */
 class RunControlLiveTest {
 
     @TempDir
@@ -53,11 +46,10 @@ class RunControlLiveTest {
             events.take(beforeGuards.size),
             "the guards left the log as it was: no rewind announcement, no cut",
         )
-        // Idle, not closed: the runtime stayed attached, so nothing is rebuilt.
+
         http.awaitRunEnd(id)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status)
 
-        // Promptable at once, over the same collaborators.
         assertEquals(SessionStatus.RUNNING, http.prompt(id, RESUME_PROMPT).status)
         val resumed = assertIs<AgentEvent.RunFinished>(
             http.streamEvents(id, afterSequenceId = events.last().id).last().event,
@@ -75,9 +67,6 @@ class RunControlLiveTest {
 
         assertEquals(SessionStatus.CLOSED, http.closeSession(id).status)
 
-        // The aborted run's repaired log reloads into a usable session. The
-        // prompt retires the abandoned command rather than leaving the model
-        // to decide whether to try it again.
         assertEquals(SessionStatus.RUNNING, http.prompt(id, RESUME_PROMPT).status)
         val events = http.streamEvents(id)
 
@@ -93,10 +82,8 @@ class RunControlLiveTest {
     }
 }
 
-/** A prompt whose tool call is the slow part, so a command awaiting that call lands mid-execution. */
 private const val SLOW_PROMPT: String =
     "Using the bash tool, run the command 'sleep 5 && echo done' and then report what it printed."
 
-/** Picks up after a cut-short command with work of its own, so the next run is short. */
 private const val RESUME_PROMPT: String =
     "That command is no longer needed. Without using any tools, tell me what two plus two is."

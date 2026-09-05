@@ -12,14 +12,6 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/**
- * Both ways an image reaches the model, end to end over the server: a
- * markdown image link in the prompt becomes a `run_started` attachment, and
- * the `view_image` tool's result rides `tool_call_finished.media`. Each
- * word exists nowhere in text, so it reaches the answer only if the picture
- * itself reached the model's eyes. A link that resolves to nothing stays
- * plain prompt text, silently.
- */
 class VisionLiveTest {
 
     @TempDir
@@ -71,6 +63,5 @@ class VisionLiveTest {
     }
 }
 
-/** Words only vision can recover — never written to any file as text. */
 private const val PROMPT_WORD: String = "QUUXLE"
 private const val TOOL_WORD: String = "XYZZY"
