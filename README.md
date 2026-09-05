@@ -96,7 +96,10 @@ session's workspace folder — there is no isolation layer and no container
 mode. Where isolation is wanted (a benchmark harness, a cloud runner), the
 boundary is a container the embedder owns, with the whole stack running
 inside it: from in there the same local execution covers everything, and
-the container's teardown reaps whatever a run leaked.
+the container's teardown reaps whatever a run leaked. Give that container a
+reaping pid 1 (`docker run --init`, or `init: true` in compose): background
+processes a run leaves behind are reparented to pid 1 and, once they exit,
+stay zombies until it reaps them — `sleep infinity` as pid 1 never does.
 
 ## Agent server
 
