@@ -98,7 +98,7 @@ public sealed interface AgentEvent {
 
             internal companion object {
 
-                fun from(failure: Throwable): Error {
+                fun from(failure: Exception): Error {
                     val routerFailure = failure as? AiRouterException
                     return Error(
                         message = failure.message?.takeUnless { it.isBlank() } ?: failure::class.java.name,

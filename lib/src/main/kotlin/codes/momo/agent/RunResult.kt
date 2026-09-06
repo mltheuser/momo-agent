@@ -20,7 +20,7 @@ public data class RunResult(
 
     val elapsed: Duration,
 
-    val error: Throwable?,
+    val error: Exception?,
 ) {
 
     @Serializable

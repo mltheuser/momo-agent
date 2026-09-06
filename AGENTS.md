@@ -21,7 +21,7 @@ Map of the code: [docs/architecture.md](docs/architecture.md).
 - Narrow platform support is a declared invariant; never work around it in code ([docs/execution-environment.md](docs/execution-environment.md)).
 - The code carries almost no comments. Contracts and rationale live in `docs/`; a comment is allowed only for a non-obvious local hazard that a reader of the line would otherwise undo. No KDoc, no planning-doc or issue references.
 - Control characters in source are written as visible escapes (`\u0007`), never raw bytes.
-- In `Agent.executeRun` the `Exception` and `Throwable` catch arms stay separate. Merging them converts a failed JVM into a run that merely errored: a non-`Exception` throwable is rethrown after the `run_finished` event is emitted.
+- A run catches `Exception`, never `Throwable`: a JVM `Error` propagates and leaves the run without a `run_finished`.
 
 ## Vocabulary
 

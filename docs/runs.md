@@ -37,10 +37,11 @@ cap: 5 MiB.
 | `timeout` | Wall-clock budget spent. |
 | `error` | An LLM call failed terminally. `error` carries `message`, and `type`/`statusCode` when ai-router reported them. Retryable. |
 
-A run cut short by close, delete or server shutdown has no `run_finished`; the
-log ends mid-run and the session's `status` is the indicator. Transient LLM
-failures (429, 5xx, connection errors) are retried automatically with backoffs
-of 5 s, 1 min and 5 min; each retry logs `llm_call_retried`.
+A run cut short by close, delete, server shutdown or a JVM error has no
+`run_finished`; the log ends mid-run and the session's `status` is the
+indicator. Transient LLM failures (429, 5xx, connection errors) are retried
+automatically with backoffs of 5 s, 1 min and 5 min; each retry logs
+`llm_call_retried`.
 
 ## Stop
 

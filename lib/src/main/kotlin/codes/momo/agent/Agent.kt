@@ -157,7 +157,6 @@ public class Agent internal constructor(
             history += userMessage(text, attachments)
         }
 
-        var fatal: Throwable? = null
         var status: RunResult.Status? = null
         try {
             emitRunOpening(text, run.settings, attachments)
@@ -169,11 +168,6 @@ public class Agent internal constructor(
             status = run.decided ?: RunResult.Status.STOPPED
         } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
             run.failure = failure
-            status = RunResult.Status.ERROR
-        } catch (@Suppress("TooGenericExceptionCaught") raised: Throwable) {
-            // Non-Exception throwables (a failed JVM) are rethrown after the RunFinished is emitted; keep the split.
-            run.failure = raised
-            fatal = raised
             status = RunResult.Status.ERROR
         } finally {
             currentRun = null
@@ -195,12 +189,8 @@ public class Agent internal constructor(
             } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
             }
         }
-        if (fatal == null) {
-            emitter.emitRunFinished(result)
-            return result
-        }
-        emitter.emitRunFinishedUnder(fatal, result)
-        throw fatal
+        emitter.emitRunFinished(result)
+        return result
     }
 
     private suspend fun runLoop(run: RunState): RunResult.Status {
@@ -367,7 +357,7 @@ public class Agent internal constructor(
         var turnsUsed: Int = 0
         var usage: ChatUsage = ZERO_USAGE
         var finalMessage: String? = null
-        var failure: Throwable? = null
+        var failure: Exception? = null
 
         val startedCallIds: MutableSet<String> = mutableSetOf()
 
@@ -440,16 +430,6 @@ private fun AgentEventEmitter.emitRunFinished(result: RunResult) {
             elapsed = result.elapsed,
             error = result.error?.let(AgentEvent.RunFinished.Error::from),
         )
-    }
-}
-
-private fun AgentEventEmitter.emitRunFinishedUnder(fatal: Throwable, result: RunResult) {
-    try {
-        emitRunFinished(result)
-    } catch (@Suppress("TooGenericExceptionCaught") emitFailure: Throwable) {
-        if (emitFailure !== fatal) {
-            fatal.addSuppressed(emitFailure)
-        }
     }
 }
 
