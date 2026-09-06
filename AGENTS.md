@@ -21,7 +21,6 @@ Map of the code: [docs/architecture.md](docs/architecture.md).
 - Narrow platform support is a declared invariant; never work around it in code ([docs/execution-environment.md](docs/execution-environment.md)).
 - The code carries almost no comments. Contracts and rationale live in `docs/`; a comment is allowed only for a non-obvious local hazard that a reader of the line would otherwise undo. No KDoc, no planning-doc or issue references.
 - Control characters in source are written as visible escapes (`\u0007`), never raw bytes.
-- A run catches `Exception`, never `Throwable`: a JVM `Error` propagates and leaves the run without a `run_finished`.
 
 ## Vocabulary
 
@@ -33,8 +32,6 @@ These four name different things. Never swap them.
 | stop | The user's run-scoped command. Records a `stopped` outcome. |
 | rewind | Cutting the stored log back to an earlier event. Never `revert` or `reverse`. |
 | retry | Cutting a failed run's failure tail and resuming it in place (a rewind plus `Agent.retry`). |
-
-`SubagentTreeLiveTest`'s stop cascade pins stop vs. abort: both members end `STOPPED` and stay.
 
 ## Persisted format
 

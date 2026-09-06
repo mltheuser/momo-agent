@@ -146,6 +146,8 @@ public class Agent internal constructor(
 
     public suspend fun stop() {
         val run = currentRun ?: return
+        // The cause is what makes this a stop, not an abort: every run cancelled by it, child runs the loop is
+        // awaiting included, records STOPPED and stays promptable. A cancel without it records nothing.
         run.loop.cancel(RunStoppedException())
         run.ended.join()
     }
@@ -167,6 +169,7 @@ public class Agent internal constructor(
             }
             status = run.decided ?: RunResult.Status.STOPPED
         } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
+            // Exception, never Throwable: a JVM Error propagates and leaves the run without a run_finished.
             run.failure = failure
             status = RunResult.Status.ERROR
         } finally {
