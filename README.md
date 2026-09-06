@@ -22,7 +22,7 @@ and a router running on `localhost:8787`. Details in [docs/building.md](docs/bui
 ./gradlew :server:run --args="--port=8420"
 
 curl -X POST localhost:8420/v1/sessions -H 'content-type: application/json' \
-  -d "{\"harnessPath\":\"$PWD/lib/examples/coder\",\"environment\":{\"type\":\"local\",\"workspace\":\"/tmp/work\"}}"
+  -d "{\"harnessPath\":\"$PWD/lib/examples/coder\",\"workspace\":\"/tmp/work\"}"
 ```
 
 `./gradlew build` also runs the live test suite. It needs the running router

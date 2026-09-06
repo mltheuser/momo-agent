@@ -39,7 +39,7 @@ internal sealed interface SessionMetadata {
     @SerialName("root")
     data class Root(
         val harnessPath: String,
-        val environment: EnvironmentSpec,
+        val workspace: String,
     ) : SessionMetadata
 
     @Serializable

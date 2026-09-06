@@ -40,7 +40,7 @@ import kotlinx.serialization.json.Json
 internal data class CreateSessionRequest(
 
     val harnessPath: String,
-    val environment: EnvironmentSpec,
+    val workspace: String,
 
     val title: String? = null,
 )
@@ -140,7 +140,7 @@ private fun Route.sessionRoutes(registry: SessionRegistry) {
         changeStreamRoute(registry)
         post {
             val request = call.receive<CreateSessionRequest>()
-            val info = registry.create(request.harnessPath, request.environment, request.title)
+            val info = registry.create(request.harnessPath, request.workspace, request.title)
             call.respond(HttpStatusCode.Created, info)
         }
         get {

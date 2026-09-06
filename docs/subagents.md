@@ -35,7 +35,7 @@ spawn is announced.
 | ------ | --------- |
 | Discovery | The parent's `subagent_spawned` event: `sessionId`, `subagentType`, `modelId`, `reasoningEffort`. |
 | Listing | `GET /v1/sessions` omits children. Fetch by ID. |
-| Info | `parent` set; `environment` is the root's; `harnessPath` resolved through the spawn chain. |
+| Info | `parent` set; `workspace` is the root's; `harnessPath` resolved through the spawn chain. |
 | Prompt | A human may prompt an idle child directly. It uses only that prompt's settings. Running child: `409`. |
 | Workspace scope | A child is in scope exactly when its root is. |
 | `modelSelection` | Falls back to the spawn's pin when the child's own log names none. |

@@ -43,7 +43,6 @@ Tools available to a harness: `bash`, `view_image`, `spawn_subagent`, `prompt_su
 | `SessionInfo.kt` | The response model and the read functions deriving it from a log. |
 | `RewindPlan.kt`, `RetryPlan.kt` | Pure log analysis for the rewind cascade and the retry cut. |
 | `WorkspaceScope.kt` | The `?workspace=` parameter and its guard. |
-| `EnvironmentSpec.kt` | The `{"type": "local", "workspace": ...}` union. |
 
 ## The event log
 

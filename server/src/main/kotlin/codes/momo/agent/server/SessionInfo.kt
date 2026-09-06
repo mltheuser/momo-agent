@@ -14,7 +14,7 @@ internal data class SessionInfo(
     val parent: String?,
     val title: String,
     val harnessPath: String,
-    val environment: EnvironmentSpec,
+    val workspace: String,
 
     val privilege: Privilege?,
     val status: SessionStatus,

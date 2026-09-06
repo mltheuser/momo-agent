@@ -51,12 +51,12 @@ class SubagentTreeLiveTest {
         val child = http.sessionInfo(spawn.sessionId)
         assertEquals(root.id, child.parent, "the child names its parent")
         assertEquals(oracle.toRealPath().toString(), child.harnessPath, "a typed child runs the referenced folder")
-        assertEquals(root.environment, child.environment, "the child works in its root's workspace")
+        assertEquals(root.workspace, child.workspace, "the child works in its root's workspace")
         assertEquals(ModelSelection(liveChatModel), child.modelSelection, "the child ran the model its parent did")
         assertEquals(SessionStatus.IDLE, child.status)
         assertEquals(
             listOf(root.id),
-            http.sessions(root.environment).map { it.id }.filter { it == root.id || it == spawn.sessionId },
+            http.sessions(root.workspace).map { it.id }.filter { it == root.id || it == spawn.sessionId },
             "the listing holds roots only: a child is reached through its parent's log",
         )
 

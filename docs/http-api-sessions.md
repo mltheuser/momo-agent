@@ -2,7 +2,7 @@
 
 The `/v1/sessions` routes: paths, bodies, response fields, status and error codes.
 Streams, models and templates are in [http-api-streams.md](http-api-streams.md).
-Source: `server/.../Api.kt`, `SessionInfo.kt`, `EnvironmentSpec.kt`.
+Source: `server/.../Api.kt`, `SessionInfo.kt`, `WorkspaceScope.kt`.
 
 ## Routes
 
@@ -29,12 +29,12 @@ prompt, stop, retry and rewind do is in [runs.md](runs.md).
 ## Create body
 
 ```json
-{"harnessPath": "<server-local dir>", "environment": {"type": "local", "workspace": "<absolute dir>"}, "title": "..."}
+{"harnessPath": "<server-local dir>", "workspace": "<absolute dir>", "title": "..."}
 ```
 
+- `workspace` is the folder the agent's commands run in; it must exist.
 - `title` is optional; default is the harness folder's name.
-- `local` is the only environment type.
-- A `privilege` key anywhere is `400 invalid_request`; privilege is discovered, not chosen.
+- Any other key (`privilege` included) is `400 invalid_request`; privilege is discovered, not chosen.
 
 ## Prompt body
 
@@ -50,7 +50,7 @@ prompt, stop, retry and rewind do is in [runs.md](runs.md).
 | `parent` | string? | Parent session ID; `null` for a root. |
 | `title` | string | Latest rename, else the creation title. |
 | `harnessPath` | string | Folder the session's own harness runs from. For a child: resolved via the spawn chain, falling back to the root's stored path. |
-| `environment` | object | `{"type": "local", "workspace": ...}`. A child reports its root's. |
+| `workspace` | string | Folder the session works in. A child reports its root's. |
 | `privilege` | string? | `root`, `passwordless_sudo`, `unprivileged`; `null` when `closed`. |
 | `status` | string | `running`, `idle`, `closed`. Derived, never stored. |
 | `createdAtMillis` | long | `session_started` timestamp. |

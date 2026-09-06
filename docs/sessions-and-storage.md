@@ -59,17 +59,17 @@ is written into the workspace.
 
 | `type` | Fields | Used for |
 | ------ | ------ | -------- |
-| `root` | `harnessPath`, `environment` (`{"type": "local", "workspace"}`) | Rebuilding the runtime; the tree's workspace scope |
+| `root` | `harnessPath`, `workspace` | Rebuilding the runtime; the tree's workspace scope |
 | `child` | `parent` (session ID) | Its place in the tree |
 
-A child's harness and environment resolve through its root.
+A child's harness and workspace resolve through its root.
 
 ## Persisted-format contract
 
 Both files are read strictly. An unknown key, variant or serial name fails the
 read and surfaces the session as corrupt (`500 corrupt_session`).
 
-- The schema is `AgentEvent` (with `RunResult.Status`, `ReasoningEffort`) and `SessionMetadata` (with `EnvironmentSpec`).
+- The schema is `AgentEvent` (with `RunResult.Status`, `ReasoningEffort`) and `SessionMetadata`.
 - Any change to a `@SerialName`, a variant name or a field is a break with every stored session. Make it knowingly, with a wipe or a migration.
 - Optional fields (`depth`, `model`, `attachments`, `error`, `subagentType`, `media`) default when absent.
 - `Privilege` is a response contract only; it is never stored.

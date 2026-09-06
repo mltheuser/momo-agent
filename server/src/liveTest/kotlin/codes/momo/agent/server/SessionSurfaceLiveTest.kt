@@ -47,7 +47,7 @@ class SessionSurfaceLiveTest {
             assertTrue(first.id.isNotBlank())
             assertEquals("harness", first.title, "the title defaults to the harness folder's name")
             assertEquals(harness, first.harnessPath)
-            assertEquals(workspace, first.environment)
+            assertEquals(workspace, first.workspace)
             assertEquals(SessionStatus.IDLE, first.status)
             assertNull(first.parent, "a root has no parent")
             assertNull(first.lastRun, "no run happened yet")
@@ -95,17 +95,11 @@ class SessionSurfaceLiveTest {
         val broken = writeHarness(tempDir.resolve("broken"), subagents = mapOf("helper" to "../nowhere")).toString()
         http.createSessionResponse(CreateSessionRequest(broken, workspace))
             .assertRejected("invalid_harness", "a broken subagent reference", names = "'helper'")
-        http.createSessionResponse(CreateSessionRequest(harness, EnvironmentSpec.Local(missing)))
+        http.createSessionResponse(CreateSessionRequest(harness, missing))
             .assertRejected("invalid_environment", "a missing workspace folder", names = missing)
         http.rawCreateSessionResponse(
-            """{"harnessPath": ${Json.encodeToString(
-                harness
-            )}, "environment": {"type": "martian", "workspace": "/tmp"}}""",
-        ).assertRejected("invalid_request", "an unknown environment type")
-
-        http.rawCreateSessionResponse(
-            """{"harnessPath": ${Json.encodeToString(harness)}, "environment": {"type": "local", """ +
-                """"workspace": ${Json.encodeToString(workspace.workspace)}, "privilege": "passwordless_sudo"}}""",
+            """{"harnessPath": ${Json.encodeToString(harness)}, "workspace": ${Json.encodeToString(workspace)}, """ +
+                """"privilege": "passwordless_sudo"}""",
         ).assertRejected("invalid_request", "a declared privilege")
 
         val id = http.createSession(harness, workspace).id
@@ -166,12 +160,12 @@ class SessionSurfaceLiveTest {
         val inA = http.createSession(harnessPath(tempDir), projectA).id
         val inB = http.createSession(harnessPath(tempDir), projectB).id
         assertEquals(listOf(inA), http.sessions(projectA).map { it.id }, "the listing is scoped to its workspace")
-        val foreign = http.sessionInfoResponse(inB, projectA.workspace)
+        val foreign = http.sessionInfoResponse(inB, projectA)
         assertEquals(HttpStatusCode.NotFound, foreign.status)
         assertEquals("unknown_session", foreign.body<ApiError>().code, "a foreign session must look nonexistent")
-        assertEquals(HttpStatusCode.OK, http.sessionInfoResponse(inA, projectA.workspace).status, "own scope")
+        assertEquals(HttpStatusCode.OK, http.sessionInfoResponse(inA, projectA).status, "own scope")
 
-        listOf("${projectA.workspace}/", "${projectA.workspace}/.", "${projectA.workspace}/../scoped-a")
+        listOf("$projectA/", "$projectA/.", "$projectA/../scoped-a")
             .forEach { spelling ->
                 assertEquals(listOf(inA), http.sessions(spelling).map { it.id }, "spelling: $spelling")
             }

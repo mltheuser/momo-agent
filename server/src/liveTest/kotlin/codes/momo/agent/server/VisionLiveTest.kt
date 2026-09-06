@@ -21,8 +21,8 @@ class VisionLiveTest {
     @DisplayName("A prompt image link attaches, view_image carries media, and both planted words come back")
     fun promptAttachmentAndViewImage() = withLiveServer { http ->
         val workspace = localWorkspace(tempDir)
-        writeWordImage(Path.of(workspace.workspace).resolve("a.png"), PROMPT_WORD)
-        writeWordImage(Path.of(workspace.workspace).resolve("b.png"), TOOL_WORD)
+        writeWordImage(Path.of(workspace).resolve("a.png"), PROMPT_WORD)
+        writeWordImage(Path.of(workspace).resolve("b.png"), TOOL_WORD)
         val harness = writeHarness(
             tempDir.resolve("harness"),
             tools = listOf("bash", "view_image"),

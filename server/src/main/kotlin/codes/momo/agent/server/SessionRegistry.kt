@@ -64,20 +64,20 @@ internal class SessionRegistry(
         store.sessionIds().forEach { entries[it] = SessionEntry() }
     }
 
-    suspend fun create(harnessPath: String, spec: EnvironmentSpec, title: String? = null): SessionInfo =
+    suspend fun create(harnessPath: String, workspace: String, title: String? = null): SessionInfo =
         announcingChange {
             withContext(Dispatchers.IO) {
                 val path = Path.of(harnessPath)
                 val harness = Harness.load(path)
                 val eventLog = store.eventLogForNewSession()
-                val environment = spec.build()
+                val environment = ExecutionEnvironment(Path.of(workspace))
                 val entry = SessionEntry()
                 val logs = ConcurrentHashMap<String, PersistedEventLog>()
                 val listener = TreeMemberListener(logs, entry, eventLog, sessionId = null)
                 val agent = Agent(harness, client, environment, title ?: path.fileName.toString(), listener)
                 logs[agent.sessionId] = eventLog
                 try {
-                    store.writeMetadata(agent.sessionId, SessionMetadata.Root(harnessPath, spec))
+                    store.writeMetadata(agent.sessionId, SessionMetadata.Root(harnessPath, workspace))
                 } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
                     runCatching { eventLog.close() }
                     runCatching { store.delete(agent.sessionId) }
@@ -96,7 +96,7 @@ internal class SessionRegistry(
                 val metadata = withContext(Dispatchers.IO) { store.readMetadata(id) }
                 when {
                     metadata !is SessionMetadata.Root -> null
-                    normalizedWorkspace(metadata.environment.workspace) != scope -> null
+                    normalizedWorkspace(metadata.workspace) != scope -> null
                     else -> info(id)
                 }
             } catch (_: UnknownSessionException) {
@@ -124,7 +124,7 @@ internal class SessionRegistry(
             parent = position.path.dropLast(1).lastOrNull(),
             title = events.sessionTitle(),
             harnessPath = resolvedHarnessPath(position),
-            environment = position.root.environment,
+            workspace = position.root.workspace,
             privilege = runtime?.environment?.privilege,
             status = when {
                 runtime == null -> SessionStatus.CLOSED
@@ -410,7 +410,7 @@ internal class SessionRegistry(
         } catch (_: CorruptSessionException) {
             throw UnknownSessionException(id)
         }
-        if (normalizedWorkspace(root.environment.workspace) != normalizedWorkspace(workspace)) {
+        if (normalizedWorkspace(root.workspace) != normalizedWorkspace(workspace)) {
             throw UnknownSessionException(id)
         }
     }
@@ -440,7 +440,7 @@ internal class SessionRegistry(
             throw UnknownSessionException(id)
         }
         val harness = Harness.load(Path.of(metadata.harnessPath))
-        loadTree(entry, id, harness, metadata.environment.build())
+        loadTree(entry, id, harness, ExecutionEnvironment(Path.of(metadata.workspace)))
     }
 
     private fun loadTree(

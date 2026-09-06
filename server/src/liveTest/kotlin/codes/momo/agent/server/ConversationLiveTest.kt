@@ -27,7 +27,7 @@ class ConversationLiveTest {
     @DisplayName("Create, prompt, stream, complete: the token comes out of the workspace, and the next run recalls it")
     fun theFullPathAndAContinuation() = withLiveServer { http ->
         val workspace = localWorkspace(tempDir)
-        Path.of(workspace.workspace).resolve("secret.txt").writeText("$TOKEN\n")
+        Path.of(workspace).resolve("secret.txt").writeText("$TOKEN\n")
         val session = http.createSession(liveHarness(tempDir), workspace)
         assertEquals(SessionStatus.IDLE, session.status)
 
@@ -66,7 +66,7 @@ class ConversationLiveTest {
         assertEquals(finished.turnsUsed, info.lastRun?.turnsUsed, "lastRun reports the completed run's consumption")
         assertEquals(ModelSelection(liveChatModel), info.modelSelection, "the run's model is the shown selection")
 
-        Path.of(workspace.workspace).resolve("secret.txt").toFile().delete()
+        Path.of(workspace).resolve("secret.txt").toFile().delete()
         http.prompt(session.id, "Without using any tools, repeat the exact token you read earlier.")
         val recalled = assertIs<AgentEvent.RunFinished>(
             http.streamEvents(session.id, afterSequenceId = events.last().id).last().event,

@@ -30,7 +30,7 @@ class PersistenceLiveTest {
         val dataDir = tempDir.resolve("data")
         val harness = liveHarness(tempDir)
         val workspace = localWorkspace(tempDir)
-        val tokenFile = Path.of(workspace.workspace).resolve(TOKEN_FILE)
+        val tokenFile = Path.of(workspace).resolve(TOKEN_FILE)
         tokenFile.writeText("$TOKEN\n")
 
         val before = LiveServerProcess.start(dataDir).use { server ->
@@ -108,7 +108,7 @@ private data class FirstProcessOutcome(val id: String, val lastSequenceId: Long,
 
 private suspend fun HttpClient.readTheTokenAndDecorate(
     harness: String,
-    workspace: EnvironmentSpec.Local,
+    workspace: String,
 ): FirstProcessOutcome {
     val id = createSession(harness, workspace).id
     prompt(id, "Read the file $TOKEN_FILE in the workspace with the bash tool and tell me the token it contains.")
@@ -125,7 +125,7 @@ private suspend fun HttpClient.readTheTokenAndDecorate(
     return FirstProcessOutcome(id, lastStored, finished.turnsUsed)
 }
 
-private suspend fun HttpClient.recallTheToken(before: FirstProcessOutcome, workspace: EnvironmentSpec) {
+private suspend fun HttpClient.recallTheToken(before: FirstProcessOutcome, workspace: String) {
     assertTrue(
         sessions(workspace).any { it.id == before.id },
         "the restarted server must still list the stored session",

@@ -43,8 +43,8 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
-internal fun localWorkspace(tempDir: Path, name: String = "workspace"): EnvironmentSpec.Local =
-    EnvironmentSpec.Local(tempDir.resolve(name).createDirectories().toString())
+internal fun localWorkspace(tempDir: Path, name: String = "workspace"): String =
+    tempDir.resolve(name).createDirectories().toString()
 
 internal fun serverHttpClient(baseUrl: String, wait: Duration): HttpClient = HttpClient(CIO) {
     install(ContentNegotiation) {
@@ -65,10 +65,10 @@ internal val HttpClient.waitCeiling: Duration
 
 internal suspend fun HttpClient.createSession(
     harnessPath: String,
-    environment: EnvironmentSpec,
+    workspace: String,
     title: String? = null,
 ): SessionInfo {
-    val response = createSessionResponse(CreateSessionRequest(harnessPath, environment, title))
+    val response = createSessionResponse(CreateSessionRequest(harnessPath, workspace, title))
     assertEquals(HttpStatusCode.Created, response.status, response.bodyAsText())
     return response.body()
 }
@@ -118,9 +118,6 @@ internal suspend fun HttpClient.sessionInfoResponse(sessionId: String, workspace
     get("/v1/sessions/$sessionId") {
         if (workspace != null) parameter("workspace", workspace)
     }
-
-internal suspend fun HttpClient.sessions(workspace: EnvironmentSpec): List<SessionInfo> =
-    sessions(workspace.workspace)
 
 internal suspend fun HttpClient.sessions(workspace: String): List<SessionInfo> =
     sessionsResponse(workspace).body()
