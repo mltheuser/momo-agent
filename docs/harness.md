@@ -1,6 +1,6 @@
 # Harness format
 
-How to write a harness folder, the unit a session runs.
+How to write a harness folder.
 
 ## Folder contents
 
@@ -9,7 +9,7 @@ How to write a harness folder, the unit a session runs.
 | `harness.yaml` | Manifest: tools and subagent types. |
 | `instructions.md` | System prompt text, passed to the model verbatim. |
 
-Both files are required. Reference folders: `lib/examples/coder/`, `lib/examples/teacher/`.
+Both files are required.
 
 ## `harness.yaml` keys
 
@@ -26,29 +26,10 @@ subagents:
     description: An agent like this one, for delegating subtasks.
 ```
 
-| Key | Required | Rules |
-| --- | -------- | ----- |
-| `tools` | yes | At least one name. No blanks, whitespace or duplicates. Available: `bash`, `view_image`. |
-| `subagents` | no | Map of type name to entry. A non-empty map offers the agent `spawn_subagent` and `prompt_subagent`. |
-| `subagents.<type>.path` | yes | Another harness folder, relative to this folder. Absolute paths are rejected. `.` references the folder itself. |
-| `subagents.<type>.description` | yes | Non-blank one-liner the model sees when choosing a type. |
+Unknown keys are rejected (kaml strict mode). Declaring `subagents` automatically adds the `spawn_subagent` and `prompt_subagent` tools.
 
-Unknown keys are rejected (kaml strict mode). There is no `model` key: a run's
-model comes with each prompt. `spawn_subagent` and `prompt_subagent` are not
-listed under `tools`; declaring `subagents` offers them.
-
-## Loading rules
-
-`Harness.load(folder)` (`lib/.../harness/HarnessLoader.kt`):
-
-- Loads every referenced folder recursively, each folder once by canonical path. Self-references and cycles terminate.
-- A broken referenced harness fails the whole load; the message names the referencing manifest and type.
-- Every failure is a `HarnessValidationException` naming the offending file. The server maps it to `400 invalid_harness`.
-- A tool name the library does not provide fails at agent construction, not at first use.
 
 ## What a harness does not control
 
-- The model and reasoning effort: set per prompt ([runs.md](runs.md)).
-- Budgets (turns, wall clock, tool timeout, nesting depth): library-fixed ([configuration.md](configuration.md)).
+- The model and reasoning effort: set per prompt.
 - Command privileges: discovered from the host ([execution-environment.md](execution-environment.md)).
-- Subagent tools at nesting depth 5: withheld regardless of the manifest ([subagents.md](subagents.md)).

@@ -1,81 +1,52 @@
 # Testing
 
-What a test is in this repo, what exists, how to run it, and what a fresh
-checkout needs.
+## Live tests over unit tests
 
-## The rule
+The default test is a live end-to-end test: it starts the packaged server as
+an OS process, talks to it over HTTP, and lets a
+real model answer through a real ai-router. Nothing is mocked.
 
-A test drives the packaged server as an OS process over its real HTTP API,
-against the real ai-router and a real cloud model. Its assertion holds for
-any competent model. Nothing is mocked in code.
+One test walks one realistic user flow and pins several facts; each assertion message names the fact.
 
-Two exceptions:
+Write a unit test only for pure logic over in-memory data that a live test
+cannot stage cheaply.
 
-- Unit tests in `server/src/test`: pure logic over in-memory data, no process, router or model. Only for cases a live test cannot stage cheaply. Current example: `RewindPlanTest`, the rewind cascade over a stored log.
-- `FaultyRouter` (`server/src/liveTest/FaultyRouter.kt`): a network stand-in for router failures. Scope below.
-
-| Suite | Source set | In `build`? | Per-test timeout |
-| ----- | ---------- | ----------- | ---------------- |
-| Live suite | `server/src/liveTest` | yes | 15 min |
-| Unit tests | `server/src/test` | yes | 2 min |
-
-The `lib` module has no tests. Lib-only surface (`Agent.load` called directly, `RunResult` as a return value) is untested.
-
-## What the live suite holds itself to
-
-- Never skips. No `assumeTrue` on model non-determinism. A flaky prompt is tightened (dictated commands, distinctive tokens), never its assertion loosened.
-- Assertions key on planted tokens, filesystem side effects, event-log structure and status transitions. Never on model prose.
-- Few rich scenarios along realistic user flows; every assertion message names the fact it pins.
-- An unreachable or wrong-model router fails the run once per JVM, naming the URL, model, offered models and the command that starts a router (`LiveRouter.kt`).
-- The whole suite runs in about 90 s of test time. A new scenario must cover a flow nothing else does.
-
-## `FaultyRouter`
-
-A Ktor `embeddedServer` on a loopback port that a dedicated server process is
-pointed at over `--ai-router-base-url`. It serves a minimal `GET /v1/models`
-and, per `POST /v1/chat/completions`, consumes the next scripted reply (an
-HTTP error in ai-router's envelope, a 200 with a non-JSON body, or a 200 with
-`finish_reason: error`). Once the script is spent it forwards to the live
-router. It never scripts conversations. `RouterFailureLiveTest` is its only
-consumer. The transient case waits out the lib's first backoff (5 s).
-
-## Scenarios
-
-| Class | Model? | Covers |
-| ----- | ------ | ------ |
-| `SessionSurfaceLiveTest` | no | Lifecycle with change-stream signals; 400s and 404s on every route; foreign workspace; rename/select-model live and closed; privilege; corrupt state; `/v1/models`; templates |
-| `ConversationLiveTest` | yes | Create, prompt, stream, complete with a planted token and truncated tool result; continuation; stream replay, fan-out, end on delete |
-| `RunControlLiveTest` | yes | Mid-run 409s (prompt/rewind/retry), stop to `STOPPED` and promptable; close mid-run aborts, next prompt resumes |
-| `FailedRunLiveTest` | short | Unknown model to `ERROR` with the router's 404; `/retry` cuts and resumes; a completed run is not retryable |
-| `RouterFailureLiveTest` | yes | Over `FaultyRouter`: 503 retried then completed; `finish_reason: error`; malformed body |
-| `RewindLiveTest` | yes | Rewind from mid-run and to the first message; promptable at once; deleted turns unknown; parked subscriber told |
-| `SubagentTreeLiveTest` | yes | Child becomes a session (typed harness, parent link, rename, human prompt, deleted by rewind); stopping the parent cascades as a stop, not an abort |
-| `PersistenceLiveTest` | yes | Restart keeps conversation, title and selection; crash mid-run leaves a resumable session |
-| `VisionLiveTest` | yes | Prompt image link becomes a `run_started` attachment; `view_image` carries media |
-
-The suite shares one server process (`LiveServerSupport.kt`). `PersistenceLiveTest` and `RouterFailureLiveTest` start their own.
-
-## Writing a case
-
-- Wait on registry state (`awaitRunEnd` in `ServerApiClient`) or a specific event (`streamEvents(until = ...)`), never on the `RunFinished` frame alone and never with a sleep. The server's claim on a run outlives the terminal frame; a command sent on that frame's heels can draw a `409`.
-- Treat the change stream as a doorbell: wrap a mutation in `ChangeStream.signalled(...)` and assert the re-read state. Never count frames.
-- In-flight guards are exercised inside a dictated `sleep 5` tool call, waited for via its `ToolCallStarted`.
-- Shared helpers live once in `server/src/liveTest`: `ServerApiClient`, `LiveServerProcess`, `LiveServerSupport`, `LiveRouter`, `FaultyRouter`, `Harnesses`, `WordImage`. The compilation is `associateWith`-bound to `main` for `internal` access.
-- Known dependency: ai-router's Anthropic provider coalesces consecutive same-role turns. A strict-alternation provider would surface in the rewind case first.
-
-## Running
+## Running live tests
 
 ```sh
-./gradlew build                    # everything; ~80-120 s
-./gradlew :server:liveTest         # live suite alone
-./gradlew :server:test             # unit tests alone; needs no router
-./gradlew :server:liveTest --tests '*RunControlLiveTest.inFlightGuardsThenStop*' --rerun-tasks
+./gradlew :server:liveTest
+./gradlew :server:liveTest --tests '*RunControlLiveTest.inFlightGuardsThenStop*'
 ```
 
-Live results are never cached. Use `--rerun-tasks` for a single case, or a cached green answers instead. Run a suspect case alone, twice.
+## How live tests are structured
 
-## What a fresh checkout needs
+Source set `server/src/liveTest`, compiled against `main` for `internal`
+access to the API's request and response types. A
+test is a plain JUnit 5 class whose methods run inside `withLiveServer`.
 
-1. A current ai-router checkout at the path in `settings.gradle.kts` ([building.md](building.md)).
-2. That router running: `set -a && source .env && set +a && ./bin/ai-router serve` from the checkout.
-3. `AI_ROUTER_ANTHROPIC_API_KEY` in ai-router's `.env`. The default model is a cloud model; a build costs API spend. A local model can be substituted ([configuration.md](configuration.md)); small local models fail planted-token reads.
+The foundation, bottom up:
+
+1. **The router** (`LiveRouter.kt`). Base URL and model come from system properties the Gradle task sets. The first use probes the router; an unreachable or wrong-model router fails every test once per JVM.
+2. **A server process** (`LiveServerProcess.kt`). Starts the installed distribution (`installDist` runs first) as a child process with `--data-dir` and `--ai-router-base-url`, waits for it to listen, and kills it on close.
+3. **The shared server** (`LiveServerSupport.kt`). One process for the whole suite, started lazily on first use over a temp data dir, torn down by a JVM shutdown hook. `withLiveServer { http -> ... }` wraps a test body in `runBlocking` with an HTTP client pointed at it. Tests share the process but each owns only the sessions it creates.
+4. **The API client** (`ServerApiClient.kt`). Extension functions on `HttpClient` speaking the server's API: typed calls that decode responses (`createSession`, `prompt`, `rewindSession`), `*Response` variants returning the raw response for status and error-code assertions, `raw*` variants taking a JSON string for malformed input, and the waits (`awaitRunEnd`, `streamEvents(until = ...)`, `withChangeStream`).
+5. **Fixtures**. `writeHarness` writes a harness folder into the test's `@TempDir`; `localWorkspace` makes a workspace folder there; `WordImage` renders a word into a PNG. `FaultyRouter` is a loopback stand-in for router failures: it scripts HTTP-level replies per request and forwards to the live router once the script is spent. It never scripts model output.
+
+Waiting for a run: use `awaitRunEnd` or `streamEvents(until = ...)`, never a `RunFinished` frame alone and never a sleep. The server's claim on a run outlives the terminal frame, so a command sent on that frame's heels can draw a `409`. Treat the change stream as a doorbell: `ChangeStream.signalled { mutation }` then re-read; never count frames.
+
+Adding a test: one class per user flow, one `@TempDir`, a `@DisplayName` stating the flow. Write the harness, `createSession(harnessPath, localWorkspace(tempDir))`, drive it through the API client, assert on events and `SessionInfo`.
+
+## Running unit tests
+
+```sh
+./gradlew :server:test
+```
+
+Needs no router. Part of `./gradlew build`.
+
+## How unit tests are structured
+
+Source set `server/src/test`, bound to `main` for `internal` access. JUnit 5
+with `kotlin.test` assertions. A test class builds its inputs in memory with
+small factory functions and asserts on the returned value; no process,
+router, filesystem or model.
