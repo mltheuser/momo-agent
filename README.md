@@ -32,7 +32,7 @@ and costs API spend. See [docs/testing.md](docs/testing.md).
 
 | Doc | Read when |
 | --- | --------- |
-| [docs/building.md](docs/building.md) | Setting up the build: composite build, the ai-router clone gotcha, Gradle tasks, lint. |
+| [docs/building.md](docs/building.md) | Setting up the build: composite build, Gradle tasks, lint. |
 | [docs/configuration.md](docs/configuration.md) | Configuring the server (CLI flags, env vars, defaults) or the live suite. |
 | [docs/architecture.md](docs/architecture.md) | Finding your way in the code: modules, packages, key classes, event types. |
 | [docs/harness.md](docs/harness.md) | Writing a harness folder: `harness.yaml` keys and loading rules. |

@@ -12,16 +12,6 @@ needs the checkout even for a plain `./gradlew build`.
 - Keep the checkout current. momo-agent tracks SDK changes made alongside it; a stale checkout fails compilation.
 - The same checkout is the router the live suite talks to. What it needs on top (running router, API key): [testing.md](testing.md).
 
-### Gotcha: a fresh ai-router clone does not build
-
-ai-router's `.gitignore` has a bare `ai-router` pattern without a leading
-slash. git matches it at any depth, so the clone omits `cmd/ai-router/`, the
-directory holding the entry point, and `make build` fails on a missing
-directory.
-
-Fix: recreate `cmd/ai-router/main.go` as `package main` calling
-`cli.Execute()`.
-
 ## Gradle tasks
 
 | Command | Does |
