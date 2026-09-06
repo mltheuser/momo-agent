@@ -57,6 +57,9 @@ internal data class RunStats(
 
 internal fun List<AgentEvent>.sessionStarted(): AgentEvent.SessionStarted = first() as AgentEvent.SessionStarted
 
+internal val AgentEvent.SessionStarted.harnessFolder: String
+    get() = checkNotNull(harnessPath) { "Session $sessionId runs a harness without a folder." }
+
 internal fun List<AgentEvent>.sessionUpdatedAtMillis(): Long = last().timestampMillis
 
 internal fun List<AgentEvent>.sessionTitle(): String =

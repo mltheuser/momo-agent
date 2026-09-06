@@ -455,9 +455,6 @@ internal class SessionRegistry(
     }
 }
 
-private val AgentEvent.SessionStarted.harnessFolder: String
-    get() = checkNotNull(harnessPath) { "Session $sessionId runs a harness without a folder." }
-
 private fun Map<String, SessionEntry>.known(id: String): SessionEntry =
     this[id] ?: throw UnknownSessionException(id)
 
