@@ -99,7 +99,18 @@ public class Agent internal constructor(
 
     init {
         if (session is SessionState.Fresh) {
-            emitter.emit { id, at -> AgentEvent.SessionStarted(id, at, sessionId, title, depth) }
+            emitter.emit { id, at ->
+                AgentEvent.SessionStarted(
+                    sequenceId = id,
+                    timestampMillis = at,
+                    sessionId = sessionId,
+                    title = title,
+                    harnessPath = harness.folder?.toString(),
+                    workspace = environment.workspacePath,
+                    parent = session.parent,
+                    depth = depth,
+                )
+            }
         }
     }
 
@@ -297,7 +308,7 @@ public class Agent internal constructor(
         reasoningEffort: ReasoningEffort?,
     ): Agent {
         val childHarness = harness.subagents.getValue(type).harness
-        val session = SessionState.Fresh(title = name, depth = depth + 1)
+        val session = SessionState.Fresh(title = name, parent = sessionId, depth = depth + 1)
 
         val listener = eventListener.subagentListener(name, session.id)
         emitter.emit { id, at ->

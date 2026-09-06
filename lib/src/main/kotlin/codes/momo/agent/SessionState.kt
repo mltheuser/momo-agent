@@ -21,7 +21,11 @@ internal sealed interface SessionState {
 
     val spawned: Map<String, SpawnedChild>
 
-    class Fresh(override val title: String, override val depth: Int = 0) : SessionState {
+    class Fresh(
+        override val title: String,
+        val parent: String? = null,
+        override val depth: Int = 0,
+    ) : SessionState {
 
         override val id: String = UUID.randomUUID().toString()
 

@@ -55,14 +55,12 @@ internal data class RunStats(
     val elapsed: Duration,
 )
 
-internal fun List<AgentEvent>.sessionCreatedAtMillis(): Long =
-    (first() as AgentEvent.SessionStarted).timestampMillis
+internal fun List<AgentEvent>.sessionStarted(): AgentEvent.SessionStarted = first() as AgentEvent.SessionStarted
 
 internal fun List<AgentEvent>.sessionUpdatedAtMillis(): Long = last().timestampMillis
 
 internal fun List<AgentEvent>.sessionTitle(): String =
-    filterIsInstance<AgentEvent.SessionRenamed>().lastOrNull()?.title
-        ?: (first() as AgentEvent.SessionStarted).title
+    filterIsInstance<AgentEvent.SessionRenamed>().lastOrNull()?.title ?: sessionStarted().title
 
 internal fun List<AgentEvent>.modelSelection(): ModelSelection? =
     asReversed().firstNotNullOfOrNull { event ->

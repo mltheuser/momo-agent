@@ -46,7 +46,7 @@ class SessionSurfaceLiveTest {
             assertNotEquals(first.id, second.id)
             assertTrue(first.id.isNotBlank())
             assertEquals("harness", first.title, "the title defaults to the harness folder's name")
-            assertEquals(harness, first.harnessPath)
+            assertEquals(Path.of(harness).toRealPath().toString(), first.harnessPath, "the canonical folder")
             assertEquals(workspace, first.workspace)
             assertEquals(SessionStatus.IDLE, first.status)
             assertNull(first.parent, "a root has no parent")
@@ -215,7 +215,7 @@ class SessionSurfaceLiveTest {
         assertNotNull(healthy.privilege, "a built environment must report the posture it found")
 
         val corrupt = http.createSession(harnessPath(tempDir), workspace)
-        sharedLiveServer.dataDir.resolve("sessions/${corrupt.id}/session.json").writeText("not json")
+        sharedLiveServer.dataDir.resolve("sessions/${corrupt.id}/events.jsonl").writeText("not json")
         try {
             assertEquals(listOf(healthy.id), http.sessions(workspace).map { it.id }, "the corrupt one is skipped")
             val lookup = http.sessionInfoResponse(corrupt.id)

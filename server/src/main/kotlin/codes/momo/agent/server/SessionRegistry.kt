@@ -9,7 +9,6 @@ import codes.momo.agent.RunResult
 import codes.momo.agent.RunSettings
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
-import codes.momo.agent.harness.HarnessValidationException
 import codes.momo.agent.liveSubagentBySessionId
 import codes.momo.agent.subagentBySessionId
 import kotlinx.coroutines.CoroutineScope
@@ -73,16 +72,14 @@ internal class SessionRegistry(
                 val environment = ExecutionEnvironment(Path.of(workspace))
                 val entry = SessionEntry()
                 val logs = ConcurrentHashMap<String, PersistedEventLog>()
-                val listener = TreeMemberListener(logs, entry, eventLog, sessionId = null)
+                val listener = TreeMemberListener(logs, entry, eventLog)
                 val agent = Agent(harness, client, environment, title ?: path.fileName.toString(), listener)
-                logs[agent.sessionId] = eventLog
-                try {
-                    store.writeMetadata(agent.sessionId, SessionMetadata.Root(harnessPath, workspace))
-                } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
+                eventLog.failure?.let { failure ->
                     runCatching { eventLog.close() }
                     runCatching { store.delete(agent.sessionId) }
-                    throw failure
+                    throw EventLogFailedException(failure)
                 }
+                logs[agent.sessionId] = eventLog
                 entry.runtime = TreeRuntime(agent, environment, logs, ::announceChange)
                 entries[agent.sessionId] = entry
                 info(agent.sessionId)
@@ -93,14 +90,8 @@ internal class SessionRegistry(
         val scope = normalizedWorkspace(workspace)
         return entries.keys.mapNotNull { id ->
             try {
-                val metadata = withContext(Dispatchers.IO) { store.readMetadata(id) }
-                when {
-                    metadata !is SessionMetadata.Root -> null
-                    normalizedWorkspace(metadata.workspace) != scope -> null
-                    else -> info(id)
-                }
-            } catch (_: UnknownSessionException) {
-                null
+                val started = withContext(Dispatchers.IO) { store.readSessionStarted(id) }
+                if (started.parent == null && normalizedWorkspace(started.workspace) == scope) info(id) else null
             } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
                 null
             }
@@ -109,60 +100,40 @@ internal class SessionRegistry(
 
     suspend fun info(id: String): SessionInfo = withContext(Dispatchers.IO) {
         entries.known(id)
+        val path: List<String>
         val events: List<AgentEvent>
-        val position: TreePosition
         try {
+            path = store.pathTo(id)
             events = store.readEvents(id)
-            position = store.position(id)
         } catch (_: NoSuchFileException) {
             throw UnknownSessionException(id)
         }
 
-        val runtime = entries[position.path.first()]?.runtime
+        val started = events.sessionStarted()
+        val runtime = entries[path.first()]?.runtime
         SessionInfo(
             id = id,
-            parent = position.path.dropLast(1).lastOrNull(),
+            parent = started.parent,
             title = events.sessionTitle(),
-            harnessPath = resolvedHarnessPath(position),
-            workspace = position.root.workspace,
+            harnessPath = started.harnessFolder,
+            workspace = started.workspace,
             privilege = runtime?.environment?.privilege,
             status = when {
                 runtime == null -> SessionStatus.CLOSED
-                runtime.isRunning(position.path) -> SessionStatus.RUNNING
+                runtime.isRunning(path) -> SessionStatus.RUNNING
                 else -> SessionStatus.IDLE
             },
-            createdAtMillis = events.sessionCreatedAtMillis(),
+            createdAtMillis = started.timestampMillis,
             updatedAtMillis = events.sessionUpdatedAtMillis(),
             lastRun = events.lastRunStats(),
-            modelSelection = events.modelSelection() ?: spawnPinnedSelection(position),
+            modelSelection = events.modelSelection() ?: spawnPinnedSelection(started),
         )
     }
 
-    private fun spawnPinnedSelection(position: TreePosition): ModelSelection? =
-        position.path.dropLast(1).lastOrNull()
-            ?.let { parentId -> storedSpawn(parentId, position.path.last()) }
+    private fun spawnPinnedSelection(started: AgentEvent.SessionStarted): ModelSelection? =
+        started.parent
+            ?.let { parentId -> storedSpawn(parentId, started.sessionId) }
             ?.let { spawn -> spawn.modelId?.let { ModelSelection(it, spawn.reasoningEffort) } }
-
-    private fun resolvedHarnessPath(position: TreePosition): String {
-        if (position.path.size == 1) {
-            return position.root.harnessPath
-        }
-        val resolved = position.path.zipWithNext().fold(rootHarnessOrNull(position.root)) { harness, hop ->
-            val (parentId, childId) = hop
-            if (harness == null) {
-                null
-            } else {
-                storedSpawn(parentId, childId)?.type?.let { type -> harness.subagents[type]?.harness }
-            }
-        }
-        return resolved?.folder?.toString() ?: position.root.harnessPath
-    }
-
-    private fun rootHarnessOrNull(root: SessionMetadata.Root): Harness? = try {
-        Harness.load(Path.of(root.harnessPath))
-    } catch (_: HarnessValidationException) {
-        null
-    }
 
     private fun storedSpawn(parentId: String, childId: String): AgentEvent.SubagentSpawned? = try {
         store.readEvents(parentId)
@@ -241,7 +212,7 @@ internal class SessionRegistry(
         val target = entries.known(id)
         val root = withContext(Dispatchers.IO) {
             try {
-                entries.known(store.position(id).path.first())
+                entries.known(store.pathTo(id).first())
             } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
                 target
             }
@@ -332,7 +303,7 @@ internal class SessionRegistry(
         root.runtime = null
         runtime.abortRuns()
         runtime.closeLogs()
-        val harness = Harness.load(Path.of(store.position(rootId).root.harnessPath))
+        val harness = Harness.load(Path.of(store.readSessionStarted(rootId).harnessFolder))
         val deleted = applyPlan(plan)
         runCatching { root.runtime = loadTree(root, rootId, harness, runtime.environment) }
         return deleted
@@ -403,14 +374,14 @@ internal class SessionRegistry(
 
     suspend fun requireInWorkspace(id: String, workspace: String): Unit = withContext(Dispatchers.IO) {
         entries.known(id)
-        val root = try {
-            store.position(id).root
+        val started = try {
+            store.readSessionStarted(id)
         } catch (_: NoSuchFileException) {
             throw UnknownSessionException(id)
         } catch (_: CorruptSessionException) {
             throw UnknownSessionException(id)
         }
-        if (normalizedWorkspace(root.workspace) != normalizedWorkspace(workspace)) {
+        if (normalizedWorkspace(started.workspace) != normalizedWorkspace(workspace)) {
             throw UnknownSessionException(id)
         }
     }
@@ -434,13 +405,13 @@ internal class SessionRegistry(
     }
 
     private suspend fun rebuild(entry: SessionEntry, id: String): TreeRuntime = withContext(Dispatchers.IO) {
-        val metadata = try {
-            store.position(id).root
+        val started = try {
+            store.readSessionStarted(id)
         } catch (_: NoSuchFileException) {
             throw UnknownSessionException(id)
         }
-        val harness = Harness.load(Path.of(metadata.harnessPath))
-        loadTree(entry, id, harness, ExecutionEnvironment(Path.of(metadata.workspace)))
+        val harness = Harness.load(Path.of(started.harnessFolder))
+        loadTree(entry, id, harness, ExecutionEnvironment(Path.of(started.workspace)))
     }
 
     private fun loadTree(
@@ -453,7 +424,7 @@ internal class SessionRegistry(
         val eventLog = store.eventLogFor(id)
         val logs = ConcurrentHashMap<String, PersistedEventLog>()
         logs[id] = eventLog
-        val agent = Agent.load(events, harness, client, environment, TreeMemberListener(logs, entry, eventLog, id))
+        val agent = Agent.load(events, harness, client, environment, TreeMemberListener(logs, entry, eventLog))
         return TreeRuntime(agent, environment, logs, ::announceChange)
     }
 
@@ -461,25 +432,18 @@ internal class SessionRegistry(
         private val logs: ConcurrentHashMap<String, PersistedEventLog>,
         private val entry: SessionEntry,
         private val log: PersistedEventLog,
-        sessionId: String?,
     ) : AgentEventListener {
 
-        @Volatile
-        private var sessionId: String? = sessionId
-
         override fun onEvent(event: AgentEvent) {
-            if (sessionId == null && event is AgentEvent.SessionStarted) {
-                sessionId = event.sessionId
-            }
             log.onEvent(event)
             entry.eventSignal.value = event.sequenceId
         }
 
-        override fun listenerForSubagent(name: String, sessionId: String): AgentEventListener = try {
-            attachChild(parentId = checkNotNull(this.sessionId), childId = sessionId)
-        } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
-            AgentEventListener { }
-        }
+        override fun listenerForSubagent(name: String, sessionId: String): AgentEventListener = TreeMemberListener(
+            logs,
+            entries.computeIfAbsent(sessionId) { SessionEntry() },
+            logs.computeIfAbsent(sessionId) { store.eventLogFor(sessionId) },
+        )
 
         override suspend fun storedEventsFor(sessionId: String): List<AgentEvent>? = withContext(Dispatchers.IO) {
             try {
@@ -488,17 +452,11 @@ internal class SessionRegistry(
                 null
             }
         }
-
-        private fun attachChild(parentId: String, childId: String): TreeMemberListener {
-            val childEntry = entries[childId] ?: SessionEntry().also { fresh ->
-                store.writeMetadata(childId, SessionMetadata.Child(parentId))
-                entries[childId] = fresh
-            }
-            val childLog = logs.computeIfAbsent(childId) { store.eventLogFor(childId) }
-            return TreeMemberListener(logs, childEntry, childLog, childId)
-        }
     }
 }
+
+private val AgentEvent.SessionStarted.harnessFolder: String
+    get() = checkNotNull(harnessPath) { "Session $sessionId runs a harness without a folder." }
 
 private fun Map<String, SessionEntry>.known(id: String): SessionEntry =
     this[id] ?: throw UnknownSessionException(id)
@@ -510,27 +468,27 @@ private suspend fun treeOf(
 ): Pair<List<String>, SessionEntry> = withContext(Dispatchers.IO) {
     entries.known(id)
     val path = try {
-        store.position(id).path
+        store.pathTo(id)
     } catch (_: NoSuchFileException) {
         throw UnknownSessionException(id)
     }
     path to entries.known(path.first())
 }
 
-private fun SessionStore.position(id: String): TreePosition {
+private fun SessionStore.pathTo(id: String): List<String> {
     val ancestry = mutableListOf(id)
-    var current = readMetadata(id)
-    while (current is SessionMetadata.Child) {
-        check(current.parent !in ancestry) { "Stored session $id has a parent cycle in its metadata." }
-        ancestry += current.parent
-        current = readMetadata(current.parent)
+    var parent = readSessionStarted(id).parent
+    while (parent != null) {
+        check(parent !in ancestry) { "Stored session $id has a parent cycle." }
+        ancestry += parent
+        parent = readSessionStarted(parent).parent
     }
-    return TreePosition(ancestry.asReversed(), current as SessionMetadata.Root)
+    return ancestry.asReversed()
 }
 
 private fun SessionStore.subtreeIds(id: String): List<String> {
     val childrenByParent = sessionIds().groupBy { sessionId ->
-        (runCatching { readMetadata(sessionId) }.getOrNull() as? SessionMetadata.Child)?.parent
+        runCatching { readSessionStarted(sessionId).parent }.getOrNull()
     }
     val subtree = mutableListOf(id)
     var index = 0
@@ -626,7 +584,5 @@ private class TreeRuntime(
         }
     }
 }
-
-private class TreePosition(val path: List<String>, val root: SessionMetadata.Root)
 
 private const val RUN_ACTIVE_MESSAGE = "A run is already active on this session."

@@ -14,7 +14,7 @@ import kotlin.time.Duration
 class RewindPlanTest {
 
     private fun started(seq: Long, at: Long, id: String) =
-        AgentEvent.SessionStarted(seq, at, sessionId = id, title = id)
+        AgentEvent.SessionStarted(seq, at, sessionId = id, title = id, harnessPath = null, workspace = "/work")
 
     private fun run(seq: Long, at: Long) = AgentEvent.RunStarted(seq, at, userMessage = "go")
 

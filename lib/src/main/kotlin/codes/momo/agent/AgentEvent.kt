@@ -23,7 +23,9 @@ public sealed interface AgentEvent {
         override val timestampMillis: Long,
         val sessionId: String,
         val title: String,
-
+        val harnessPath: String?,
+        val workspace: String,
+        val parent: String? = null,
         val depth: Int = 0,
     ) : AgentEvent
 

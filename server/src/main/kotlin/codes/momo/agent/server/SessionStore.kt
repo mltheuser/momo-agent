@@ -9,7 +9,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.takeWhile
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -30,25 +29,7 @@ import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readLines
-import kotlin.io.path.readText
-
-@Serializable
-internal sealed interface SessionMetadata {
-
-    @Serializable
-    @SerialName("root")
-    data class Root(
-        val harnessPath: String,
-        val workspace: String,
-    ) : SessionMetadata
-
-    @Serializable
-    @SerialName("child")
-    data class Child(
-
-        val parent: String,
-    ) : SessionMetadata
-}
+import kotlin.io.path.useLines
 
 internal class CorruptSessionException(id: String, cause: Exception) :
     RuntimeException("Stored session $id is unreadable: ${cause.message}", cause)
@@ -60,19 +41,15 @@ internal class SessionStore(dataDir: Path) {
     fun sessionIds(): List<String> =
         if (sessionsDir.isDirectory()) {
             sessionsDir.listDirectoryEntries()
-                .filter { it.resolve(METADATA_FILE).isRegularFile() }
+                .filter { it.resolve(EVENTS_FILE).isRegularFile() }
                 .map { it.fileName.toString() }
         } else {
             emptyList()
         }
 
-    fun writeMetadata(id: String, metadata: SessionMetadata) {
-        val directory = directory(id).createDirectories()
-        replaceAtomically(directory.resolve(METADATA_FILE), metadataJson.encodeToString(metadata))
-    }
-
-    fun readMetadata(id: String): SessionMetadata = try {
-        metadataJson.decodeFromString(directory(id).resolve(METADATA_FILE).readText())
+    fun readSessionStarted(id: String): AgentEvent.SessionStarted = try {
+        val line = directory(id).resolve(EVENTS_FILE).useLines { lines -> lines.firstOrNull { it.isNotBlank() } }
+        lineJson.decodeFromString(line.orEmpty())
     } catch (failure: SerializationException) {
         throw CorruptSessionException(id, failure)
     }
@@ -305,8 +282,4 @@ private fun dropTornTail(file: Path) {
     }
 }
 
-private const val METADATA_FILE = "session.json"
-
 private const val EVENTS_FILE = "events.jsonl"
-
-private val metadataJson = Json
