@@ -26,10 +26,10 @@ Fix: recreate `cmd/ai-router/main.go` as `package main` calling
 
 | Command | Does |
 | ------- | ---- |
-| `./gradlew build` | Compile, detekt, `RewindPlanTest`, the live suite. Needs a running router; costs API spend. |
+| `./gradlew build` | Compile, detekt, the unit tests, the live suite. Needs a running router; costs API spend. |
 | `./gradlew :server:run --args="--port=8420"` | Run the server. Flags in [configuration.md](configuration.md). |
 | `./gradlew :server:installDist` | Install the server distribution to `server/build/install/server/bin/server`. |
-| `./gradlew :server:test` | `RewindPlanTest` alone. Needs no router. |
+| `./gradlew :server:test` | Unit tests alone. Needs no router. |
 | `./gradlew :server:liveTest` | The live suite alone. |
 | `./gradlew detekt` | Lint all source sets. |
 

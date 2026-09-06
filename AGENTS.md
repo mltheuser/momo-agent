@@ -12,7 +12,7 @@ Map of the code: [docs/architecture.md](docs/architecture.md).
 
 ## Verify
 
-- `./gradlew build`: compile, detekt, `RewindPlanTest`, the live suite. Needs a running ai-router and costs API spend ([docs/testing.md](docs/testing.md)).
+- `./gradlew build`: compile, detekt, the unit tests (`:server:test`), the live suite (`:server:liveTest`). Needs a running ai-router and costs API spend ([docs/testing.md](docs/testing.md)).
 - `./lint.sh` / `./fmt.sh`: detekt check / auto-fix.
 
 ## Code conventions
@@ -46,7 +46,7 @@ stored. Details: [docs/sessions-and-storage.md](docs/sessions-and-storage.md).
 
 ## Tests
 
-- One tier: live tests over the real server process, router and model. `RewindPlanTest` and `FaultyRouter` are the only exceptions. Rules and helpers: [docs/testing.md](docs/testing.md).
+- One tier: live tests over the real server process, router and model. The only exceptions are pure-logic unit tests in `server/src/test` and the `FaultyRouter` stand-in. Rules and helpers: [docs/testing.md](docs/testing.md).
 - Shared test helpers live once, in `server/src/liveTest`. Never a per-class copy.
 
 ## Commits

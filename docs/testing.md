@@ -11,13 +11,13 @@ any competent model. Nothing is mocked in code.
 
 Two exceptions:
 
-- `RewindPlanTest` (`server/src/test`): pure log analysis of the rewind cascade, not stageable cheaply against a model.
+- Unit tests in `server/src/test`: pure logic over in-memory data, no process, router or model. Only for cases a live test cannot stage cheaply. Current example: `RewindPlanTest`, the rewind cascade over a stored log.
 - `FaultyRouter` (`server/src/liveTest/FaultyRouter.kt`): a network stand-in for router failures. Scope below.
 
 | Suite | Source set | In `build`? | Per-test timeout |
 | ----- | ---------- | ----------- | ---------------- |
 | Live suite | `server/src/liveTest` | yes | 15 min |
-| `RewindPlanTest` | `server/src/test` | yes | 2 min |
+| Unit tests | `server/src/test` | yes | 2 min |
 
 The `lib` module has no tests. Lib-only surface (`Agent.load` called directly, `RunResult` as a return value) is untested.
 
@@ -68,7 +68,7 @@ The suite shares one server process (`LiveServerSupport.kt`). `PersistenceLiveTe
 ```sh
 ./gradlew build                    # everything; ~80-120 s
 ./gradlew :server:liveTest         # live suite alone
-./gradlew :server:test             # RewindPlanTest alone; needs no router
+./gradlew :server:test             # unit tests alone; needs no router
 ./gradlew :server:liveTest --tests '*RunControlLiveTest.inFlightGuardsThenStop*' --rerun-tasks
 ```
 
