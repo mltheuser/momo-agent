@@ -30,7 +30,7 @@ internal suspend fun <T> retryTransientFailures(
     return block()
 }
 
-internal val Exception.isTransient: Boolean
+private val Exception.isTransient: Boolean
     get() = when (this) {
         is AiRouterException -> statusCode == HTTP_TOO_MANY_REQUESTS || statusCode in HTTP_SERVER_ERRORS
         is IOException, is UnresolvedAddressException -> true

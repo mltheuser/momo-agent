@@ -5,7 +5,7 @@ import ai.router.sdk.models.ToolCall
 import codes.momo.agent.RunResult
 import codes.momo.agent.harness.PROMPT_SUBAGENT_TOOL
 
-internal fun unansweredToolCalls(messages: List<ChatMessage>): List<ToolCall> {
+private fun unansweredToolCalls(messages: List<ChatMessage>): List<ToolCall> {
     val lastCallerIndex = messages.indexOfLast { !it.toolCalls.isNullOrEmpty() }
     if (lastCallerIndex < 0) {
         return emptyList()
@@ -24,7 +24,7 @@ internal fun toolCallRepairs(
     toolResultMessage(call.id, toolCallRepairText(call.function.name, call.id in startedCallIds, runStatus))
 }
 
-internal fun toolCallRepairText(toolName: String, started: Boolean, runStatus: RunResult.Status?): String {
+private fun toolCallRepairText(toolName: String, started: Boolean, runStatus: RunResult.Status?): String {
     val cut = when (runStatus) {
         RunResult.Status.STOPPED -> "a user stopped the run"
         RunResult.Status.ERROR -> "the run failed"

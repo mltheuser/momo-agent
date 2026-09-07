@@ -64,7 +64,7 @@ private fun pathCommand(script: String, path: String): List<String> =
 internal fun imageMimeType(path: String): String =
     URLConnection.guessContentTypeFromName(path)?.takeIf { it.startsWith("image/") } ?: DEFAULT_IMAGE_MIME
 
-internal const val DEFAULT_IMAGE_MIME: String = "image/png"
+private const val DEFAULT_IMAGE_MIME: String = "image/png"
 
 private val VIEW_IMAGE_DESCRIPTION: String = """
     Loads an image file and presents it to the model visually. A file over $MAX_IMAGE_BYTES bytes is refused.

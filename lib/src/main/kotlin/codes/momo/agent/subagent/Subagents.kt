@@ -19,11 +19,9 @@ internal class SpawnedChild(
 internal class Subagents(
     private val parent: Agent,
     private val declaredTypes: Set<String>,
-    client: AiRouterClient,
+    private val client: AiRouterClient,
     spawned: Map<String, SpawnedChild>,
 ) {
-
-    private val spawnModels = SpawnModels(client)
 
     private sealed interface Child {
         val sessionId: String
@@ -69,7 +67,7 @@ internal class Subagents(
         reasoningEffort: ReasoningEffort?,
     ): ToolResult {
         val rejection = mutex.withLock { rejectSpawn(name, type, modelId) }
-            ?: modelId?.let { spawnModels.rejectionFor(it) }?.let { ToolResult.Error(it) }
+            ?: modelId?.let { client.spawnModelRejection(it) }?.let { ToolResult.Error(it) }
         return rejection ?: mutex.withLock {
             rejectSpawn(name, type, modelId) ?: run {
                 val child = parent.spawnChild(name, type, modelId, reasoningEffort)

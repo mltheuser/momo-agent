@@ -5,18 +5,15 @@ import ai.router.sdk.models.ModelInfo
 import codes.momo.agent.usableModels
 import kotlinx.coroutines.CancellationException
 
-internal class SpawnModels(private val client: AiRouterClient) {
-
-    suspend fun rejectionFor(modelId: String): String? {
-        val usable = try {
-            client.usableModels().data
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (@Suppress("TooGenericExceptionCaught") exception: Exception) {
-            return "model_id '$modelId' could not be validated against the router's catalog: $exception"
-        }
-        return if (usable.any { modelId.addresses(it) }) null else unknownModelMessage(modelId, usable)
+internal suspend fun AiRouterClient.spawnModelRejection(modelId: String): String? {
+    val usable = try {
+        usableModels().data
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (@Suppress("TooGenericExceptionCaught") exception: Exception) {
+        return "model_id '$modelId' could not be validated against the router's catalog: $exception"
     }
+    return if (usable.any { modelId.addresses(it) }) null else unknownModelMessage(modelId, usable)
 }
 
 private fun String.addresses(entry: ModelInfo): Boolean =
@@ -30,14 +27,14 @@ private fun unknownModelMessage(modelId: String, usable: List<ModelInfo>): Strin
     append("\nPass one of these verbatim; the '@provider' suffix may be dropped to let the router choose.")
 }
 
-internal fun closestModels(query: String, candidates: List<String>, limit: Int = SUGGESTION_LIMIT): List<String> {
+private fun closestModels(query: String, candidates: List<String>, limit: Int = SUGGESTION_LIMIT): List<String> {
     val distance = candidates.associateWith { approximateSubstringDistance(query, it) }
     return candidates
         .sortedWith(compareBy({ distance.getValue(it) }, { it.length }, { it }))
         .take(limit)
 }
 
-internal fun approximateSubstringDistance(query: String, candidate: String): Int {
+private fun approximateSubstringDistance(query: String, candidate: String): Int {
     val q = query.lowercase()
     val c = candidate.lowercase()
     var previous = IntArray(c.length + 1)
