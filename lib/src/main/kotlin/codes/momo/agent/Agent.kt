@@ -21,7 +21,7 @@ import codes.momo.agent.internal.plus
 import codes.momo.agent.internal.resolvePromptAttachments
 import codes.momo.agent.internal.restoredSession
 import codes.momo.agent.internal.retryTransientFailures
-import codes.momo.agent.internal.systemPromptFor
+import codes.momo.agent.internal.systemMessage
 import codes.momo.agent.internal.toolCallRepairs
 import codes.momo.agent.internal.toolResultMessage
 import codes.momo.agent.internal.userMessage
@@ -102,7 +102,7 @@ public class Agent internal constructor(
     }
 
     private val history: MutableList<ChatMessage> = mutableListOf<ChatMessage>().apply {
-        add(systemPromptFor(harness, subagent = depth > 0))
+        add(systemMessage(harness.instructions))
         addAll(session.conversation)
     }
 

@@ -4,25 +4,8 @@ import ai.router.sdk.models.ChatMessage
 import ai.router.sdk.models.ContentPart
 import ai.router.sdk.models.ContentPartType
 import codes.momo.agent.AgentEvent
-import codes.momo.agent.harness.Harness
 
-internal fun systemPromptFor(harness: Harness, subagent: Boolean): ChatMessage =
-    textMessage(
-        ROLE_SYSTEM,
-        harness.instructions.trimEnd() + "\n\n" + (if (subagent) SUBAGENT_GUIDANCE else USER_GUIDANCE),
-    )
-
-private const val USER_GUIDANCE: String =
-    "The user is not watching you work and sees only your final message; their next message " +
-        "may take hours or days to arrive. Work autonomously and end your turn only when you are " +
-        "done or genuinely blocked. To ask the user something, end your turn with the question as " +
-        "your final message — ask only what you cannot work out from the workspace or your tools, " +
-        "and batch related questions into one message instead of asking them one at a time."
-
-private const val SUBAGENT_GUIDANCE: String =
-    "You are a subagent: the agent that spawned you is blocked waiting on you, and your final " +
-        "message is delivered to it as the result of this prompt. Work autonomously to completion " +
-        "and end your turn early only when you are genuinely blocked on input from your spawner."
+internal fun systemMessage(instructions: String): ChatMessage = textMessage(ROLE_SYSTEM, instructions)
 
 private fun textMessage(role: String, text: String): ChatMessage =
     ChatMessage(role = role, content = listOf(ContentPart(type = ContentPartType.TEXT, text = text)))
