@@ -16,12 +16,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -41,20 +37,14 @@ internal class SessionRegistry(
 
     private val entries = ConcurrentHashMap<String, SessionEntry>()
 
-    // Announced from `finally` blocks, so it must never suspend; every signal says the same thing, so dropping is safe.
-    private val changes = MutableSharedFlow<Unit>(
-        extraBufferCapacity = 1,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-
-    val sessionsChanged: SharedFlow<Unit> = changes.asSharedFlow()
+    val changes: ChangeSignal = ChangeSignal()
 
     init {
         store.sessionIds().forEach { entries[it] = SessionEntry() }
     }
 
     suspend fun create(harnessPath: String, workspace: String, title: String? = null): SessionInfo =
-        announcingChange {
+        changes.announcing {
             withContext(Dispatchers.IO) {
                 val path = Path.of(harnessPath)
                 val harness = Harness.load(path)
@@ -70,7 +60,7 @@ internal class SessionRegistry(
                     throw EventLogFailedException(failure)
                 }
                 logs[agent.sessionId] = eventLog
-                entry.runtime = TreeRuntime(agent, environment, logs, ::announceChange)
+                entry.runtime = TreeRuntime(agent, environment, logs, changes)
                 entries[agent.sessionId] = entry
                 info(agent.sessionId)
             }
@@ -149,7 +139,7 @@ internal class SessionRegistry(
         dormantEvent: (sequenceId: Long, timestampMillis: Long) -> AgentEvent,
     ): SessionInfo {
         val (path, root) = treeOf(entries, store, id)
-        announcingChange {
+        changes.announcing {
             root.mutex.withLock {
                 val runtime = root.runtime
                 if (runtime == null) {
@@ -179,7 +169,7 @@ internal class SessionRegistry(
 
     suspend fun close(id: String) {
         val (_, root) = treeOf(entries, store, id)
-        announcingChange {
+        changes.announcing {
             root.mutex.withLock { teardown(root) }
         }
     }
@@ -198,7 +188,7 @@ internal class SessionRegistry(
                 target
             }
         }
-        announcingChange {
+        changes.announcing {
             root.mutex.withLock {
                 teardown(root)
                 withContext(NonCancellable + Dispatchers.IO) {
@@ -220,7 +210,7 @@ internal class SessionRegistry(
 
     suspend fun rewind(id: String, firstDeletedSequenceId: Long): List<String> {
         val (path, root) = treeOf(entries, store, id)
-        return announcingChange {
+        return changes.announcing {
             root.mutex.withLock {
                 if (root.runtime?.hasRunInFlight() == true) {
                     throw SessionConflictException("A run is in flight in the session's tree.")
@@ -285,7 +275,7 @@ internal class SessionRegistry(
 
     suspend fun retryRun(id: String) {
         val (path, root) = treeOf(entries, store, id)
-        announcingChange {
+        changes.announcing {
             root.mutex.withLock {
                 if (root.runtime?.hasRunInFlight() == true) {
                     throw SessionConflictException("A run is in flight in the session's tree.")
@@ -336,16 +326,6 @@ internal class SessionRegistry(
         }
     }
 
-    private fun announceChange() {
-        changes.tryEmit(Unit)
-    }
-
-    private suspend fun <T> announcingChange(block: suspend () -> T): T = try {
-        block()
-    } finally {
-        announceChange()
-    }
-
     override fun close() {
         runBlocking {
             entries.keys.forEach { id ->
@@ -371,7 +351,7 @@ internal class SessionRegistry(
         val logs = ConcurrentHashMap<String, PersistedEventLog>()
         logs[id] = eventLog
         val agent = Agent.load(events, harness, client, environment, TreeMemberListener(logs, entry, eventLog))
-        return TreeRuntime(agent, environment, logs, ::announceChange)
+        return TreeRuntime(agent, environment, logs, changes)
     }
 
     private inner class TreeMemberListener(
@@ -460,7 +440,7 @@ private class TreeRuntime(
     private val rootAgent: Agent,
     val environment: ExecutionEnvironment,
     private val logs: ConcurrentHashMap<String, PersistedEventLog>,
-    private val announceChange: () -> Unit,
+    private val changes: ChangeSignal,
 ) {
 
     private val job = SupervisorJob()
@@ -484,13 +464,13 @@ private class TreeRuntime(
         logs[agent.sessionId]?.failure?.let { throw EventLogFailedException(it) }
         claimRun(agent)
 
-        announceChange()
+        changes.announce()
         scope.launch {
             try {
                 run(agent)
             } finally {
                 activeRuns.remove(agent.sessionId)
-                announceChange()
+                changes.announce()
             }
         }
     }

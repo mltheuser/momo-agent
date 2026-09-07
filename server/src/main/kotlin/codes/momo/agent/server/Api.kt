@@ -207,7 +207,7 @@ private fun Route.changeStreamRoute(registry: SessionRegistry) {
     route("/changes") {
         sse {
             heartbeat()
-            registry.sessionsChanged.onSubscription { emit(Unit) }.collect { send(event = CHANGE_EVENT) }
+            registry.changes.flow.onSubscription { emit(Unit) }.collect { send(event = CHANGE_EVENT) }
         }
     }
 }
