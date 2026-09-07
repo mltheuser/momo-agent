@@ -3,14 +3,12 @@ package codes.momo.agent.server.session
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.environment.Privilege
-import codes.momo.agent.server.storage.CorruptSessionException
-import codes.momo.agent.server.storage.UnknownSessionException
+import codes.momo.agent.server.storage.ifReadable
 import codes.momo.agent.server.storage.pathTo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import java.io.IOException
 import java.nio.file.Path
 import kotlin.time.Duration
 
@@ -62,23 +60,22 @@ internal data class RunStats(
     val elapsed: Duration,
 )
 
-internal suspend fun SessionRegistry.list(workspace: String): List<SessionInfo> {
+internal suspend fun SessionRegistry.list(workspace: String): List<SessionInfo> = withContext(Dispatchers.IO) {
     val scope = normalizedWorkspace(workspace)
-    return ids.mapNotNull { id ->
-        try {
-            val started = withContext(Dispatchers.IO) { store.readSessionStarted(id) }
-            if (started.parent == null && normalizedWorkspace(started.workspace) == scope) info(id) else null
-        } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
-            null
+    ids.mapNotNull { id ->
+        store.ifReadable {
+            readSessionStarted(id)
+                .takeIf { it.parent == null && normalizedWorkspace(it.workspace) == scope }
+                ?.let { info(id) }
         }
     }.sortedBy { it.createdAtMillis }
 }
 
 internal suspend fun SessionRegistry.info(id: String): SessionInfo = withContext(Dispatchers.IO) {
     requireKnown(id)
-    val path = store.pathTo(id)
     val events = store.readEvents(id)
     val started = events.sessionStarted()
+    val path = store.pathTo(started)
     val runtime = entryOrNull(path.first())?.runtime
     SessionInfo(
         id = id,
@@ -104,17 +101,10 @@ private fun SessionRegistry.spawnPinnedSelection(started: AgentEvent.SessionStar
         ?.let { parentId -> storedSpawn(parentId, started.sessionId) }
         ?.let { spawn -> spawn.modelId?.let { ModelSelection(it, spawn.reasoningEffort) } }
 
-private fun SessionRegistry.storedSpawn(parentId: String, childId: String): AgentEvent.SubagentSpawned? = try {
-    store.readEvents(parentId)
-        .filterIsInstance<AgentEvent.SubagentSpawned>()
-        .lastOrNull { it.sessionId == childId }
-} catch (_: UnknownSessionException) {
-    null
-} catch (_: IOException) {
-    null
-} catch (_: CorruptSessionException) {
-    null
-}
+private fun SessionRegistry.storedSpawn(parentId: String, childId: String): AgentEvent.SubagentSpawned? =
+    store.ifReadable { readEvents(parentId) }
+        ?.filterIsInstance<AgentEvent.SubagentSpawned>()
+        ?.lastOrNull { it.sessionId == childId }
 
 internal fun normalizedWorkspace(path: String): String = Path.of(path).toAbsolutePath().normalize().toString()
 

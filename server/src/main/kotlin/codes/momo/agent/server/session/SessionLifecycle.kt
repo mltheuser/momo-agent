@@ -4,6 +4,7 @@ import codes.momo.agent.Agent
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.server.storage.EventLogFailedException
+import codes.momo.agent.server.storage.ifReadable
 import codes.momo.agent.server.storage.pathTo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -43,13 +44,8 @@ internal suspend fun SessionRegistry.closeSession(id: String) {
 
 internal suspend fun SessionRegistry.delete(id: String) {
     val target = entry(id)
-    val root = withContext(Dispatchers.IO) {
-        try {
-            entry(store.pathTo(id).first())
-        } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
-            target
-        }
-    }
+    val rootId = withContext(Dispatchers.IO) { store.ifReadable { pathTo(readSessionStarted(id)).first() } }
+    val root = rootId?.let(::entryOrNull) ?: target
     changes.announcing {
         root.mutex.withLock {
             root.detachRuntime()

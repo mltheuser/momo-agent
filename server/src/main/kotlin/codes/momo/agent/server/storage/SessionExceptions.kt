@@ -4,8 +4,8 @@ import java.io.IOException
 
 internal class UnknownSessionException(id: String) : RuntimeException("No such session: $id")
 
-internal class CorruptSessionException(id: String, cause: Exception) :
-    RuntimeException("Stored session $id is unreadable: ${cause.message}", cause)
+internal class CorruptSessionException(id: String, detail: String?, cause: Exception? = null) :
+    RuntimeException("Stored session $id is unreadable: $detail", cause)
 
 internal class SessionConflictException(message: String) : RuntimeException(message)
 

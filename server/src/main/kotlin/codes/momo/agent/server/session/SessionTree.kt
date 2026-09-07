@@ -22,6 +22,6 @@ internal class SessionTree(val path: List<String>, val root: SessionEntry) {
 
 internal suspend fun SessionRegistry.treeOf(id: String): SessionTree = withContext(Dispatchers.IO) {
     requireKnown(id)
-    val path = store.pathTo(id)
+    val path = store.pathTo(store.readSessionStarted(id))
     SessionTree(path, entry(path.first()))
 }

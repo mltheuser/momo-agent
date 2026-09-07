@@ -30,12 +30,17 @@ internal class SessionStore(dataDir: Path) {
             val line = file.useLines { lines -> lines.firstOrNull { it.isNotBlank() } }
             decodeLogLineAs(line.orEmpty())
         } catch (failure: SerializationException) {
-            throw CorruptSessionException(id, failure)
+            throw CorruptSessionException(id, failure.message, failure)
         }
     }
 
-    fun readEvents(id: String): List<AgentEvent> =
-        readingLog(id) { file -> file.readLogLines(id) { Json.decodeFromString(it) } }
+    fun readEvents(id: String): List<AgentEvent> = readingLog(id) { file ->
+        val events = file.readLogLines<AgentEvent>(id) { Json.decodeFromString(it) }
+        if (events.firstOrNull() !is AgentEvent.SessionStarted) {
+            throw CorruptSessionException(id, "the log does not begin with a session_started event")
+        }
+        events
+    }
 
     fun readLines(id: String): List<LogLine> = readingLog(id) { file -> file.readLogLines(id, ::parseLogLine) }
 
@@ -72,11 +77,22 @@ internal fun SessionStore.readEventsOrNull(id: String): List<AgentEvent>? = try 
     null
 }
 
-internal fun SessionStore.pathTo(id: String): List<String> {
-    val ancestry = mutableListOf(id)
-    var parent = readSessionStarted(id).parent
+/** [read] against the store, or null when it hits a log that is missing or corrupt. */
+internal inline fun <T> SessionStore.ifReadable(read: SessionStore.() -> T): T? = try {
+    read()
+} catch (_: UnknownSessionException) {
+    null
+} catch (_: CorruptSessionException) {
+    null
+}
+
+internal fun SessionStore.pathTo(started: AgentEvent.SessionStarted): List<String> {
+    val ancestry = mutableListOf(started.sessionId)
+    var parent = started.parent
     while (parent != null) {
-        check(parent !in ancestry) { "Stored session $id has a parent cycle." }
+        if (parent in ancestry) {
+            throw CorruptSessionException(started.sessionId, "its parent chain is a cycle")
+        }
         ancestry += parent
         parent = readSessionStarted(parent).parent
     }
@@ -85,7 +101,7 @@ internal fun SessionStore.pathTo(id: String): List<String> {
 
 internal fun SessionStore.subtreeIds(id: String): List<String> {
     val childrenByParent = sessionIds().groupBy { sessionId ->
-        runCatching { readSessionStarted(sessionId).parent }.getOrNull()
+        ifReadable { readSessionStarted(sessionId) }?.parent
     }
     val subtree = mutableListOf(id)
     var index = 0

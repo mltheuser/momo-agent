@@ -33,7 +33,7 @@ internal fun <T : Any> Path.readLogLines(sessionId: String, parse: (String) -> T
         try {
             parse(line)
         } catch (failure: SerializationException) {
-            if (index == lines.lastIndex) null else throw CorruptSessionException(sessionId, failure)
+            if (index == lines.lastIndex) null else throw CorruptSessionException(sessionId, failure.message, failure)
         }
     }
 }
