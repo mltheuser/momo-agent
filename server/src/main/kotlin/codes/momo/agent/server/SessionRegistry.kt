@@ -4,21 +4,14 @@ import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.Agent
 import codes.momo.agent.AgentEvent
-import codes.momo.agent.AgentEventListener
 import codes.momo.agent.RunResult
 import codes.momo.agent.RunSettings
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
-import codes.momo.agent.liveSubagentBySessionId
-import codes.momo.agent.subagentBySessionId
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -30,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap
 @Suppress("TooManyFunctions")
 internal class SessionRegistry(
     dataDir: Path,
-    private val client: AiRouterClient,
+    val client: AiRouterClient,
 ) : AutoCloseable {
 
     val store: SessionStore = SessionStore(dataDir)
@@ -63,19 +56,18 @@ internal class SessionRegistry(
                 val harness = Harness.load(path)
                 val eventLog = store.eventLogForNewSession()
                 val environment = ExecutionEnvironment(Path.of(workspace))
-                val entry = SessionEntry()
-                val logs = ConcurrentHashMap<String, PersistedEventLog>()
-                val listener = TreeMemberListener(logs, entry, eventLog)
-                val agent = Agent(harness, client, environment, title ?: path.fileName.toString(), listener)
+                val root = SessionEntry()
+                val runtime = buildTreeRuntime(root, environment, eventLog) { listener ->
+                    Agent(harness, client, environment, title ?: path.fileName.toString(), listener)
+                }
                 eventLog.failure?.let { failure ->
                     runCatching { eventLog.close() }
-                    runCatching { store.delete(agent.sessionId) }
+                    runCatching { store.delete(runtime.rootId) }
                     throw EventLogFailedException(failure)
                 }
-                logs[agent.sessionId] = eventLog
-                entry.runtime = TreeRuntime(agent, environment, logs, changes)
-                entries[agent.sessionId] = entry
-                info(agent.sessionId)
+                root.runtime = runtime
+                entries[runtime.rootId] = root
+                info(runtime.rootId)
             }
         }
 
@@ -183,7 +175,7 @@ internal class SessionRegistry(
     suspend fun close(id: String) {
         val tree = treeOf(id)
         changes.announcing {
-            tree.root.mutex.withLock { teardown(tree.root) }
+            tree.root.mutex.withLock { tree.root.detachRuntime() }
         }
     }
 
@@ -203,7 +195,7 @@ internal class SessionRegistry(
         }
         changes.announcing {
             root.mutex.withLock {
-                teardown(root)
+                root.detachRuntime()
                 withContext(NonCancellable + Dispatchers.IO) {
                     removeSubtree(id)
                 }
@@ -253,12 +245,10 @@ internal class SessionRegistry(
         runtime: TreeRuntime,
         plan: RewindPlan,
     ): List<String> {
-        root.runtime = null
-        runtime.abortRuns()
-        runtime.closeLogs()
-        val harness = Harness.load(Path.of(store.readSessionStarted(rootId).harnessFolder))
+        root.detachRuntime()
+        val harness = store.readSessionStarted(rootId).loadHarness()
         val deleted = applyPlan(plan)
-        runCatching { root.runtime = loadTree(root, rootId, harness, runtime.environment) }
+        runCatching { root.runtime = loadTreeRuntime(root, rootId, harness, runtime.environment) }
         return deleted
     }
 
@@ -299,13 +289,13 @@ internal class SessionRegistry(
     private suspend fun launchRunLocked(tree: SessionTree, run: suspend (Agent) -> RunResult) {
         val root = tree.root
         val attached = root.runtime
-        val runtime = attached ?: rebuild(root, tree.rootId).also { root.runtime = it }
+        val runtime = attached ?: rebuildTreeRuntime(root, tree.rootId).also { root.runtime = it }
         try {
             val agent = runtime.agentAt(tree.path) ?: throw UnknownSessionException(tree.id)
             runtime.launchRun(agent, run)
         } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
             if (attached == null) {
-                teardown(root)
+                root.detachRuntime()
             }
             throw failure
         }
@@ -335,58 +325,6 @@ internal class SessionRegistry(
             }
         }
     }
-
-    private suspend fun rebuild(entry: SessionEntry, id: String): TreeRuntime = withContext(Dispatchers.IO) {
-        val started = store.readSessionStarted(id)
-        val harness = Harness.load(Path.of(started.harnessFolder))
-        loadTree(entry, id, harness, ExecutionEnvironment(Path.of(started.workspace)))
-    }
-
-    private fun loadTree(
-        entry: SessionEntry,
-        id: String,
-        harness: Harness,
-        environment: ExecutionEnvironment,
-    ): TreeRuntime {
-        val events = store.readEvents(id)
-        val eventLog = store.eventLogFor(id)
-        val logs = ConcurrentHashMap<String, PersistedEventLog>()
-        logs[id] = eventLog
-        val agent = Agent.load(events, harness, client, environment, TreeMemberListener(logs, entry, eventLog))
-        return TreeRuntime(agent, environment, logs, changes)
-    }
-
-    private inner class TreeMemberListener(
-        private val logs: ConcurrentHashMap<String, PersistedEventLog>,
-        private val entry: SessionEntry,
-        private val log: PersistedEventLog,
-    ) : AgentEventListener {
-
-        override fun onEvent(event: AgentEvent) {
-            log.onEvent(event)
-            entry.eventSignal.value = event.sequenceId
-        }
-
-        override fun listenerForSubagent(name: String, sessionId: String): AgentEventListener = TreeMemberListener(
-            logs,
-            entryFor(sessionId),
-            logs.computeIfAbsent(sessionId) { store.eventLogFor(sessionId) },
-        )
-
-        override suspend fun storedEventsFor(sessionId: String): List<AgentEvent>? = withContext(Dispatchers.IO) {
-            store.readEventsOrNull(sessionId)
-        }
-    }
-}
-
-private suspend fun teardown(rootEntry: SessionEntry) {
-    val runtime = rootEntry.runtime ?: return
-    rootEntry.runtime = null
-
-    withContext(NonCancellable + Dispatchers.IO) {
-        runtime.abortRuns()
-        runtime.closeLogs()
-    }
 }
 
 internal class SessionEntry {
@@ -399,70 +337,14 @@ internal class SessionEntry {
 
     @Volatile
     var runtime: TreeRuntime? = null
-}
 
-internal class TreeRuntime(
-    private val rootAgent: Agent,
-    val environment: ExecutionEnvironment,
-    private val logs: ConcurrentHashMap<String, PersistedEventLog>,
-    private val changes: ChangeSignal,
-) {
-
-    private val job = SupervisorJob()
-
-    private val scope = CoroutineScope(job + Dispatchers.Default)
-
-    private val activeRuns = ConcurrentHashMap.newKeySet<String>()
-
-    suspend fun agentAt(path: List<String>): Agent? =
-        path.drop(1).fold(rootAgent as Agent?) { agent, childId -> agent?.subagentBySessionId(childId) }
-
-    suspend fun isRunning(path: List<String>): Boolean =
-        path.last() in activeRuns || liveAgentAt(path)?.isRunning == true
-
-    fun hasRunInFlight(): Boolean = activeRuns.isNotEmpty()
-
-    private suspend fun liveAgentAt(path: List<String>): Agent? =
-        path.drop(1).fold(rootAgent as Agent?) { agent, childId -> agent?.liveSubagentBySessionId(childId) }
-
-    fun launchRun(agent: Agent, run: suspend (Agent) -> RunResult) {
-        logs[agent.sessionId]?.failure?.let { throw EventLogFailedException(it) }
-        claimRun(agent)
-
-        changes.announce()
-        scope.launch {
-            try {
-                run(agent)
-            } finally {
-                activeRuns.remove(agent.sessionId)
-                changes.announce()
-            }
+    suspend fun detachRuntime(): TreeRuntime? {
+        val detached = runtime ?: return null
+        runtime = null
+        withContext(NonCancellable + Dispatchers.IO) {
+            detached.abortRuns()
+            detached.closeLogs()
         }
-    }
-
-    suspend fun abortRuns() {
-        job.cancelAndJoin()
-    }
-
-    suspend fun stopRun(path: List<String>) {
-        liveAgentAt(path)?.stop()
-    }
-
-    fun closeLogs() {
-        logs.values.map { runCatching { it.close() } }
-            .firstNotNullOfOrNull { it.exceptionOrNull() }
-            ?.let { throw it }
-    }
-
-    private fun claimRun(agent: Agent) {
-        if (!activeRuns.add(agent.sessionId)) {
-            throw SessionConflictException(RUN_ACTIVE_MESSAGE)
-        }
-        if (agent.isRunning) {
-            activeRuns.remove(agent.sessionId)
-            throw SessionConflictException(RUN_ACTIVE_MESSAGE)
-        }
+        return detached
     }
 }
-
-private const val RUN_ACTIVE_MESSAGE = "A run is already active on this session."
