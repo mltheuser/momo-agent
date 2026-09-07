@@ -2,7 +2,6 @@ package codes.momo.agent.server
 
 import codes.momo.agent.server.storage.TemplateStore
 import io.ktor.server.application.ApplicationCall
-import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -27,13 +26,10 @@ internal fun Route.templateRoutes(store: TemplateStore) {
             call.respond(TemplateResponse(name, store.read(name)))
         }
         put("/{name}") {
-            val request = call.receive<PutTemplateRequest>()
-            if (request.body.isBlank()) {
-                throw BadRequestException("A template body must not be blank.")
-            }
+            val body = call.receive<PutTemplateRequest>().body.requireNotBlank("template body")
             val name = call.templateName()
-            store.write(name, request.body)
-            call.respond(TemplateResponse(name, request.body))
+            store.write(name, body)
+            call.respond(TemplateResponse(name, body))
         }
     }
 }

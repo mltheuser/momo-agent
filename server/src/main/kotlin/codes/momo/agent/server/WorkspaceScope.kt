@@ -14,10 +14,7 @@ import kotlinx.coroutines.withContext
 import java.nio.file.Path
 
 internal fun ApplicationCall.workspaceParameter(): String? {
-    val raw = request.queryParameters[WORKSPACE_PARAMETER] ?: return null
-    if (raw.isBlank()) {
-        throw BadRequestException("A workspace must not be blank.")
-    }
+    val raw = request.queryParameters[WORKSPACE_PARAMETER]?.requireNotBlank("workspace") ?: return null
     if (!Path.of(raw).isAbsolute) {
         throw BadRequestException("A workspace must be an absolute path, not: $raw")
     }

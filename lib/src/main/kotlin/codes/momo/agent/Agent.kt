@@ -97,7 +97,6 @@ public class Agent internal constructor(
         }
 
     public fun recordModelSelection(model: String, reasoningEffort: ReasoningEffort? = null) {
-        require(model.isNotBlank()) { "A recorded model selection must name a model." }
         emitter.emit { id, at -> AgentEvent.ModelSelected(id, at, model, reasoningEffort) }
     }
 
@@ -126,10 +125,7 @@ public class Agent internal constructor(
         }
     }
 
-    public suspend fun send(text: String, settings: RunSettings): RunResult {
-        require(text.isNotBlank()) { "A user message must not be blank." }
-        return guardedRun(text, settings)
-    }
+    public suspend fun send(text: String, settings: RunSettings): RunResult = guardedRun(text, settings)
 
     public suspend fun retry(settings: RunSettings): RunResult {
         require(history.last().awaitsModel) {

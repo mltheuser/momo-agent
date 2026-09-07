@@ -180,24 +180,21 @@ private fun Route.singleSessionRoutes(registry: SessionRegistry) {
         call.respond(registry.info(call.sessionId()))
     }
     post("/prompt") {
-        val request = call.receive<PromptRequest>().validated()
+        val request = call.receive<PromptRequest>()
+        val prompt = request.prompt.requireNotBlank("prompt")
+        val settings = RunSettings(request.model.requireNotBlank("model"), request.reasoningEffort)
         val id = call.sessionId()
-        registry.startRun(id, request.prompt, RunSettings(request.model, request.reasoningEffort))
+        registry.startRun(id, prompt, settings)
         call.respond(HttpStatusCode.Accepted, registry.info(id))
     }
     post("/rename") {
-        val request = call.receive<RenameRequest>()
-        if (request.title.isBlank()) {
-            throw BadRequestException("A title must not be blank.")
-        }
-        call.respond(registry.rename(call.sessionId(), request.title))
+        val title = call.receive<RenameRequest>().title.requireNotBlank("title")
+        call.respond(registry.rename(call.sessionId(), title))
     }
     post("/select-model") {
         val request = call.receive<SelectModelRequest>()
-        if (request.model.isBlank()) {
-            throw BadRequestException("A model must not be blank.")
-        }
-        call.respond(registry.selectModel(call.sessionId(), request.model, request.reasoningEffort))
+        val model = request.model.requireNotBlank("model")
+        call.respond(registry.selectModel(call.sessionId(), model, request.reasoningEffort))
     }
     post("/retry") {
         val id = call.sessionId()
@@ -251,13 +248,9 @@ private fun Route.eventStreamRoute(registry: SessionRegistry) {
     }
 }
 
-private fun PromptRequest.validated(): PromptRequest {
-    if (prompt.isBlank()) {
-        throw BadRequestException("A prompt must not be blank.")
-    }
-
-    if (model.isBlank()) {
-        throw BadRequestException("A model must not be blank.")
+internal fun String.requireNotBlank(what: String): String {
+    if (isBlank()) {
+        throw BadRequestException("A $what must not be blank.")
     }
     return this
 }
