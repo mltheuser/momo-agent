@@ -197,22 +197,30 @@ public class Agent internal constructor(
 
             history += toolCallRepairs(history, run.startedCallIds, status)
         }
-        val result = RunResult(
-            status = checkNotNull(status),
-            finalMessage = run.finalMessage,
-            usage = run.usage,
-            turnsUsed = run.turnsUsed,
-            elapsed = run.elapsed,
-            error = run.failure,
-        )
+        val result = RunResult(checkNotNull(status), run.finalMessage, run.failure)
         if (result.status == RunResult.Status.ERROR) {
             try {
                 logger.error("A run on session $sessionId ended in error.", result.error)
             } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
             }
         }
-        emitter.emitRunFinished(result)
+        emitRunFinished(run, result)
         return result
+    }
+
+    private fun emitRunFinished(run: RunState, result: RunResult) {
+        emitter.emit { id, at ->
+            AgentEvent.RunFinished(
+                sequenceId = id,
+                timestampMillis = at,
+                status = result.status,
+                finalMessage = result.finalMessage,
+                usage = run.usage,
+                turnsUsed = run.turnsUsed,
+                elapsed = run.elapsed,
+                error = result.error?.let(AgentEvent.RunFinished.Error::from),
+            )
+        }
     }
 
     private suspend fun runLoop(run: RunState): RunResult.Status {
@@ -420,21 +428,6 @@ private fun AgentEventListener.subagentListener(name: String, sessionId: String)
     listenerForSubagent(name, sessionId)
 } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
     NoOpAgentEventListener
-}
-
-private fun AgentEventEmitter.emitRunFinished(result: RunResult) {
-    emit { id, at ->
-        AgentEvent.RunFinished(
-            sequenceId = id,
-            timestampMillis = at,
-            status = result.status,
-            finalMessage = result.finalMessage,
-            usage = result.usage,
-            turnsUsed = result.turnsUsed,
-            elapsed = result.elapsed,
-            error = result.error?.let(AgentEvent.RunFinished.Error::from),
-        )
-    }
 }
 
 private val ToolResult.media: AgentEvent.ToolCallFinished.Media?
