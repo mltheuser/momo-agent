@@ -32,16 +32,16 @@ public class ExecutionEnvironment internal constructor(
 
     public val privilege: Privilege = probe.detect()
 
-    public val workspacePath: String = workspace.toAbsolutePath().normalize().toString()
+    internal val workspacePath: String = workspace.toAbsolutePath().normalize().toString()
 
-    public suspend fun exec(
+    internal suspend fun exec(
         command: List<String>,
         timeout: Duration,
     ): ExecResult = runner.run(command, timeout)
 
-    public companion object {
+    internal companion object {
 
-        public const val MAX_CAPTURED_BYTES: Int = 8 * 1024 * 1024
+        const val MAX_CAPTURED_BYTES: Int = 8 * 1024 * 1024
     }
 }
 

@@ -1,16 +1,16 @@
 package codes.momo.agent.environment
 
-public sealed interface ExecResult {
+internal sealed interface ExecResult {
 
-    public val stdout: String
+    val stdout: String
 
-    public val stderr: String
+    val stderr: String
 
-    public val stdoutTruncated: Boolean
+    val stdoutTruncated: Boolean
 
-    public val stderrTruncated: Boolean
+    val stderrTruncated: Boolean
 
-    public data class Completed(
+    data class Completed(
         val exitCode: Int,
         override val stdout: String,
         override val stderr: String,
@@ -18,7 +18,7 @@ public sealed interface ExecResult {
         override val stderrTruncated: Boolean,
     ) : ExecResult
 
-    public data class TimedOut(
+    data class TimedOut(
         override val stdout: String,
         override val stderr: String,
         override val stdoutTruncated: Boolean,
