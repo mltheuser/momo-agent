@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.takeWhile
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.serializer
 import java.io.BufferedInputStream
 import java.io.BufferedWriter
 import java.io.ByteArrayOutputStream
@@ -145,20 +144,6 @@ private fun storedLines(id: String, file: Path): List<StoredLine> = parseLogLine
 
 private fun StoredLine.survivesCut(lastSurvivingSequenceId: Long): Boolean =
     header.sequenceId <= lastSurvivingSequenceId || header.type in PRESERVED_EVENT_TYPES
-
-private val PRESERVED_EVENTS: List<PreservedEvent> = listOf(
-    preservedEvent<AgentEvent.SessionRenamed>(),
-    preservedEvent<AgentEvent.ModelSelected>(),
-)
-
-private class PreservedEvent(val storedType: String, val matches: (AgentEvent) -> Boolean)
-
-private inline fun <reified T : AgentEvent> preservedEvent(): PreservedEvent =
-    PreservedEvent(serializer<T>().descriptor.serialName) { it is T }
-
-internal val PRESERVED_EVENT_TYPES: Set<String> = PRESERVED_EVENTS.mapTo(mutableSetOf()) { it.storedType }
-
-internal fun AgentEvent.isPreservedByACut(): Boolean = PRESERVED_EVENTS.any { it.matches(this) }
 
 private fun <T : Any> parseLogLines(id: String, file: Path, parse: (String) -> T): List<T> {
     val lines = file.readLines().filter { it.isNotBlank() }

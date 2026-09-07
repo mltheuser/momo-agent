@@ -225,29 +225,10 @@ internal class SessionRegistry(
                 if (root.runtime?.hasRunInFlight() == true) {
                     throw SessionConflictException("A run is in flight in the session's tree.")
                 }
-                val lastSurviving = lastSurvivorOfCutFrom(id, firstDeletedSequenceId)
+                val lastSurviving = storedEvents(id).lastSurvivorOfCutFrom(id, firstDeletedSequenceId)
                 executeRewind(root, rootId = path.first(), id = id, lastSurviving = lastSurviving)
             }
         }
-    }
-
-    private suspend fun lastSurvivorOfCutFrom(id: String, firstDeletedSequenceId: Long): Long {
-        val events = storedEvents(id)
-        val named = events.firstOrNull { it.sequenceId == firstDeletedSequenceId }
-        val below = events.filter { it.sequenceId < firstDeletedSequenceId }
-        val refusal = when {
-            named == null -> "Session $id has no event with sequence ID $firstDeletedSequenceId to cut from."
-            named.isPreservedByACut() ->
-                "Sequence ID $firstDeletedSequenceId names an event a cut preserves in session $id's log, " +
-                    "so it cannot be an event to cut from."
-            below.isEmpty() ->
-                "Sequence ID $firstDeletedSequenceId opens session $id's log, and a cut must leave it standing."
-            else -> null
-        }
-        if (refusal != null) {
-            throw InvalidRewindPointException(refusal)
-        }
-        return below.last().sequenceId
     }
 
     private suspend fun storedEvents(id: String): List<AgentEvent> = withContext(Dispatchers.IO) {
