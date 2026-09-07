@@ -21,18 +21,19 @@ cannot stage cheaply.
 ## How live tests are structured
 
 Source set `server/src/liveTest`, compiled against `main` for `internal`
-access to the API's request and response types. A
-test is a plain JUnit 5 class whose methods run inside `withLiveServer`.
+access to the API's request and response types. The root package holds the
+test classes: plain JUnit 5 classes whose methods run inside `withLiveServer`.
+Two sub-packages hold what they stand on.
 
-The foundation, bottom up:
+`rig` is everything a test needs to talk to a real server. It starts the
+installed server as a child process, points it at the live ai-router, and
+gives the test an HTTP client with one function per API call. Most tests share
+one server for the whole suite; a test that restarts or crashes the server
+starts its own. The rig can also put a fake router between server and
+ai-router to script failures the live router would never produce.
 
-1. **The router** (`LiveRouter.kt`). Base URL and model come from system properties the Gradle task sets. The first use probes the router; an unreachable or wrong-model router fails every test once per JVM.
-2. **A server process** (`LiveServerProcess.kt`). Starts the installed distribution (`installDist` runs first) as a child process with `--data-dir` and `--ai-router-base-url`, waits for it to listen, and kills it on close.
-3. **The shared server** (`LiveServerSupport.kt`). One process for the whole suite, started lazily on first use over a temp data dir, torn down by a JVM shutdown hook. `withLiveServer { http -> ... }` wraps a test body in `runBlocking` with an HTTP client pointed at it. Tests share the process but each owns only the sessions it creates.
-4. **The API client** (`ServerApiClient.kt`). Extension functions on `HttpClient` speaking the server's API: typed calls that decode responses (`createSession`, `prompt`, `rewindSession`), `*Response` variants returning the raw response for status and error-code assertions, `raw*` variants taking a JSON string for malformed input, and the waits (`awaitRunEnd`, `streamEvents(until = ...)`, `withChangeStream`).
-5. **Fixtures**. `writeHarness` writes a harness folder into the test's `@TempDir`; `localWorkspace` makes a workspace folder there; `WordImage` renders a word into a PNG. `FaultyRouter` is a loopback stand-in for router failures: it scripts HTTP-level replies per request and forwards to the live router once the script is spent. It never scripts model output.
-
-Waiting for a run: use `awaitRunEnd` or `streamEvents(until = ...)`, never a `RunFinished` frame alone and never a sleep. The server's claim on a run outlives the terminal frame, so a command sent on that frame's heels can draw a `409`. Treat the change stream as a doorbell: `ChangeStream.signalled { mutation }` then re-read; never count frames.
+`fixtures` holds what a test writes into its `@TempDir` before it starts: the
+harness folder and the workspace the agent runs against.
 
 Adding a test: one class per user flow, one `@TempDir`, a `@DisplayName` stating the flow. Write the harness, `createSession(harnessPath, localWorkspace(tempDir))`, drive it through the API client, assert on events and `SessionInfo`.
 
