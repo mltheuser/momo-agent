@@ -8,7 +8,6 @@ Rules for editing this repo's code. Orientation and reference are in
 Two Gradle modules: `lib/` (library, `codes.momo.agent`) and `server/`
 (HTTP server over `lib`). `server` depends on `lib`, never the reverse.
 Shared build conventions live in the root `build.gradle.kts`.
-Map of the code: [docs/architecture.md](docs/architecture.md).
 
 ## Verify
 
