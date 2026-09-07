@@ -22,8 +22,10 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 
 class RunControlLiveTest {
 
@@ -61,11 +63,12 @@ class RunControlLiveTest {
         http.awaitRunEnd(id)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status)
 
-        assertEquals(SessionStatus.RUNNING, http.prompt(id, RESUME_PROMPT).status)
+        assertEquals(SessionStatus.RUNNING, http.prompt(id, RECALL_PROMPT).status)
         val resumed = assertIs<AgentEvent.RunFinished>(
             http.streamEvents(id, afterSequenceId = events.last().id).last().event,
         )
         assertEquals(RunResult.Status.COMPLETED, resumed.status, "error: ${resumed.error}")
+        assertContains(assertNotNull(resumed.finalMessage), SLOW_COMMAND, message = "the stopped turn is remembered")
         assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status)
     }
 
@@ -78,7 +81,7 @@ class RunControlLiveTest {
 
         assertEquals(SessionStatus.CLOSED, http.closeSession(id).status)
 
-        assertEquals(SessionStatus.RUNNING, http.prompt(id, RESUME_PROMPT).status)
+        assertEquals(SessionStatus.RUNNING, http.prompt(id, RECALL_PROMPT).status)
         val events = http.streamEvents(id)
 
         assertEquals(2, events.count { it.event is AgentEvent.RunStarted }, "the aborted run plus the resumed one")
@@ -89,12 +92,16 @@ class RunControlLiveTest {
         )
         val finished = assertIs<AgentEvent.RunFinished>(events.last().event)
         assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
+        assertContains(assertNotNull(finished.finalMessage), SLOW_COMMAND, message = "the aborted turn is remembered")
         assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status)
     }
 }
 
-private const val SLOW_PROMPT: String =
-    "Using the bash tool, run the command 'sleep 5 && echo done' and then report what it printed."
+private const val SLOW_COMMAND: String = "sleep 5 && echo done"
 
-private const val RESUME_PROMPT: String =
-    "That command is no longer needed. Without using any tools, tell me what two plus two is."
+private const val SLOW_PROMPT: String =
+    "Using the bash tool, run the command '$SLOW_COMMAND' and then report what it printed."
+
+private const val RECALL_PROMPT: String =
+    "That command is no longer needed and must not run again. Without using any tools, " +
+        "tell me the exact shell command I asked you to run."
