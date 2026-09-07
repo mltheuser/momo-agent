@@ -33,9 +33,22 @@ internal class SessionRegistry(
     private val client: AiRouterClient,
 ) : AutoCloseable {
 
-    private val store = SessionStore(dataDir)
+    val store: SessionStore = SessionStore(dataDir)
 
     private val entries = ConcurrentHashMap<String, SessionEntry>()
+
+    val ids: Set<String>
+        get() = entries.keys
+
+    fun entry(id: String): SessionEntry = entries[id] ?: throw UnknownSessionException(id)
+
+    fun entryOrNull(id: String): SessionEntry? = entries[id]
+
+    fun entryFor(id: String): SessionEntry = entries.computeIfAbsent(id) { SessionEntry() }
+
+    fun requireKnown(id: String) {
+        entry(id)
+    }
 
     val changes: ChangeSignal = ChangeSignal()
 
@@ -68,7 +81,7 @@ internal class SessionRegistry(
 
     suspend fun list(workspace: String): List<SessionInfo> {
         val scope = normalizedWorkspace(workspace)
-        return entries.keys.mapNotNull { id ->
+        return ids.mapNotNull { id ->
             try {
                 val started = withContext(Dispatchers.IO) { store.readSessionStarted(id) }
                 if (started.parent == null && normalizedWorkspace(started.workspace) == scope) info(id) else null
@@ -79,7 +92,7 @@ internal class SessionRegistry(
     }
 
     suspend fun info(id: String): SessionInfo = withContext(Dispatchers.IO) {
-        entries.known(id)
+        requireKnown(id)
         val path = store.pathTo(id)
         val events = store.readEvents(id)
         val started = events.sessionStarted()
@@ -138,14 +151,14 @@ internal class SessionRegistry(
         onAgent: (Agent) -> Unit,
         dormantEvent: (sequenceId: Long, timestampMillis: Long) -> AgentEvent,
     ): SessionInfo {
-        val (path, root) = treeOf(entries, store, id)
+        val tree = treeOf(id)
         changes.announcing {
-            root.mutex.withLock {
-                val runtime = root.runtime
+            tree.root.mutex.withLock {
+                val runtime = tree.root.runtime
                 if (runtime == null) {
                     appendToDormantLog(id, dormantEvent)
                 } else {
-                    val agent = runtime.agentAt(path) ?: throw UnknownSessionException(id)
+                    val agent = runtime.agentAt(tree.path) ?: throw UnknownSessionException(id)
                     withContext(Dispatchers.IO) { onAgent(agent) }
                 }
             }
@@ -164,26 +177,26 @@ internal class SessionRegistry(
         } catch (failure: IOException) {
             throw EventLogFailedException(failure)
         }
-        entries.known(id).eventSignal.value = stamped.sequenceId
+        entry(id).eventSignal.value = stamped.sequenceId
     }
 
     suspend fun close(id: String) {
-        val (_, root) = treeOf(entries, store, id)
+        val tree = treeOf(id)
         changes.announcing {
-            root.mutex.withLock { teardown(root) }
+            tree.root.mutex.withLock { teardown(tree.root) }
         }
     }
 
     suspend fun stopRun(id: String) {
-        val (path, root) = treeOf(entries, store, id)
-        root.runtime?.stopRun(path)
+        val tree = treeOf(id)
+        tree.root.runtime?.stopRun(tree.path)
     }
 
     suspend fun delete(id: String) {
-        val target = entries.known(id)
+        val target = entry(id)
         val root = withContext(Dispatchers.IO) {
             try {
-                entries.known(store.pathTo(id).first())
+                entry(store.pathTo(id).first())
             } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
                 target
             }
@@ -209,14 +222,12 @@ internal class SessionRegistry(
     }
 
     suspend fun rewind(id: String, firstDeletedSequenceId: Long): List<String> {
-        val (path, root) = treeOf(entries, store, id)
+        val tree = treeOf(id)
         return changes.announcing {
-            root.mutex.withLock {
-                if (root.runtime?.hasRunInFlight() == true) {
-                    throw SessionConflictException("A run is in flight in the session's tree.")
-                }
+            tree.root.mutex.withLock {
+                tree.requireNoRunInFlight()
                 val lastSurviving = storedEvents(id).lastSurvivorOfCutFrom(id, firstDeletedSequenceId)
-                executeRewind(root, rootId = path.first(), id = id, lastSurviving = lastSurviving)
+                executeRewind(tree.root, rootId = tree.rootId, id = id, lastSurviving = lastSurviving)
             }
         }
     }
@@ -267,35 +278,30 @@ internal class SessionRegistry(
     }
 
     suspend fun startRun(id: String, prompt: String, settings: RunSettings) {
-        val (path, root) = treeOf(entries, store, id)
-        root.mutex.withLock {
-            launchRunLocked(root, path) { agent -> agent.send(prompt, settings) }
+        val tree = treeOf(id)
+        tree.root.mutex.withLock {
+            launchRunLocked(tree) { agent -> agent.send(prompt, settings) }
         }
     }
 
     suspend fun retryRun(id: String) {
-        val (path, root) = treeOf(entries, store, id)
+        val tree = treeOf(id)
         changes.announcing {
-            root.mutex.withLock {
-                if (root.runtime?.hasRunInFlight() == true) {
-                    throw SessionConflictException("A run is in flight in the session's tree.")
-                }
+            tree.root.mutex.withLock {
+                tree.requireNoRunInFlight()
                 val plan = retryPlan(storedEvents(id))
-                executeRewind(root, rootId = path.first(), id = id, lastSurviving = plan.lastSurvivingSequenceId)
-                launchRunLocked(root, path) { agent -> agent.retry(plan.settings) }
+                executeRewind(tree.root, rootId = tree.rootId, id = id, lastSurviving = plan.lastSurvivingSequenceId)
+                launchRunLocked(tree) { agent -> agent.retry(plan.settings) }
             }
         }
     }
 
-    private suspend fun launchRunLocked(
-        root: SessionEntry,
-        path: List<String>,
-        run: suspend (Agent) -> RunResult,
-    ) {
+    private suspend fun launchRunLocked(tree: SessionTree, run: suspend (Agent) -> RunResult) {
+        val root = tree.root
         val attached = root.runtime
-        val runtime = attached ?: rebuild(root, path.first()).also { root.runtime = it }
+        val runtime = attached ?: rebuild(root, tree.rootId).also { root.runtime = it }
         try {
-            val agent = runtime.agentAt(path) ?: throw UnknownSessionException(path.last())
+            val agent = runtime.agentAt(tree.path) ?: throw UnknownSessionException(tree.id)
             runtime.launchRun(agent, run)
         } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
             if (attached == null) {
@@ -306,16 +312,12 @@ internal class SessionRegistry(
     }
 
     fun eventsAfter(id: String, afterSequenceId: Long): Flow<StoredEvent> {
-        val entry = entries.known(id)
+        val entry = entry(id)
         return store.tailEvents(id, entry.eventSignal, entry.truncations, afterSequenceId)
     }
 
-    fun requireKnown(id: String) {
-        entries.known(id)
-    }
-
     suspend fun requireInWorkspace(id: String, workspace: String): Unit = withContext(Dispatchers.IO) {
-        entries.known(id)
+        requireKnown(id)
         val started = try {
             store.readSessionStarted(id)
         } catch (_: CorruptSessionException) {
@@ -328,7 +330,7 @@ internal class SessionRegistry(
 
     override fun close() {
         runBlocking {
-            entries.keys.forEach { id ->
+            ids.forEach { id ->
                 runCatching { close(id) }
             }
         }
@@ -367,7 +369,7 @@ internal class SessionRegistry(
 
         override fun listenerForSubagent(name: String, sessionId: String): AgentEventListener = TreeMemberListener(
             logs,
-            entries.computeIfAbsent(sessionId) { SessionEntry() },
+            entryFor(sessionId),
             logs.computeIfAbsent(sessionId) { store.eventLogFor(sessionId) },
         )
 
@@ -375,43 +377,6 @@ internal class SessionRegistry(
             store.readEventsOrNull(sessionId)
         }
     }
-}
-
-private fun Map<String, SessionEntry>.known(id: String): SessionEntry =
-    this[id] ?: throw UnknownSessionException(id)
-
-private suspend fun treeOf(
-    entries: Map<String, SessionEntry>,
-    store: SessionStore,
-    id: String,
-): Pair<List<String>, SessionEntry> = withContext(Dispatchers.IO) {
-    entries.known(id)
-    val path = store.pathTo(id)
-    path to entries.known(path.first())
-}
-
-private fun SessionStore.pathTo(id: String): List<String> {
-    val ancestry = mutableListOf(id)
-    var parent = readSessionStarted(id).parent
-    while (parent != null) {
-        check(parent !in ancestry) { "Stored session $id has a parent cycle." }
-        ancestry += parent
-        parent = readSessionStarted(parent).parent
-    }
-    return ancestry.asReversed()
-}
-
-private fun SessionStore.subtreeIds(id: String): List<String> {
-    val childrenByParent = sessionIds().groupBy { sessionId ->
-        runCatching { readSessionStarted(sessionId).parent }.getOrNull()
-    }
-    val subtree = mutableListOf(id)
-    var index = 0
-    while (index < subtree.size) {
-        subtree += childrenByParent[subtree[index]].orEmpty()
-        index++
-    }
-    return subtree
 }
 
 private suspend fun teardown(rootEntry: SessionEntry) {
@@ -424,19 +389,19 @@ private suspend fun teardown(rootEntry: SessionEntry) {
     }
 }
 
-private class SessionEntry {
+internal class SessionEntry {
 
-    val mutex = Mutex()
+    val mutex: Mutex = Mutex()
 
-    val eventSignal = MutableStateFlow(BEFORE_FIRST_EVENT)
+    val eventSignal: MutableStateFlow<Long> = MutableStateFlow(BEFORE_FIRST_EVENT)
 
-    val truncations = MutableStateFlow(0L)
+    val truncations: MutableStateFlow<Long> = MutableStateFlow(0L)
 
     @Volatile
     var runtime: TreeRuntime? = null
 }
 
-private class TreeRuntime(
+internal class TreeRuntime(
     private val rootAgent: Agent,
     val environment: ExecutionEnvironment,
     private val logs: ConcurrentHashMap<String, PersistedEventLog>,
