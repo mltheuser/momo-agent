@@ -4,7 +4,7 @@
 
 Resolution order: CLI argument, then environment variable, then default.
 
-CLI arguments take the form `--option=value`. Source: `server/.../ServerConfig.kt`.
+CLI arguments take the form `--option=value`. Source: `ServerConfig` in the server's root package.
 
 - There is no authentication.
 - A blank environment variable counts as unset.
