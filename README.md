@@ -29,8 +29,9 @@ To build the project run `./gradlew build` this also runs the live test suite. I
 | --- | --------- |
 | [docs/building.md](docs/building.md) | Setting up the build: composite build, Gradle tasks, lint. |
 | [docs/configuration.md](docs/configuration.md) | Configuring the server (CLI flags, env vars, defaults) or the live suite. |
+| [docs/architecture.md](docs/architecture.md) | Finding your way around the code: modules, files, the event log. |
 | [docs/harness.md](docs/harness.md) | Writing a harness folder: `harness.yaml` keys and loading rules. |
-| [docs/sessions.md](docs/sessions-and-storage.md) | Session lifecycle, status, workspace scope, on-disk layout, persisted-format contract. |
+| [docs/sessions.md](docs/sessions.md) | Session lifecycle, status, workspace scope, on-disk layout, persisted-format contract. |
 | [docs/execution-environment.md](docs/execution-environment.md) | Platforms, userland baseline, command privileges and sudoers. |
 | [docs/testing.md](docs/testing.md) | Running or adding tests; what a fresh checkout needs for a green `build`. |
 | [AGENTS.md](AGENTS.md) | Rules for editing the code. |
