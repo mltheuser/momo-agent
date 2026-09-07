@@ -4,8 +4,6 @@ import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.Agent
 import codes.momo.agent.AgentEvent
-import codes.momo.agent.RunResult
-import codes.momo.agent.RunSettings
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import kotlinx.coroutines.Dispatchers
@@ -179,11 +177,6 @@ internal class SessionRegistry(
         }
     }
 
-    suspend fun stopRun(id: String) {
-        val tree = treeOf(id)
-        tree.root.runtime?.stopRun(tree.path)
-    }
-
     suspend fun delete(id: String) {
         val target = entry(id)
         val root = withContext(Dispatchers.IO) {
@@ -203,7 +196,7 @@ internal class SessionRegistry(
         }
     }
 
-    private fun removeSubtree(id: String): List<String> {
+    fun removeSubtree(id: String): List<String> {
         val members = store.subtreeIds(id)
         members.asReversed().forEach { member ->
             val memberEntry = entries.remove(member)
@@ -211,94 +204,6 @@ internal class SessionRegistry(
             memberEntry?.eventSignal?.value = SESSION_DELETED_SIGNAL
         }
         return members
-    }
-
-    suspend fun rewind(id: String, firstDeletedSequenceId: Long): List<String> {
-        val tree = treeOf(id)
-        return changes.announcing {
-            tree.root.mutex.withLock {
-                tree.requireNoRunInFlight()
-                val lastSurviving = storedEvents(id).lastSurvivorOfCutFrom(id, firstDeletedSequenceId)
-                executeRewind(tree.root, rootId = tree.rootId, id = id, lastSurviving = lastSurviving)
-            }
-        }
-    }
-
-    private suspend fun storedEvents(id: String): List<AgentEvent> = withContext(Dispatchers.IO) {
-        store.readEvents(id)
-    }
-
-    private suspend fun executeRewind(
-        root: SessionEntry,
-        rootId: String,
-        id: String,
-        lastSurviving: Long,
-    ): List<String> = withContext(NonCancellable + Dispatchers.IO) {
-        val plan = rewindPlan(id, lastSurviving, store::readEventsOrNull)
-        val runtime = root.runtime
-        if (runtime == null) applyPlan(plan) else rewindAttachedTree(root, rootId, runtime, plan)
-    }
-
-    private suspend fun rewindAttachedTree(
-        root: SessionEntry,
-        rootId: String,
-        runtime: TreeRuntime,
-        plan: RewindPlan,
-    ): List<String> {
-        root.detachRuntime()
-        val harness = store.readSessionStarted(rootId).loadHarness()
-        val deleted = applyPlan(plan)
-        runCatching { root.runtime = loadTreeRuntime(root, rootId, harness, runtime.environment) }
-        return deleted
-    }
-
-    private fun applyPlan(plan: RewindPlan): List<String> {
-        val deleted = plan.deletedSubtreeRoots.flatMap { removeSubtree(it) }
-        val gone = deleted.toSet()
-        plan.cuts.reversed().forEach { (sessionId, lastSurviving) ->
-            if (sessionId !in gone) {
-                val rewound = store.rewindEvents(sessionId, lastSurviving)
-                entries[sessionId]?.let { entry ->
-                    entry.truncations.value += 1
-                    entry.eventSignal.value = rewound.sequenceId
-                }
-            }
-        }
-        return deleted
-    }
-
-    suspend fun startRun(id: String, prompt: String, settings: RunSettings) {
-        val tree = treeOf(id)
-        tree.root.mutex.withLock {
-            launchRunLocked(tree) { agent -> agent.send(prompt, settings) }
-        }
-    }
-
-    suspend fun retryRun(id: String) {
-        val tree = treeOf(id)
-        changes.announcing {
-            tree.root.mutex.withLock {
-                tree.requireNoRunInFlight()
-                val plan = retryPlan(storedEvents(id))
-                executeRewind(tree.root, rootId = tree.rootId, id = id, lastSurviving = plan.lastSurvivingSequenceId)
-                launchRunLocked(tree) { agent -> agent.retry(plan.settings) }
-            }
-        }
-    }
-
-    private suspend fun launchRunLocked(tree: SessionTree, run: suspend (Agent) -> RunResult) {
-        val root = tree.root
-        val attached = root.runtime
-        val runtime = attached ?: rebuildTreeRuntime(root, tree.rootId).also { root.runtime = it }
-        try {
-            val agent = runtime.agentAt(tree.path) ?: throw UnknownSessionException(tree.id)
-            runtime.launchRun(agent, run)
-        } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
-            if (attached == null) {
-                root.detachRuntime()
-            }
-            throw failure
-        }
     }
 
     fun eventsAfter(id: String, afterSequenceId: Long): Flow<StoredEvent> {
