@@ -77,7 +77,6 @@ internal fun SessionStore.readEventsOrNull(id: String): List<AgentEvent>? = try 
     null
 }
 
-/** [read] against the store, or null when it hits a log that is missing or corrupt. */
 internal inline fun <T> SessionStore.ifReadable(read: SessionStore.() -> T): T? = try {
     read()
 } catch (_: UnknownSessionException) {
