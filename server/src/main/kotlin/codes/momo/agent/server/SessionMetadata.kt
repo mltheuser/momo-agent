@@ -51,7 +51,7 @@ private suspend fun SessionRegistry.appendToDormantLog(
     val nextSequenceId = store.readEvents(id).last().sequenceId + 1
     val stamped = event(nextSequenceId, System.currentTimeMillis())
     try {
-        store.eventLogFor(id).use { it.onEvent(stamped) }
+        store.writer(id).use { it.onEvent(stamped) }
     } catch (failure: IOException) {
         throw EventLogFailedException(failure)
     }

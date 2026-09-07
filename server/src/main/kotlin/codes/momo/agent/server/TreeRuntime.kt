@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap
 internal class TreeRuntime(
     private val rootAgent: Agent,
     val environment: ExecutionEnvironment,
-    private val logs: ConcurrentHashMap<String, PersistedEventLog>,
+    private val logs: ConcurrentHashMap<String, EventLogWriter>,
     private val changes: ChangeSignal,
 ) {
 
@@ -86,9 +86,9 @@ internal class TreeRuntime(
 
 private class TreeMemberListener(
     private val registry: SessionRegistry,
-    private val logs: ConcurrentHashMap<String, PersistedEventLog>,
+    private val logs: ConcurrentHashMap<String, EventLogWriter>,
     private val entry: SessionEntry,
-    private val log: PersistedEventLog,
+    private val log: EventLogWriter,
 ) : AgentEventListener {
 
     override fun onEvent(event: AgentEvent) {
@@ -100,7 +100,7 @@ private class TreeMemberListener(
         registry,
         logs,
         registry.entryFor(sessionId),
-        logs.computeIfAbsent(sessionId) { registry.store.eventLogFor(sessionId) },
+        logs.computeIfAbsent(sessionId) { registry.store.writer(sessionId) },
     )
 
     override suspend fun storedEventsFor(sessionId: String): List<AgentEvent>? = withContext(Dispatchers.IO) {
@@ -111,10 +111,10 @@ private class TreeMemberListener(
 internal fun SessionRegistry.buildTreeRuntime(
     root: SessionEntry,
     environment: ExecutionEnvironment,
-    rootLog: PersistedEventLog,
+    rootLog: EventLogWriter,
     buildRootAgent: (AgentEventListener) -> Agent,
 ): TreeRuntime {
-    val logs = ConcurrentHashMap<String, PersistedEventLog>()
+    val logs = ConcurrentHashMap<String, EventLogWriter>()
     val agent = buildRootAgent(TreeMemberListener(this, logs, root, rootLog))
     logs[agent.sessionId] = rootLog
     return TreeRuntime(agent, environment, logs, changes)
@@ -133,7 +133,7 @@ internal fun SessionRegistry.loadTreeRuntime(
     environment: ExecutionEnvironment,
 ): TreeRuntime {
     val events = store.readEvents(rootId)
-    return buildTreeRuntime(root, environment, store.eventLogFor(rootId)) { listener ->
+    return buildTreeRuntime(root, environment, store.writer(rootId)) { listener ->
         Agent.load(events, harness, client, environment, listener)
     }
 }

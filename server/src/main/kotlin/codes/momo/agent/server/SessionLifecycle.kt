@@ -17,7 +17,7 @@ internal suspend fun SessionRegistry.create(harnessPath: String, workspace: Stri
             val harness = Harness.load(harnessFolder)
             val environment = ExecutionEnvironment(Path.of(workspace))
             val root = SessionEntry()
-            val log = store.eventLogForNewSession()
+            val log = store.writer()
             val runtime = buildTreeRuntime(root, environment, log) { listener ->
                 Agent(harness, client, environment, title ?: harnessFolder.fileName.toString(), listener)
             }

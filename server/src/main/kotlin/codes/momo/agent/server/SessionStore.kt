@@ -1,7 +1,6 @@
 package codes.momo.agent.server
 
 import codes.momo.agent.AgentEvent
-import codes.momo.agent.AgentEventListener
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
@@ -12,15 +11,11 @@ import kotlinx.coroutines.flow.takeWhile
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.BufferedInputStream
-import java.io.BufferedWriter
 import java.io.ByteArrayOutputStream
-import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
-import java.nio.file.StandardOpenOption
-import kotlin.io.path.createDirectories
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
@@ -94,9 +89,7 @@ internal class SessionStore(dataDir: Path) {
         return rewound
     }
 
-    fun eventLogForNewSession(): PersistedEventLog = PersistedEventLog(sessionsDir, id = null)
-
-    fun eventLogFor(id: String): PersistedEventLog = PersistedEventLog(sessionsDir, id)
+    fun writer(id: String? = null): EventLogWriter = EventLogWriter(id, ::logFile)
 
     fun delete(id: String) {
         val directory = directory(id)
@@ -114,6 +107,8 @@ internal class SessionStore(dataDir: Path) {
     }
 
     private fun directory(id: String): Path = sessionsDir.resolve(id)
+
+    private fun logFile(id: String): Path = directory(id).resolve(EVENTS_FILE)
 }
 
 internal fun SessionStore.readEventsOrNull(id: String): List<AgentEvent>? = try {
@@ -175,52 +170,6 @@ private class LineTail(private val file: Path) : AutoCloseable {
         BufferedInputStream(Files.newInputStream(file)).also { input = it }
     } catch (_: NoSuchFileException) {
         null
-    }
-}
-
-internal class PersistedEventLog(
-    private val sessionsDir: Path,
-    private var id: String?,
-) : AgentEventListener, AutoCloseable {
-
-    private var writer: BufferedWriter? = null
-
-    @Volatile
-    var failure: IOException? = null
-        private set
-
-    @Synchronized
-    override fun onEvent(event: AgentEvent) {
-        if (failure != null) {
-            return
-        }
-        try {
-            val target = writer ?: openWriter(event).also { writer = it }
-            target.write(encodeLogLine(event))
-            target.newLine()
-            target.flush()
-        } catch (appendFailure: IOException) {
-            failure = appendFailure
-        }
-    }
-
-    @Synchronized
-    override fun close() {
-        try {
-            writer?.close()
-        } finally {
-            writer = null
-        }
-        failure?.let { throw it }
-    }
-
-    private fun openWriter(event: AgentEvent): BufferedWriter {
-        val sessionId = id
-            ?: (event as? AgentEvent.SessionStarted)?.sessionId?.also { id = it }
-            ?: error("a fresh session's first event must be SessionStarted, got: $event")
-        val file = sessionsDir.resolve(sessionId).createDirectories().resolve(EVENTS_FILE)
-        file.dropTornTail()
-        return Files.newBufferedWriter(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
     }
 }
 
