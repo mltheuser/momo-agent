@@ -5,6 +5,8 @@ import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.application.install
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.routing.Route
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.nio.file.Path
 
 internal fun normalizedWorkspace(path: String): String = Path.of(path).toAbsolutePath().normalize().toString()
@@ -35,5 +37,18 @@ internal fun Route.scopeToWorkspace(registry: SessionRegistry) {
         },
     )
 }
+
+private suspend fun SessionRegistry.requireInWorkspace(id: String, workspace: String): Unit =
+    withContext(Dispatchers.IO) {
+        requireKnown(id)
+        val started = try {
+            store.readSessionStarted(id)
+        } catch (_: CorruptSessionException) {
+            throw UnknownSessionException(id)
+        }
+        if (normalizedWorkspace(started.workspace) != normalizedWorkspace(workspace)) {
+            throw UnknownSessionException(id)
+        }
+    }
 
 private const val WORKSPACE_PARAMETER: String = "workspace"

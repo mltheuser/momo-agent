@@ -12,7 +12,7 @@ public fun main(args: Array<String>) {
 
     Runtime.getRuntime().addShutdownHook(
         Thread {
-            registry.close()
+            registry.shutdown()
             client.close()
         },
     )

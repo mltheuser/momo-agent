@@ -3,8 +3,11 @@ package codes.momo.agent.server
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.environment.Privilege
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import java.io.IOException
 import kotlin.time.Duration
 
 @Serializable
@@ -54,6 +57,60 @@ internal data class RunStats(
 
     val elapsed: Duration,
 )
+
+internal suspend fun SessionRegistry.list(workspace: String): List<SessionInfo> {
+    val scope = normalizedWorkspace(workspace)
+    return ids.mapNotNull { id ->
+        try {
+            val started = withContext(Dispatchers.IO) { store.readSessionStarted(id) }
+            if (started.parent == null && normalizedWorkspace(started.workspace) == scope) info(id) else null
+        } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
+            null
+        }
+    }.sortedBy { it.createdAtMillis }
+}
+
+internal suspend fun SessionRegistry.info(id: String): SessionInfo = withContext(Dispatchers.IO) {
+    requireKnown(id)
+    val path = store.pathTo(id)
+    val events = store.readEvents(id)
+    val started = events.sessionStarted()
+    val runtime = entryOrNull(path.first())?.runtime
+    SessionInfo(
+        id = id,
+        parent = started.parent,
+        title = events.sessionTitle(),
+        harnessPath = started.harnessFolder,
+        workspace = started.workspace,
+        privilege = runtime?.environment?.privilege,
+        status = when {
+            runtime == null -> SessionStatus.CLOSED
+            runtime.isRunning(path) -> SessionStatus.RUNNING
+            else -> SessionStatus.IDLE
+        },
+        createdAtMillis = started.timestampMillis,
+        updatedAtMillis = events.sessionUpdatedAtMillis(),
+        lastRun = events.lastRunStats(),
+        modelSelection = events.modelSelection() ?: spawnPinnedSelection(started),
+    )
+}
+
+private fun SessionRegistry.spawnPinnedSelection(started: AgentEvent.SessionStarted): ModelSelection? =
+    started.parent
+        ?.let { parentId -> storedSpawn(parentId, started.sessionId) }
+        ?.let { spawn -> spawn.modelId?.let { ModelSelection(it, spawn.reasoningEffort) } }
+
+private fun SessionRegistry.storedSpawn(parentId: String, childId: String): AgentEvent.SubagentSpawned? = try {
+    store.readEvents(parentId)
+        .filterIsInstance<AgentEvent.SubagentSpawned>()
+        .lastOrNull { it.sessionId == childId }
+} catch (_: UnknownSessionException) {
+    null
+} catch (_: IOException) {
+    null
+} catch (_: CorruptSessionException) {
+    null
+}
 
 internal fun List<AgentEvent>.sessionStarted(): AgentEvent.SessionStarted = first() as AgentEvent.SessionStarted
 

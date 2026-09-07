@@ -194,7 +194,7 @@ private fun Route.singleSessionRoutes(registry: SessionRegistry) {
         call.respond(registry.info(call.sessionId()))
     }
     post("/close") {
-        registry.close(call.sessionId())
+        registry.closeSession(call.sessionId())
         call.respond(registry.info(call.sessionId()))
     }
     delete {
