@@ -5,6 +5,7 @@ import codes.momo.agent.RunResult
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
 import codes.momo.agent.server.rig.awaitRunEnd
+import codes.momo.agent.server.rig.closeSession
 import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.liveChatModel
 import codes.momo.agent.server.rig.prompt
@@ -95,20 +96,9 @@ class SubagentTreeLiveTest {
     }
 
     @Test
-    @DisplayName("Stopping the parent stops the child's run too: both end stopped, idle and still there")
+    @DisplayName("Stopping the parent stops the child's run too: both end stopped and idle, and the worker carries on")
     fun stoppingTheParentCascadesAsAStop() = withLiveServer { http ->
-        writeHarness(tempDir.resolve("worker"), instructions = WORKER_INSTRUCTIONS)
-        val manager = writeHarness(
-            tempDir.resolve("manager"),
-            subagents = mapOf(WORKER_TYPE to "../worker"),
-            instructions = MANAGER_INSTRUCTIONS,
-        ).toString()
-        val rootId = http.createSession(manager, localWorkspace(tempDir)).id
-        http.prompt(rootId, "Have the worker run the command `sleep 30 && echo done` and report what it printed.")
-
-        val childId = http.spawnedChildId(rootId)
-
-        http.streamEvents(childId, until = { it is AgentEvent.ToolCallStarted })
+        val (rootId, childId) = http.workerInFlight(tempDir)
 
         assertEquals(HttpStatusCode.OK, http.stopResponse(rootId).status)
 
@@ -125,7 +115,84 @@ class SubagentTreeLiveTest {
         http.awaitRunEnd(rootId)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(rootId).status)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(childId).status)
+
+        http.continueThroughTheWorker(rootId, childId)
     }
+
+    @Test
+    @DisplayName("Stopping the child ends its run alone: the parent completes on its own, and the worker carries on")
+    fun stoppingTheChildEndsOnlyItsRun() = withLiveServer { http ->
+        val (rootId, childId) = http.workerInFlight(tempDir)
+
+        assertEquals(HttpStatusCode.OK, http.stopResponse(childId).status)
+
+        val childEvents = http.streamEvents(childId)
+        assertEquals(RunResult.Status.STOPPED, assertIs<AgentEvent.RunFinished>(childEvents.last().event).status)
+        val rootEvents = http.streamEvents(rootId)
+        val parentRun = assertIs<AgentEvent.RunFinished>(rootEvents.last().event)
+        assertEquals(RunResult.Status.COMPLETED, parentRun.status, "the parent ends its own run: ${parentRun.error}")
+        http.awaitRunEnd(rootId)
+        assertEquals(
+            1,
+            http.streamEvents(childId).count { it.event is AgentEvent.RunStarted },
+            "the parent reported the stop instead of driving the worker again",
+        )
+        assertEquals(SessionStatus.IDLE, http.sessionInfo(rootId).status)
+        assertEquals(SessionStatus.IDLE, http.sessionInfo(childId).status)
+
+        http.continueThroughTheWorker(rootId, childId)
+    }
+
+    @Test
+    @DisplayName("A closed tree revives the worker on the next prompt with its conversation intact")
+    fun aClosedTreeRevivesTheWorker() = withLiveServer { http ->
+        val (rootId, childId) = http.workerInFlight(tempDir)
+        assertEquals(HttpStatusCode.OK, http.stopResponse(rootId).status)
+        http.awaitRunEnd(rootId)
+
+        assertEquals(SessionStatus.CLOSED, http.closeSession(rootId).status)
+        assertEquals(SessionStatus.CLOSED, http.sessionInfo(childId).status, "a child closes with its root")
+
+        http.continueThroughTheWorker(rootId, childId)
+    }
+}
+
+private suspend fun HttpClient.workerInFlight(tempDir: Path): Pair<String, String> {
+    writeHarness(tempDir.resolve("worker"), instructions = WORKER_INSTRUCTIONS)
+    val manager = writeHarness(
+        tempDir.resolve("manager"),
+        subagents = mapOf(WORKER_TYPE to "../worker"),
+        instructions = MANAGER_INSTRUCTIONS,
+    ).toString()
+    val rootId = createSession(manager, localWorkspace(tempDir)).id
+    prompt(rootId, "Have the worker run the command `$SLOW_COMMAND` and report what it printed.")
+    val childId = spawnedChildId(rootId)
+    streamEvents(childId, until = { it is AgentEvent.ToolCallStarted })
+    return rootId to childId
+}
+
+private suspend fun HttpClient.continueThroughTheWorker(rootId: String, childId: String) {
+    val rootBefore = streamEvents(rootId).last().id
+    val childBefore = streamEvents(childId).last().id
+    prompt(rootId, RECALL_PROMPT)
+
+    val rootTail = streamEvents(rootId, afterSequenceId = rootBefore)
+    val finished = assertIs<AgentEvent.RunFinished>(rootTail.last().event)
+    assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
+    assertContains(assertNotNull(finished.finalMessage), SLOW_COMMAND, message = "the worker remembers its command")
+    assertEquals(0, rootTail.count { it.event is AgentEvent.SubagentSpawned }, "the manager reused its worker")
+
+    val childTail = streamEvents(childId, afterSequenceId = childBefore)
+    assertEquals(1, childTail.count { it.event is AgentEvent.RunStarted }, "the worker ran once more")
+    assertEquals(RunResult.Status.COMPLETED, assertIs<AgentEvent.RunFinished>(childTail.last().event).status)
+    assertEquals(
+        (childBefore + 1..childBefore + childTail.size).toList(),
+        childTail.map { it.id },
+        "the worker's log continues without gaps",
+    )
+    awaitRunEnd(rootId)
+    assertEquals(SessionStatus.IDLE, sessionInfo(rootId).status)
+    assertEquals(SessionStatus.IDLE, sessionInfo(childId).status)
 }
 
 private suspend fun HttpClient.spawnedChildId(rootId: String): String =
@@ -158,14 +225,21 @@ private val DISPATCHER_INSTRUCTIONS: String = """
 
 private const val WORKER_TYPE: String = "worker"
 
+private const val SLOW_COMMAND: String = "sleep 30 && echo done"
+
+private const val RECALL_PROMPT: String =
+    "Nothing needs to run anymore. Ask the worker which exact shell command it was told to run earlier; " +
+        "it must answer from memory without running anything. Quote its answer."
+
 private val WORKER_INSTRUCTIONS: String = """
-    You are a worker. Run exactly the shell command you are given with the bash tool, verbatim,
-    then report its output in one short sentence.
+    You are a worker. Given a shell command, run it exactly as given with the bash tool, then report
+    its output in one short sentence. Given a question, answer it in one short sentence without tools.
 """.trimIndent()
 
 private val MANAGER_INSTRUCTIONS: String = """
     You are a manager who never runs commands yourself. On every request, in this order:
-    1. Call spawn_subagent with name "worker" and type "$WORKER_TYPE".
+    1. Unless you already have a subagent named "worker", call spawn_subagent with name "worker"
+       and type "$WORKER_TYPE".
     2. Call prompt_subagent with name "worker", passing the request on as the message.
     3. End your turn with the worker's reply, quoted exactly.
 """.trimIndent()
