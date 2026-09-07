@@ -1,20 +1,19 @@
 package codes.momo.agent.harness
 
-import codes.momo.agent.tool.SUBAGENT_TOOL_NAMES
 import java.nio.file.Path
 
 public class Harness internal constructor(
 
-    public val tools: List<String>,
+    internal val tools: List<String>,
 
-    public val instructions: String,
+    internal val instructions: String,
 
-    public val subagents: Map<String, SubagentType>,
+    internal val subagents: Map<String, SubagentType>,
 
-    public val folder: Path? = null,
+    internal val folder: Path? = null,
 ) {
 
-    public constructor(tools: List<String>, instructions: String) : this(tools, instructions, emptyMap())
+    internal constructor(tools: List<String>, instructions: String) : this(tools, instructions, emptyMap())
 
     init {
         validateTools()
@@ -59,7 +58,7 @@ public class Harness internal constructor(
         }
     }
 
-    public fun requireToolsKnown(knownTools: Set<String>) {
+    internal fun requireToolsKnown(knownTools: Set<String>) {
         val unknown = tools.filterNot { it in knownTools }
         if (unknown.isNotEmpty()) {
             fail(
@@ -80,17 +79,23 @@ public class Harness internal constructor(
     }
 }
 
-public class SubagentType internal constructor(
-    public val description: String,
+internal class SubagentType(
+    val description: String,
 ) {
 
     @Volatile // Assigned once the whole load pass finished, so a composition may reference itself.
     private var resolved: Harness? = null
 
-    public val harness: Harness
+    val harness: Harness
         get() = checkNotNull(resolved) { "unresolved subagent type — Harness.load wires every type before returning." }
 
-    internal fun resolveTo(child: Harness) {
+    fun resolveTo(child: Harness) {
         resolved = child
     }
 }
+
+internal const val SPAWN_SUBAGENT_TOOL: String = "spawn_subagent"
+
+internal const val PROMPT_SUBAGENT_TOOL: String = "prompt_subagent"
+
+internal val SUBAGENT_TOOL_NAMES: Set<String> = setOf(SPAWN_SUBAGENT_TOOL, PROMPT_SUBAGENT_TOOL)

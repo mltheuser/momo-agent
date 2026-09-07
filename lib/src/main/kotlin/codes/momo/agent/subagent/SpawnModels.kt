@@ -1,15 +1,9 @@
-package codes.momo.agent
+package codes.momo.agent.subagent
 
 import ai.router.sdk.AiRouterClient
-import ai.router.sdk.models.Capability
 import ai.router.sdk.models.ModelInfo
-import ai.router.sdk.models.ModelList
+import codes.momo.agent.usableModels
 import kotlinx.coroutines.CancellationException
-
-public suspend fun AiRouterClient.usableModels(): ModelList {
-    val catalog = listModels(capability = Capability.CHAT)
-    return catalog.copy(data = catalog.data.filter { it.hasCapability(Capability.TOOLS) })
-}
 
 internal class SpawnModels(private val client: AiRouterClient) {
 

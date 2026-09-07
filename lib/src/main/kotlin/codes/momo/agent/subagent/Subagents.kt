@@ -1,17 +1,29 @@
-package codes.momo.agent
+package codes.momo.agent.subagent
 
+import ai.router.sdk.AiRouterClient
 import ai.router.sdk.models.ReasoningEffort
+import codes.momo.agent.Agent
+import codes.momo.agent.RunResult
 import codes.momo.agent.tool.ToolResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+internal class SpawnedChild(
+    val sessionId: String,
+    val type: String?,
+    val modelId: String?,
+    val reasoningEffort: ReasoningEffort?,
+)
+
 internal class Subagents(
     private val parent: Agent,
     private val declaredTypes: Set<String>,
-    private val spawnModels: SpawnModels,
+    client: AiRouterClient,
     spawned: Map<String, SpawnedChild>,
 ) {
+
+    private val spawnModels = SpawnModels(client)
 
     private sealed interface Child {
         val sessionId: String
@@ -49,8 +61,6 @@ internal class Subagents(
             children[name] = Dormant(child.sessionId, child.type, child.modelId, child.reasoningEffort)
         }
     }
-
-    operator fun get(name: String): Agent? = (children[name] as? Live)?.agent
 
     suspend fun spawn(
         name: String,

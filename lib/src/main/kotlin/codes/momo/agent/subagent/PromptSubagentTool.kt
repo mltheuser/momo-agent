@@ -1,22 +1,24 @@
-package codes.momo.agent.tool
+package codes.momo.agent.subagent
 
 import ai.router.sdk.schema.Description
-import codes.momo.agent.Subagents
 import codes.momo.agent.environment.ExecutionEnvironment
+import codes.momo.agent.harness.PROMPT_SUBAGENT_TOOL
+import codes.momo.agent.tool.Tool
+import codes.momo.agent.tool.ToolResult
 import kotlinx.serialization.Serializable
 
 @Serializable
-public data class PromptSubagentArgs(
+internal data class PromptSubagentArgs(
     @Description("Name of the subagent to prompt.")
     val name: String,
     @Description("The message to send it.")
     val message: String,
 )
 
-public class PromptSubagentTool internal constructor(
+internal class PromptSubagentTool(
     private val subagents: Subagents,
 ) : Tool<PromptSubagentArgs>(
-    name = NAME,
+    name = PROMPT_SUBAGENT_TOOL,
     description = PROMPT_SUBAGENT_DESCRIPTION,
     argsSerializer = PromptSubagentArgs.serializer(),
 ) {
@@ -25,11 +27,6 @@ public class PromptSubagentTool internal constructor(
 
     override suspend fun execute(args: PromptSubagentArgs, environment: ExecutionEnvironment): ToolResult =
         subagents.prompt(args.name, args.message)
-
-    internal companion object {
-
-        const val NAME: String = "prompt_subagent"
-    }
 }
 
 private val PROMPT_SUBAGENT_DESCRIPTION: String = """

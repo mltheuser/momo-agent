@@ -1,26 +1,25 @@
 package codes.momo.agent.tool
 
 import ai.router.sdk.schema.Description
-import codes.momo.agent.Budgets
 import codes.momo.agent.environment.ExecResult
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.environment.Privilege
 import kotlinx.serialization.Serializable
 
 @Serializable
-public data class BashArgs(
+internal data class BashArgs(
     @Description("The bash command to run.")
     val command: String,
 )
 
-public class BashTool(workspacePath: String, privilege: Privilege) : Tool<BashArgs>(
+internal class BashTool(workspacePath: String, privilege: Privilege) : Tool<BashArgs>(
     name = "bash",
     description = bashDescription(workspacePath, privilege),
     argsSerializer = BashArgs.serializer(),
 ) {
 
     override suspend fun execute(args: BashArgs, environment: ExecutionEnvironment): ToolResult {
-        val result = environment.exec(listOf("bash", "-c", args.command), timeout = Budgets.TOOL_TIMEOUT)
+        val result = environment.exec(listOf("bash", "-c", args.command), timeout = TOOL_TIMEOUT)
         return when (result) {
             is ExecResult.Completed ->
                 ToolResult.Success("exit code: ${result.exitCode}\n" + result.formatStreams())
@@ -70,7 +69,7 @@ private fun bashDescription(workspacePath: String, privilege: Privilege): String
         call is gone by the next, and the working directory is back at the workspace root. Chain
         dependent steps into a single command with `&&`.
 
-        Commands are killed after ${Budgets.TOOL_TIMEOUT} and report a timeout error with any partial output. stdout
+        Commands are killed after $TOOL_TIMEOUT and report a timeout error with any partial output. stdout
         and stderr come back in one result (stderr first) and share a budget of ${ToolRegistry.MAX_RESULT_CHARS} characters;
         truncation keeps the beginning and drops the end, so to see the end of long output, filter
         it (e.g. `tail`, `grep`) instead of dumping it. The call returns when the shell exits;

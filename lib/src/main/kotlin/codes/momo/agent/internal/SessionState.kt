@@ -1,10 +1,12 @@
-package codes.momo.agent
+package codes.momo.agent.internal
 
 import ai.router.sdk.models.ChatMessage
-import ai.router.sdk.models.ReasoningEffort
+import codes.momo.agent.AgentEvent
+import codes.momo.agent.RunResult
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
-import codes.momo.agent.tool.SUBAGENT_TOOL_NAMES
+import codes.momo.agent.harness.SUBAGENT_TOOL_NAMES
+import codes.momo.agent.subagent.SpawnedChild
 import java.util.UUID
 
 internal sealed interface SessionState {
@@ -48,13 +50,6 @@ internal sealed interface SessionState {
         override val spawned: Map<String, SpawnedChild>,
     ) : SessionState
 }
-
-internal class SpawnedChild(
-    val sessionId: String,
-    val type: String?,
-    val modelId: String?,
-    val reasoningEffort: ReasoningEffort?,
-)
 
 internal fun restoredSession(events: List<AgentEvent>, harness: Harness): SessionState.Restored {
     val started = requireNotNull(events.firstOrNull() as? AgentEvent.SessionStarted) {

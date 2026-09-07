@@ -1,4 +1,4 @@
-package codes.momo.agent
+package codes.momo.agent.internal
 
 import ai.router.sdk.models.ChatUsage
 

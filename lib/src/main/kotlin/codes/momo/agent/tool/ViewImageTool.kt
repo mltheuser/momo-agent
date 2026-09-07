@@ -1,7 +1,6 @@
 package codes.momo.agent.tool
 
 import ai.router.sdk.schema.Description
-import codes.momo.agent.Budgets
 import codes.momo.agent.environment.ExecResult
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.environment.problem
@@ -10,12 +9,12 @@ import kotlinx.serialization.Serializable
 import java.net.URLConnection
 
 @Serializable
-public data class ViewImageArgs(
+internal data class ViewImageArgs(
     @Description("Path of the image file to view: absolute or workspace-relative.")
     val path: String,
 )
 
-public class ViewImageTool : Tool<ViewImageArgs>(
+internal class ViewImageTool : Tool<ViewImageArgs>(
     name = NAME,
     description = VIEW_IMAGE_DESCRIPTION,
     argsSerializer = ViewImageArgs.serializer(),
@@ -24,7 +23,7 @@ public class ViewImageTool : Tool<ViewImageArgs>(
     override suspend fun execute(args: ViewImageArgs, environment: ExecutionEnvironment): ToolResult =
         loadImage(args.path, environment)
 
-    internal companion object {
+    companion object {
 
         const val NAME: String = "view_image"
     }
@@ -33,7 +32,7 @@ public class ViewImageTool : Tool<ViewImageArgs>(
 internal const val MAX_IMAGE_BYTES: Long = 5L * 1024 * 1024
 
 internal suspend fun loadImage(path: String, environment: ExecutionEnvironment): ToolResult {
-    val measured = environment.exec(pathCommand("wc -c < \"\$p\"", path), timeout = Budgets.TOOL_TIMEOUT)
+    val measured = environment.exec(pathCommand("wc -c < \"\$p\"", path), timeout = TOOL_TIMEOUT)
     val bytes = measured.stdout.trim().toLongOrNull()
     return when {
         measured is ExecResult.TimedOut -> ToolResult.TimedOut()
@@ -48,7 +47,7 @@ internal suspend fun loadImage(path: String, environment: ExecutionEnvironment):
 }
 
 private suspend fun encode(path: String, environment: ExecutionEnvironment): ToolResult {
-    val encoded = environment.exec(pathCommand("base64 < \"\$p\"", path), timeout = Budgets.TOOL_TIMEOUT)
+    val encoded = environment.exec(pathCommand("base64 < \"\$p\"", path), timeout = TOOL_TIMEOUT)
     return when {
         encoded is ExecResult.TimedOut -> ToolResult.TimedOut()
         !encoded.succeeded -> ToolResult.Error("cannot read '$path': ${encoded.problem()}")

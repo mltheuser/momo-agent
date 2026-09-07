@@ -5,17 +5,29 @@ import ai.router.sdk.models.ChatMessage
 import ai.router.sdk.models.ChatRequest
 import ai.router.sdk.models.ChatResponse
 import ai.router.sdk.models.ChatUsage
-import ai.router.sdk.models.ContentPart
-import ai.router.sdk.models.ContentPartType
 import ai.router.sdk.models.ReasoningEffort
 import ai.router.sdk.models.ToolCall
 import ai.router.sdk.models.ToolDefinition
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
-import codes.momo.agent.tool.SUBAGENT_TOOL_NAMES
+import codes.momo.agent.harness.SUBAGENT_TOOL_NAMES
+import codes.momo.agent.internal.AgentEventEmitter
+import codes.momo.agent.internal.RunBudgets
+import codes.momo.agent.internal.SessionState
+import codes.momo.agent.internal.ZERO_USAGE
+import codes.momo.agent.internal.awaitsModel
+import codes.momo.agent.internal.coreToolRegistry
+import codes.momo.agent.internal.plus
+import codes.momo.agent.internal.resolvePromptAttachments
+import codes.momo.agent.internal.restoredSession
+import codes.momo.agent.internal.retryTransientFailures
+import codes.momo.agent.internal.systemPromptFor
+import codes.momo.agent.internal.toolCallRepairs
+import codes.momo.agent.internal.toolResultMessage
+import codes.momo.agent.internal.userMessage
+import codes.momo.agent.subagent.Subagents
 import codes.momo.agent.tool.ToolRegistry
 import codes.momo.agent.tool.ToolResult
-import codes.momo.agent.tool.coreToolRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.Job
@@ -47,7 +59,7 @@ public class Agent internal constructor(
     ) : this(harness, client, environment, eventListener, RunBudgets(), SessionState.Fresh(title))
 
     internal val subagents: Subagents =
-        Subagents(this, harness.subagents.keys, SpawnModels(client), session.spawned)
+        Subagents(this, harness.subagents.keys, client, session.spawned)
 
     private val depth: Int = session.depth
 
@@ -60,7 +72,7 @@ public class Agent internal constructor(
             coreToolRegistry(environment.workspacePath, environment.privilege, subagents, harness.subagents)
         harness.requireToolsKnown(coreRegistry.names)
 
-        val offered = if (harness.subagents.isNotEmpty() && depth < Budgets.MAX_SUBAGENT_DEPTH) {
+        val offered = if (harness.subagents.isNotEmpty() && depth < RunBudgets.MAX_SUBAGENT_DEPTH) {
             harness.tools + SUBAGENT_TOOL_NAMES
         } else {
             harness.tools
@@ -90,7 +102,7 @@ public class Agent internal constructor(
     }
 
     private val history: MutableList<ChatMessage> = mutableListOf<ChatMessage>().apply {
-        add(textMessage(ROLE_SYSTEM, systemPromptFor(harness, subagent = depth > 0)))
+        add(systemPromptFor(harness, subagent = depth > 0))
         addAll(session.conversation)
     }
 
@@ -120,7 +132,7 @@ public class Agent internal constructor(
     }
 
     public suspend fun retry(settings: RunSettings): RunResult {
-        require(history.last().role == ROLE_USER || history.last().role == ROLE_TOOL) {
+        require(history.last().awaitsModel) {
             "Nothing to retry: the conversation is not waiting on the model."
         }
         return guardedRun(text = null, settings)
@@ -405,22 +417,6 @@ private class RunStoppedException : CancellationException("The run was stopped."
 private fun CancellationException.isRunStopped(): Boolean =
     generateSequence<Throwable>(this) { it.cause }.any { it is RunStoppedException }
 
-internal fun systemPromptFor(harness: Harness, subagent: Boolean): String =
-    harness.instructions.trimEnd() +
-        "\n\n" + (if (subagent) SUBAGENT_GUIDANCE else USER_GUIDANCE)
-
-private const val USER_GUIDANCE: String =
-    "The user is not watching you work and sees only your final message; their next message " +
-        "may take hours or days to arrive. Work autonomously and end your turn only when you are " +
-        "done or genuinely blocked. To ask the user something, end your turn with the question as " +
-        "your final message — ask only what you cannot work out from the workspace or your tools, " +
-        "and batch related questions into one message instead of asking them one at a time."
-
-private const val SUBAGENT_GUIDANCE: String =
-    "You are a subagent: the agent that spawned you is blocked waiting on you, and your final " +
-        "message is delivered to it as the result of this prompt. Work autonomously to completion " +
-        "and end your turn early only when you are genuinely blocked on input from your spawner."
-
 public suspend fun Agent.subagentBySessionId(sessionId: String): Agent? = subagents.childBySessionId(sessionId)
 
 public suspend fun Agent.liveSubagentBySessionId(sessionId: String): Agent? =
@@ -447,48 +443,6 @@ private fun AgentEventEmitter.emitRunFinished(result: RunResult) {
     }
 }
 
-private fun textMessage(role: String, text: String): ChatMessage =
-    ChatMessage(role = role, content = listOf(ContentPart(type = ContentPartType.TEXT, text = text)))
-
-internal fun userMessage(
-    text: String,
-    attachments: List<AgentEvent.RunStarted.Attachment> = emptyList(),
-): ChatMessage {
-    val imageByLink = attachments.associateBy { it.link }
-    if (imageByLink.isEmpty()) {
-        return textMessage(ROLE_USER, text)
-    }
-    val parts = buildList {
-        var consumed = 0
-        for (match in MARKDOWN_IMAGE.findAll(text)) {
-            val image = imageByLink[match.groupValues[1]] ?: continue
-            add(ContentPart(type = ContentPartType.TEXT, text = text.substring(consumed, match.range.last + 1)))
-            add(ContentPart(type = ContentPartType.IMAGE, mimeType = image.mimeType, base64Data = image.base64Data))
-            consumed = match.range.last + 1
-        }
-        if (consumed < text.length) {
-            add(ContentPart(type = ContentPartType.TEXT, text = text.substring(consumed)))
-        }
-    }
-    return ChatMessage(role = ROLE_USER, content = parts)
-}
-
-internal fun toolResultMessage(
-    callId: String,
-    text: String,
-    media: AgentEvent.ToolCallFinished.Media? = null,
-): ChatMessage =
-    ChatMessage(
-        role = ROLE_TOOL,
-        content = when (media) {
-            null -> listOf(ContentPart(type = ContentPartType.TEXT, text = text))
-            else -> listOf(
-                ContentPart(type = ContentPartType.IMAGE, mimeType = media.mimeType, base64Data = media.base64Data),
-            )
-        },
-        toolCallId = callId,
-    )
-
 private val ToolResult.media: AgentEvent.ToolCallFinished.Media?
     get() = (this as? ToolResult.Image)?.let { AgentEvent.ToolCallFinished.Media(it.mimeType, it.base64Data) }
 
@@ -498,9 +452,5 @@ private val ToolResult.outcome: AgentEvent.ToolCallFinished.Outcome
         is ToolResult.Error -> AgentEvent.ToolCallFinished.Outcome.ERROR
         is ToolResult.TimedOut -> AgentEvent.ToolCallFinished.Outcome.TIMED_OUT
     }
-
-private const val ROLE_SYSTEM: String = "system"
-private const val ROLE_USER: String = "user"
-private const val ROLE_TOOL: String = "tool"
 
 private const val FINISH_REASON_ERROR: String = "error"

@@ -7,9 +7,9 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
-public abstract class Tool<A : Any> protected constructor(
+internal abstract class Tool<A : Any>(
 
-    public val name: String,
+    val name: String,
     description: String,
     private val argsSerializer: KSerializer<A>,
 ) {
@@ -19,17 +19,17 @@ public abstract class Tool<A : Any> protected constructor(
         require(name.none { it.isWhitespace() }) { "Tool name must not contain whitespace: '$name'." }
     }
 
-    internal open val timeoutExempt: Boolean = false
+    open val timeoutExempt: Boolean = false
 
-    internal open val maxResultChars: Int = ToolRegistry.MAX_RESULT_CHARS
+    open val maxResultChars: Int = ToolRegistry.MAX_RESULT_CHARS
 
-    public val definition: ToolDefinition = ToolDefinition(
+    val definition: ToolDefinition = ToolDefinition(
         name = name,
         description = description,
         parameters = SchemaGenerator.generate(argsSerializer.descriptor),
     )
 
-    internal fun bind(
+    fun bind(
         arguments: JsonObject,
         environment: ExecutionEnvironment,
     ): suspend () -> ToolResult {
@@ -37,7 +37,7 @@ public abstract class Tool<A : Any> protected constructor(
         return { execute(decoded, environment) }
     }
 
-    public abstract suspend fun execute(args: A, environment: ExecutionEnvironment): ToolResult
+    abstract suspend fun execute(args: A, environment: ExecutionEnvironment): ToolResult
 }
 
 private val toolArgumentsJson: Json = Json { ignoreUnknownKeys = true }

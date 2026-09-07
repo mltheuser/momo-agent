@@ -1,5 +1,6 @@
-package codes.momo.agent
+package codes.momo.agent.internal
 
+import codes.momo.agent.AgentEvent
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.tool.MAX_IMAGE_BYTES
 import codes.momo.agent.tool.ToolResult

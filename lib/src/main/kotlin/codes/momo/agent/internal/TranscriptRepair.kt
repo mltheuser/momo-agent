@@ -1,8 +1,9 @@
-package codes.momo.agent
+package codes.momo.agent.internal
 
 import ai.router.sdk.models.ChatMessage
 import ai.router.sdk.models.ToolCall
-import codes.momo.agent.tool.PromptSubagentTool
+import codes.momo.agent.RunResult
+import codes.momo.agent.harness.PROMPT_SUBAGENT_TOOL
 
 internal fun unansweredToolCalls(messages: List<ChatMessage>): List<ToolCall> {
     val lastCallerIndex = messages.indexOfLast { !it.toolCalls.isNullOrEmpty() }
@@ -32,7 +33,7 @@ internal fun toolCallRepairText(toolName: String, started: Boolean, runStatus: R
         RunResult.Status.COMPLETED -> "the run ended"
         null -> "the run was aborted"
     }
-    val prompt = toolName == PromptSubagentTool.NAME
+    val prompt = toolName == PROMPT_SUBAGENT_TOOL
     return when {
         prompt && started ->
             "Error: prompt interrupted — $cut while the subagent was working on this message. The subagent " +

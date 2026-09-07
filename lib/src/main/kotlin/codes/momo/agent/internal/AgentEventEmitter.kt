@@ -1,4 +1,7 @@
-package codes.momo.agent
+package codes.momo.agent.internal
+
+import codes.momo.agent.AgentEvent
+import codes.momo.agent.AgentEventListener
 
 internal class AgentEventEmitter(
     private val listener: AgentEventListener,

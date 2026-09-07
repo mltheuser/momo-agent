@@ -1,17 +1,17 @@
 package codes.momo.agent.tool
 
 import ai.router.sdk.models.ToolDefinition
-import codes.momo.agent.Budgets
 import codes.momo.agent.environment.ExecutionEnvironment
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
-public class ToolRegistry(tools: List<Tool<*>>) {
+public class ToolRegistry internal constructor(tools: List<Tool<*>>) {
 
     private val toolsByName: Map<String, Tool<*>> = tools.associateBy { it.name }
 
@@ -22,23 +22,23 @@ public class ToolRegistry(tools: List<Tool<*>>) {
         }
     }
 
-    public val names: Set<String>
+    internal val names: Set<String>
         get() = toolsByName.keys
 
     internal fun restrictedTo(toolNames: List<String>): ToolRegistry =
         ToolRegistry(toolNames.map { toolsByName.getValue(it) })
 
-    public fun definitions(toolNames: List<String>): List<ToolDefinition> =
+    internal fun definitions(toolNames: List<String>): List<ToolDefinition> =
         toolNames.map { name ->
             val tool = requireNotNull(toolsByName[name]) { unknownToolMessage(name) }
             tool.definition
         }
 
-    public suspend fun execute(
+    internal suspend fun execute(
         name: String,
         arguments: JsonObject,
         environment: ExecutionEnvironment,
-        timeout: Duration = Budgets.TOOL_TIMEOUT,
+        timeout: Duration = TOOL_TIMEOUT,
     ): ToolExecution {
         val start = TimeSource.Monotonic.markNow()
         val tool = toolsByName[name]
@@ -66,7 +66,7 @@ public class ToolRegistry(tools: List<Tool<*>>) {
             return invalidArgumentsError(tool, exception)
         }
 
-        val backstop = if (timeout >= Budgets.TOOL_TIMEOUT) timeout + TIMEOUT_GRACE else timeout
+        val backstop = if (timeout >= TOOL_TIMEOUT) timeout + TIMEOUT_GRACE else timeout
         return try {
             if (tool.timeoutExempt) invocation() else withTimeout(backstop) { invocation() }
         } catch (_: TimeoutCancellationException) {
@@ -112,7 +112,9 @@ public class ToolRegistry(tools: List<Tool<*>>) {
     }
 }
 
-public data class ToolExecution(
+internal val TOOL_TIMEOUT: Duration = 24.hours
+
+internal data class ToolExecution(
 
     val result: ToolResult,
 

@@ -1,15 +1,17 @@
-package codes.momo.agent.tool
+package codes.momo.agent.subagent
 
 import ai.router.sdk.models.ReasoningEffort
 import ai.router.sdk.schema.Description
-import codes.momo.agent.Subagents
 import codes.momo.agent.environment.ExecutionEnvironment
+import codes.momo.agent.harness.SPAWN_SUBAGENT_TOOL
 import codes.momo.agent.harness.SubagentType
+import codes.momo.agent.tool.Tool
+import codes.momo.agent.tool.ToolResult
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
-public data class SpawnSubagentArgs(
+internal data class SpawnSubagentArgs(
     @Description("Unique name for the new subagent.")
     val name: String,
     @Description("The subagent type — one of the type names listed in the tool description.")
@@ -28,22 +30,17 @@ public data class SpawnSubagentArgs(
     val reasoningEffort: ReasoningEffort? = null,
 )
 
-public class SpawnSubagentTool internal constructor(
+internal class SpawnSubagentTool(
     private val subagents: Subagents,
     subagentTypes: Map<String, SubagentType>,
 ) : Tool<SpawnSubagentArgs>(
-    name = NAME,
+    name = SPAWN_SUBAGENT_TOOL,
     description = spawnSubagentDescription(subagentTypes),
     argsSerializer = SpawnSubagentArgs.serializer(),
 ) {
 
     override suspend fun execute(args: SpawnSubagentArgs, environment: ExecutionEnvironment): ToolResult =
         subagents.spawn(args.name, args.type, args.modelId, args.reasoningEffort)
-
-    internal companion object {
-
-        const val NAME: String = "spawn_subagent"
-    }
 }
 
 private fun spawnSubagentDescription(subagentTypes: Map<String, SubagentType>): String = buildString {
