@@ -28,7 +28,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.IOException
-import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
@@ -91,15 +90,8 @@ internal class SessionRegistry(
 
     suspend fun info(id: String): SessionInfo = withContext(Dispatchers.IO) {
         entries.known(id)
-        val path: List<String>
-        val events: List<AgentEvent>
-        try {
-            path = store.pathTo(id)
-            events = store.readEvents(id)
-        } catch (_: NoSuchFileException) {
-            throw UnknownSessionException(id)
-        }
-
+        val path = store.pathTo(id)
+        val events = store.readEvents(id)
         val started = events.sessionStarted()
         val runtime = entries[path.first()]?.runtime
         SessionInfo(
@@ -130,6 +122,8 @@ internal class SessionRegistry(
         store.readEvents(parentId)
             .filterIsInstance<AgentEvent.SubagentSpawned>()
             .lastOrNull { it.sessionId == childId }
+    } catch (_: UnknownSessionException) {
+        null
     } catch (_: IOException) {
         null
     } catch (_: CorruptSessionException) {
@@ -173,11 +167,7 @@ internal class SessionRegistry(
         id: String,
         event: (sequenceId: Long, timestampMillis: Long) -> AgentEvent,
     ) = withContext(Dispatchers.IO) {
-        val nextSequenceId = try {
-            store.readEvents(id).last().sequenceId + 1
-        } catch (_: NoSuchFileException) {
-            throw UnknownSessionException(id)
-        }
+        val nextSequenceId = store.readEvents(id).last().sequenceId + 1
         val stamped = event(nextSequenceId, System.currentTimeMillis())
         try {
             store.eventLogFor(id).use { it.onEvent(stamped) }
@@ -261,11 +251,7 @@ internal class SessionRegistry(
     }
 
     private suspend fun storedEvents(id: String): List<AgentEvent> = withContext(Dispatchers.IO) {
-        try {
-            store.readEvents(id)
-        } catch (_: NoSuchFileException) {
-            throw UnknownSessionException(id)
-        }
+        store.readEvents(id)
     }
 
     private suspend fun executeRewind(
@@ -274,13 +260,7 @@ internal class SessionRegistry(
         id: String,
         lastSurviving: Long,
     ): List<String> = withContext(NonCancellable + Dispatchers.IO) {
-        val plan = rewindPlan(id, lastSurviving) { sessionId ->
-            try {
-                store.readEvents(sessionId)
-            } catch (_: NoSuchFileException) {
-                null
-            }
-        }
+        val plan = rewindPlan(id, lastSurviving, store::readEventsOrNull)
         val runtime = root.runtime
         if (runtime == null) applyPlan(plan) else rewindAttachedTree(root, rootId, runtime, plan)
     }
@@ -367,8 +347,6 @@ internal class SessionRegistry(
         entries.known(id)
         val started = try {
             store.readSessionStarted(id)
-        } catch (_: NoSuchFileException) {
-            throw UnknownSessionException(id)
         } catch (_: CorruptSessionException) {
             throw UnknownSessionException(id)
         }
@@ -396,11 +374,7 @@ internal class SessionRegistry(
     }
 
     private suspend fun rebuild(entry: SessionEntry, id: String): TreeRuntime = withContext(Dispatchers.IO) {
-        val started = try {
-            store.readSessionStarted(id)
-        } catch (_: NoSuchFileException) {
-            throw UnknownSessionException(id)
-        }
+        val started = store.readSessionStarted(id)
         val harness = Harness.load(Path.of(started.harnessFolder))
         loadTree(entry, id, harness, ExecutionEnvironment(Path.of(started.workspace)))
     }
@@ -437,11 +411,7 @@ internal class SessionRegistry(
         )
 
         override suspend fun storedEventsFor(sessionId: String): List<AgentEvent>? = withContext(Dispatchers.IO) {
-            try {
-                store.readEvents(sessionId)
-            } catch (_: NoSuchFileException) {
-                null
-            }
+            store.readEventsOrNull(sessionId)
         }
     }
 }
@@ -455,11 +425,7 @@ private suspend fun treeOf(
     id: String,
 ): Pair<List<String>, SessionEntry> = withContext(Dispatchers.IO) {
     entries.known(id)
-    val path = try {
-        store.pathTo(id)
-    } catch (_: NoSuchFileException) {
-        throw UnknownSessionException(id)
-    }
+    val path = store.pathTo(id)
     path to entries.known(path.first())
 }
 

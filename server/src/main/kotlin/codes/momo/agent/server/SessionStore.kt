@@ -44,15 +44,17 @@ internal class SessionStore(dataDir: Path) {
             emptyList()
         }
 
-    fun readSessionStarted(id: String): AgentEvent.SessionStarted = try {
-        val line = directory(id).resolve(EVENTS_FILE).useLines { lines -> lines.firstOrNull { it.isNotBlank() } }
-        lineJson.decodeFromString(line.orEmpty())
-    } catch (failure: SerializationException) {
-        throw CorruptSessionException(id, failure)
+    fun readSessionStarted(id: String): AgentEvent.SessionStarted = readingLog(id) { file ->
+        try {
+            val line = file.useLines { lines -> lines.firstOrNull { it.isNotBlank() } }
+            lineJson.decodeFromString(line.orEmpty())
+        } catch (failure: SerializationException) {
+            throw CorruptSessionException(id, failure)
+        }
     }
 
     fun readEvents(id: String): List<AgentEvent> =
-        parseLogLines(id, directory(id).resolve(EVENTS_FILE)) { Json.decodeFromString(it) }
+        readingLog(id) { file -> parseLogLines(id, file) { Json.decodeFromString(it) } }
 
     fun tailEvents(
         id: String,
@@ -110,7 +112,19 @@ internal class SessionStore(dataDir: Path) {
         Files.deleteIfExists(directory)
     }
 
+    private inline fun <T> readingLog(id: String, read: (Path) -> T): T = try {
+        read(directory(id).resolve(EVENTS_FILE))
+    } catch (_: NoSuchFileException) {
+        throw UnknownSessionException(id)
+    }
+
     private fun directory(id: String): Path = sessionsDir.resolve(id)
+}
+
+internal fun SessionStore.readEventsOrNull(id: String): List<AgentEvent>? = try {
+    readEvents(id)
+} catch (_: UnknownSessionException) {
+    null
 }
 
 internal data class StoredEvent(val sequenceId: Long, val json: String)
