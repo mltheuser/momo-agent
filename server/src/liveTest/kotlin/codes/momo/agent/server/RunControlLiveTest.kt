@@ -4,6 +4,7 @@ import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
 import codes.momo.agent.server.fixtures.liveHarness
 import codes.momo.agent.server.fixtures.localWorkspace
+import codes.momo.agent.server.rig.assertRejected
 import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.closeSession
 import codes.momo.agent.server.rig.createSession
@@ -16,7 +17,6 @@ import codes.momo.agent.server.rig.stopResponse
 import codes.momo.agent.server.rig.streamEvents
 import codes.momo.agent.server.rig.withLiveServer
 import codes.momo.agent.server.session.SessionStatus
-import io.ktor.client.call.body
 import io.ktor.http.HttpStatusCode
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -38,15 +38,12 @@ class RunControlLiveTest {
         val beforeGuards = http.streamEvents(id, until = { it is AgentEvent.ToolCallStarted })
         val runStart = beforeGuards.first { it.event is AgentEvent.RunStarted }.id
 
-        val prompt = http.promptResponse(id, "impatient follow-up")
-        assertEquals(HttpStatusCode.Conflict, prompt.status, "a second prompt during a run")
-        assertEquals("conflict", prompt.body<ApiError>().code)
-        val rewind = http.rewindResponse(id, runStart)
-        assertEquals(HttpStatusCode.Conflict, rewind.status, "a rewind during a run")
-        assertEquals("conflict", rewind.body<ApiError>().code)
-        val retry = http.retryResponse(id)
-        assertEquals(HttpStatusCode.Conflict, retry.status, "a retry during a run")
-        assertEquals("conflict", retry.body<ApiError>().code)
+        http.promptResponse(id, "impatient follow-up")
+            .assertRejected("conflict", "a second prompt during a run", status = HttpStatusCode.Conflict)
+        http.rewindResponse(id, runStart)
+            .assertRejected("conflict", "a rewind during a run", status = HttpStatusCode.Conflict)
+        http.retryResponse(id)
+            .assertRejected("conflict", "a retry during a run", status = HttpStatusCode.Conflict)
         assertEquals(SessionStatus.RUNNING, http.sessionInfo(id).status, "the guards left the run in flight")
 
         val stopped = http.stopResponse(id)

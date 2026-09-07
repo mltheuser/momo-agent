@@ -2,6 +2,7 @@ package codes.momo.agent.server.rig
 
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.server.ApiError
 import codes.momo.agent.server.CreateSessionRequest
 import codes.momo.agent.server.PromptRequest
 import codes.momo.agent.server.PutTemplateRequest
@@ -43,6 +44,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.fail
@@ -236,6 +238,18 @@ internal suspend fun HttpClient.putTemplateResponse(name: String, body: String):
         contentType(ContentType.Application.Json)
         setBody(PutTemplateRequest(body))
     }
+
+internal suspend fun HttpResponse.assertRejected(
+    code: String,
+    what: String,
+    names: String? = null,
+    status: HttpStatusCode = HttpStatusCode.BadRequest,
+) {
+    assertEquals(status, this.status, "$what: ${bodyAsText()}")
+    val error = body<ApiError>()
+    assertEquals(code, error.code, what)
+    if (names != null) assertContains(error.message, names, message = what)
+}
 
 internal suspend fun HttpClient.awaitRunEnd(sessionId: String) {
     val ended = withTimeoutOrNull(LIVE_WAIT) {

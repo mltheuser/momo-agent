@@ -8,6 +8,7 @@ import codes.momo.agent.server.fixtures.harnessPath
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
 import codes.momo.agent.server.rig.abandonedClose
+import codes.momo.agent.server.rig.assertRejected
 import codes.momo.agent.server.rig.closeResponse
 import codes.momo.agent.server.rig.closeSession
 import codes.momo.agent.server.rig.createSession
@@ -45,7 +46,6 @@ import codes.momo.agent.server.session.ModelSelection
 import codes.momo.agent.server.session.SessionInfo
 import codes.momo.agent.server.session.SessionStatus
 import io.ktor.client.call.body
-import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.async
@@ -322,11 +322,4 @@ class SessionSurfaceLiveTest {
         assertEquals(HttpStatusCode.NotFound, missing.status)
         assertEquals("unknown_template", missing.body<ApiError>().code)
     }
-}
-
-private suspend fun HttpResponse.assertRejected(code: String, what: String, names: String? = null) {
-    assertEquals(HttpStatusCode.BadRequest, status, "$what: ${bodyAsText()}")
-    val error = body<ApiError>()
-    assertEquals(code, error.code, what)
-    if (names != null) assertContains(error.message, names, message = what)
 }

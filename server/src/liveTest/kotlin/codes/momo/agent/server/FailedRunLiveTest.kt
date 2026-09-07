@@ -4,6 +4,7 @@ import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
 import codes.momo.agent.server.fixtures.harnessPath
 import codes.momo.agent.server.fixtures.localWorkspace
+import codes.momo.agent.server.rig.assertRejected
 import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.prompt
@@ -13,8 +14,6 @@ import codes.momo.agent.server.rig.sessionInfo
 import codes.momo.agent.server.rig.streamEvents
 import codes.momo.agent.server.rig.withLiveServer
 import codes.momo.agent.server.session.SessionStatus
-import io.ktor.client.call.body
-import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -76,10 +75,8 @@ class FailedRunLiveTest {
         assertEquals(RunResult.Status.COMPLETED, completed.status, "error: ${completed.error}")
         http.awaitRunEnd(id)
 
-        val nothingToRetry = http.retryResponse(id)
-        assertEquals(HttpStatusCode.Conflict, nothingToRetry.status, "a completed run is not retryable")
-        assertContains(nothingToRetry.bodyAsText(), "did not fail")
-        assertEquals("conflict", nothingToRetry.body<ApiError>().code)
+        http.retryResponse(id)
+            .assertRejected("conflict", "a completed run is not retryable", "did not fail", HttpStatusCode.Conflict)
 
         val fresh = http.createSession(harnessPath(tempDir), localWorkspace(tempDir)).id
         assertEquals(HttpStatusCode.Conflict, http.retryResponse(fresh).status, "a session that never ran")
