@@ -5,6 +5,7 @@ import codes.momo.agent.AgentEvent
 import codes.momo.agent.environment.Privilege
 import codes.momo.agent.server.storage.CorruptSessionException
 import codes.momo.agent.server.storage.UnknownSessionException
+import codes.momo.agent.server.storage.pathTo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
