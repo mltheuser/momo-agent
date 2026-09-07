@@ -49,7 +49,7 @@ internal class SessionRegistry(dataDir: Path, val client: AiRouterClient) {
         return members
     }
 
-    fun eventsAfter(id: String, afterSequenceId: Long): Flow<StoredEvent> {
+    fun eventsAfter(id: String, afterSequenceId: Long): Flow<LogLine> {
         val entry = entry(id)
         return store.tailEvents(id, entry.eventSignal, entry.truncations, afterSequenceId)
     }

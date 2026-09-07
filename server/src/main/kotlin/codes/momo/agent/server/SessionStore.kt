@@ -9,7 +9,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.takeWhile
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.BufferedInputStream
@@ -17,8 +16,6 @@ import java.io.BufferedWriter
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
-import java.nio.ByteBuffer
-import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
@@ -27,7 +24,6 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
-import kotlin.io.path.readLines
 import kotlin.io.path.useLines
 
 internal class SessionStore(dataDir: Path) {
@@ -46,21 +42,21 @@ internal class SessionStore(dataDir: Path) {
     fun readSessionStarted(id: String): AgentEvent.SessionStarted = readingLog(id) { file ->
         try {
             val line = file.useLines { lines -> lines.firstOrNull { it.isNotBlank() } }
-            lineJson.decodeFromString(line.orEmpty())
+            decodeLogLineAs(line.orEmpty())
         } catch (failure: SerializationException) {
             throw CorruptSessionException(id, failure)
         }
     }
 
     fun readEvents(id: String): List<AgentEvent> =
-        readingLog(id) { file -> parseLogLines(id, file) { Json.decodeFromString(it) } }
+        readingLog(id) { file -> file.readLogLines(id) { Json.decodeFromString(it) } }
 
     fun tailEvents(
         id: String,
         signal: StateFlow<Long>,
         truncations: StateFlow<Long>,
         afterSequenceId: Long,
-    ): Flow<StoredEvent> = flow {
+    ): Flow<LogLine> = flow {
         val file = directory(id).resolve(EVENTS_FILE)
         var tail = LineTail(file)
         try {
@@ -82,9 +78,9 @@ internal class SessionStore(dataDir: Path) {
 
     fun rewindEvents(id: String, lastSurvivingSequenceId: Long): AgentEvent.ConversationRewound {
         val directory = directory(id)
-        val lines = storedLines(id, directory.resolve(EVENTS_FILE))
+        val lines = directory.resolve(EVENTS_FILE).readLogLines(id, ::parseLogLine)
         val rewound = AgentEvent.ConversationRewound(
-            sequenceId = lines.last().header.sequenceId + 1,
+            sequenceId = lines.last().sequenceId + 1,
             timestampMillis = System.currentTimeMillis(),
             lastSurvivingSequenceId = lastSurvivingSequenceId,
         )
@@ -92,7 +88,7 @@ internal class SessionStore(dataDir: Path) {
             directory.resolve(EVENTS_FILE),
             buildString {
                 lines.filter { it.survivesCut(lastSurvivingSequenceId) }.forEach { appendLine(it.json) }
-                appendLine(Json.encodeToString<AgentEvent>(rewound))
+                appendLine(encodeLogLine(rewound))
             },
         )
         return rewound
@@ -126,45 +122,18 @@ internal fun SessionStore.readEventsOrNull(id: String): List<AgentEvent>? = try 
     null
 }
 
-internal data class StoredEvent(val sequenceId: Long, val json: String)
+private fun LogLine.survivesCut(lastSurvivingSequenceId: Long): Boolean =
+    sequenceId <= lastSurvivingSequenceId || type in PRESERVED_EVENT_TYPES
 
-@Serializable
-private data class StoredLinePosition(val sequenceId: Long)
-
-@Serializable
-private data class StoredLineHeader(val sequenceId: Long, val type: String)
-
-private val lineJson = Json { ignoreUnknownKeys = true }
-
-private data class StoredLine(val header: StoredLineHeader, val json: String)
-
-private fun storedLines(id: String, file: Path): List<StoredLine> = parseLogLines(id, file) { line ->
-    StoredLine(lineJson.decodeFromString(line), line)
-}
-
-private fun StoredLine.survivesCut(lastSurvivingSequenceId: Long): Boolean =
-    header.sequenceId <= lastSurvivingSequenceId || header.type in PRESERVED_EVENT_TYPES
-
-private fun <T : Any> parseLogLines(id: String, file: Path, parse: (String) -> T): List<T> {
-    val lines = file.readLines().filter { it.isNotBlank() }
-    return lines.mapIndexedNotNull { index, line ->
-        try {
-            parse(line)
-        } catch (failure: SerializationException) {
-            if (index == lines.lastIndex) null else throw CorruptSessionException(id, failure)
-        }
-    }
-}
-
-private suspend fun FlowCollector<StoredEvent>.drainNewLines(tail: LineTail, lastEmitted: Long): Long {
+private suspend fun FlowCollector<LogLine>.drainNewLines(tail: LineTail, lastEmitted: Long): Long {
     var newest = lastEmitted
     var line = tail.nextLine()
     while (line != null) {
         if (line.isNotBlank()) {
-            val sequenceId = lineJson.decodeFromString<StoredLinePosition>(line).sequenceId
-            if (sequenceId > newest) {
-                emit(StoredEvent(sequenceId, line))
-                newest = sequenceId
+            val parsed = parseLogLine(line)
+            if (parsed.sequenceId > newest) {
+                emit(parsed)
+                newest = parsed.sequenceId
             }
         }
         line = tail.nextLine()
@@ -227,7 +196,7 @@ internal class PersistedEventLog(
         }
         try {
             val target = writer ?: openWriter(event).also { writer = it }
-            target.write(Json.encodeToString(event))
+            target.write(encodeLogLine(event))
             target.newLine()
             target.flush()
         } catch (appendFailure: IOException) {
@@ -250,31 +219,8 @@ internal class PersistedEventLog(
             ?: (event as? AgentEvent.SessionStarted)?.sessionId?.also { id = it }
             ?: error("a fresh session's first event must be SessionStarted, got: $event")
         val file = sessionsDir.resolve(sessionId).createDirectories().resolve(EVENTS_FILE)
-        dropTornTail(file)
+        file.dropTornTail()
         return Files.newBufferedWriter(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
-    }
-}
-
-private fun dropTornTail(file: Path) {
-    val channel = try {
-        FileChannel.open(file, StandardOpenOption.READ, StandardOpenOption.WRITE)
-    } catch (_: NoSuchFileException) {
-        return
-    }
-    channel.use {
-        val size = it.size()
-        val terminator = ByteBuffer.allocate(1)
-        var end = size
-        while (end > 0) {
-            it.read(terminator.clear(), end - 1)
-            if (terminator.get(0) == '\n'.code.toByte()) {
-                break
-            }
-            end--
-        }
-        if (end < size) {
-            it.truncate(end)
-        }
     }
 }
 
