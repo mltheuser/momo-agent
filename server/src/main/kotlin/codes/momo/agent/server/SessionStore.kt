@@ -37,22 +37,10 @@ internal class SessionStore(dataDir: Path) {
     fun readEvents(id: String): List<AgentEvent> =
         readingLog(id) { file -> file.readLogLines(id) { Json.decodeFromString(it) } }
 
-    fun rewindEvents(id: String, lastSurvivingSequenceId: Long): AgentEvent.ConversationRewound {
-        val directory = directory(id)
-        val lines = directory.resolve(EVENTS_FILE).readLogLines(id, ::parseLogLine)
-        val rewound = AgentEvent.ConversationRewound(
-            sequenceId = lines.last().sequenceId + 1,
-            timestampMillis = System.currentTimeMillis(),
-            lastSurvivingSequenceId = lastSurvivingSequenceId,
-        )
-        replaceAtomically(
-            directory.resolve(EVENTS_FILE),
-            buildString {
-                lines.filter { it.survivesCut(lastSurvivingSequenceId) }.forEach { appendLine(it.json) }
-                appendLine(encodeLogLine(rewound))
-            },
-        )
-        return rewound
+    fun readLines(id: String): List<LogLine> = readingLog(id) { file -> file.readLogLines(id, ::parseLogLine) }
+
+    fun rewriteLog(id: String, lines: List<String>) {
+        replaceAtomically(logFile(id), lines.joinToString(separator = "\n", postfix = "\n"))
     }
 
     fun tail(id: String, signal: EventLogSignal, afterSequenceId: Long): Flow<LogLine> =
@@ -61,7 +49,7 @@ internal class SessionStore(dataDir: Path) {
     fun writer(id: String? = null): EventLogWriter = EventLogWriter(id, ::logFile)
 
     fun delete(id: String) {
-        val directory = directory(id)
+        val directory = logFile(id).parent
         if (!directory.isDirectory()) {
             return
         }
@@ -70,14 +58,12 @@ internal class SessionStore(dataDir: Path) {
     }
 
     private inline fun <T> readingLog(id: String, read: (Path) -> T): T = try {
-        read(directory(id).resolve(EVENTS_FILE))
+        read(logFile(id))
     } catch (_: NoSuchFileException) {
         throw UnknownSessionException(id)
     }
 
-    private fun directory(id: String): Path = sessionsDir.resolve(id)
-
-    private fun logFile(id: String): Path = directory(id).resolve(EVENTS_FILE)
+    private fun logFile(id: String): Path = sessionsDir.resolve(id).resolve(EVENTS_FILE)
 }
 
 internal fun SessionStore.readEventsOrNull(id: String): List<AgentEvent>? = try {
@@ -85,8 +71,5 @@ internal fun SessionStore.readEventsOrNull(id: String): List<AgentEvent>? = try 
 } catch (_: UnknownSessionException) {
     null
 }
-
-private fun LogLine.survivesCut(lastSurvivingSequenceId: Long): Boolean =
-    sequenceId <= lastSurvivingSequenceId || type in PRESERVED_EVENT_TYPES
 
 private const val EVENTS_FILE = "events.jsonl"

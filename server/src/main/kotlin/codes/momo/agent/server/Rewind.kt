@@ -1,5 +1,6 @@
 package codes.momo.agent.server
 
+import codes.momo.agent.AgentEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.withLock
@@ -37,9 +38,20 @@ private fun SessionRegistry.applyPlan(plan: RewindPlan): List<String> {
     val gone = deleted.toSet()
     plan.cuts.reversed().forEach { (sessionId, lastSurviving) ->
         if (sessionId !in gone) {
-            val rewound = store.rewindEvents(sessionId, lastSurviving)
-            entryOrNull(sessionId)?.log?.cut(rewound.sequenceId)
+            cutLog(sessionId, lastSurviving)
         }
     }
     return deleted
+}
+
+private fun SessionRegistry.cutLog(sessionId: String, lastSurvivingSequenceId: Long) {
+    val lines = store.readLines(sessionId)
+    val rewound = AgentEvent.ConversationRewound(
+        sequenceId = lines.last().sequenceId + 1,
+        timestampMillis = System.currentTimeMillis(),
+        lastSurvivingSequenceId = lastSurvivingSequenceId,
+    )
+    val surviving = lines.filter { it.survivesCut(lastSurvivingSequenceId) }.map { it.json }
+    store.rewriteLog(sessionId, surviving + encodeLogLine(rewound))
+    entryOrNull(sessionId)?.log?.cut(rewound.sequenceId)
 }

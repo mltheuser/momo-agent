@@ -13,9 +13,12 @@ private class PreservedEvent(val storedType: String, val matches: (AgentEvent) -
 private inline fun <reified T : AgentEvent> preservedEvent(): PreservedEvent =
     PreservedEvent(serializer<T>().descriptor.serialName) { it is T }
 
-internal val PRESERVED_EVENT_TYPES: Set<String> = PRESERVED_EVENTS.mapTo(mutableSetOf()) { it.storedType }
+private val PRESERVED_EVENT_TYPES: Set<String> = PRESERVED_EVENTS.mapTo(mutableSetOf()) { it.storedType }
 
 internal fun AgentEvent.isPreservedByACut(): Boolean = PRESERVED_EVENTS.any { it.matches(this) }
+
+internal fun LogLine.survivesCut(lastSurvivingSequenceId: Long): Boolean =
+    sequenceId <= lastSurvivingSequenceId || type in PRESERVED_EVENT_TYPES
 
 internal fun List<AgentEvent>.lastSurvivorOfCutFrom(sessionId: String, firstDeletedSequenceId: Long): Long {
     val named = firstOrNull { it.sequenceId == firstDeletedSequenceId }
