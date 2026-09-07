@@ -12,6 +12,7 @@ import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.SUBAGENT_TOOL_NAMES
 import codes.momo.agent.internal.AgentEventEmitter
+import codes.momo.agent.internal.RETRY_BACKOFFS
 import codes.momo.agent.internal.RunBudgets
 import codes.momo.agent.internal.SessionState
 import codes.momo.agent.internal.ZERO_USAGE
@@ -26,6 +27,7 @@ import codes.momo.agent.internal.toolCallRepairs
 import codes.momo.agent.internal.toolResultMessage
 import codes.momo.agent.internal.userMessage
 import codes.momo.agent.subagent.Subagents
+import codes.momo.agent.tool.TOOL_TIMEOUT
 import codes.momo.agent.tool.ToolRegistry
 import codes.momo.agent.tool.ToolResult
 import kotlinx.coroutines.CancellationException
@@ -46,7 +48,6 @@ public class Agent internal constructor(
     private val client: AiRouterClient,
     private val environment: ExecutionEnvironment,
     private val eventListener: AgentEventListener,
-    private val budgets: RunBudgets,
     session: SessionState,
 ) {
 
@@ -56,7 +57,7 @@ public class Agent internal constructor(
         environment: ExecutionEnvironment,
         title: String,
         eventListener: AgentEventListener = NoOpAgentEventListener,
-    ) : this(harness, client, environment, eventListener, RunBudgets(), SessionState.Fresh(title))
+    ) : this(harness, client, environment, eventListener, SessionState.Fresh(title))
 
     internal val subagents: Subagents =
         Subagents(this, harness.subagents.keys, client, session.spawned)
@@ -199,7 +200,6 @@ public class Agent internal constructor(
         val result = RunResult(
             status = checkNotNull(status),
             finalMessage = run.finalMessage,
-            transcript = history.toList(),
             usage = run.usage,
             turnsUsed = run.turnsUsed,
             elapsed = run.elapsed,
@@ -246,7 +246,7 @@ public class Agent internal constructor(
                 RunResult.Status.COMPLETED
             }
 
-            run.turnsUsed >= budgets.maxTurns -> RunResult.Status.TURNS_EXHAUSTED
+            run.turnsUsed >= RunBudgets.MAX_TURNS -> RunResult.Status.TURNS_EXHAUSTED
 
             else -> null
         }
@@ -261,7 +261,7 @@ public class Agent internal constructor(
         )
         emitter.emit { id, at -> AgentEvent.LlmCallStarted(id, at, turn = run.turnsUsed + 1) }
         val response = retryTransientFailures(
-            backoffs = budgets.retryBackoffs,
+            backoffs = RETRY_BACKOFFS,
             onRetry = { cause, attempt, backoff ->
                 emitter.emit { id, at ->
                     AgentEvent.LlmCallRetried(id, at, cause.message ?: cause.toString(), attempt, backoff)
@@ -279,7 +279,7 @@ public class Agent internal constructor(
                 sequenceId = id,
                 timestampMillis = at,
                 turnsUsed = run.turnsUsed,
-                turnsRemaining = budgets.maxTurns - run.turnsUsed,
+                turnsRemaining = RunBudgets.MAX_TURNS - run.turnsUsed,
                 elapsed = run.elapsed,
             )
         }
@@ -291,7 +291,7 @@ public class Agent internal constructor(
         emitter.emit { id, at ->
             AgentEvent.ToolCallStarted(id, at, call.id, call.function.name, call.function.arguments)
         }
-        val timeout = minOf(budgets.toolTimeout, run.remaining.coerceAtLeast(Duration.ZERO))
+        val timeout = minOf(TOOL_TIMEOUT, run.remaining.coerceAtLeast(Duration.ZERO))
         val execution = registry.execute(call.function.name, call.function.arguments, environment, timeout)
         val media = execution.result.media
         history += toolResultMessage(call.id, execution.result.text, media)
@@ -327,7 +327,6 @@ public class Agent internal constructor(
             client = client,
             environment = environment,
             eventListener = listener,
-            budgets = budgets,
             session = session,
         )
     }
@@ -353,7 +352,6 @@ public class Agent internal constructor(
             client = client,
             environment = environment,
             eventListener = eventListener.subagentListener(name, sessionId),
-            budgets = budgets,
             session = session,
         )
     }
@@ -389,7 +387,7 @@ public class Agent internal constructor(
             get() = start.elapsedNow() - blocked
 
         val remaining: Duration
-            get() = budgets.maxWallClock - elapsed
+            get() = RunBudgets.MAX_WALL_CLOCK - elapsed
 
         fun decide(status: RunResult.Status): RunResult.Status = status.also { decided = it }
     }
@@ -402,7 +400,7 @@ public class Agent internal constructor(
             client: AiRouterClient,
             environment: ExecutionEnvironment,
             eventListener: AgentEventListener = NoOpAgentEventListener,
-        ): Agent = Agent(harness, client, environment, eventListener, RunBudgets(), restoredSession(events, harness))
+        ): Agent = Agent(harness, client, environment, eventListener, restoredSession(events, harness))
     }
 }
 

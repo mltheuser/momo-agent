@@ -1,6 +1,5 @@
 package codes.momo.agent
 
-import ai.router.sdk.models.ChatMessage
 import ai.router.sdk.models.ChatUsage
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -11,8 +10,6 @@ public data class RunResult(
     val status: Status,
 
     val finalMessage: String?,
-
-    val transcript: List<ChatMessage>,
 
     val usage: ChatUsage,
 
