@@ -1,18 +1,9 @@
 package codes.momo.agent.server
 
 import codes.momo.agent.AgentEvent
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.FlowCollector
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.takeWhile
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
-import java.io.BufferedInputStream
-import java.io.ByteArrayOutputStream
-import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
@@ -46,31 +37,6 @@ internal class SessionStore(dataDir: Path) {
     fun readEvents(id: String): List<AgentEvent> =
         readingLog(id) { file -> file.readLogLines(id) { Json.decodeFromString(it) } }
 
-    fun tailEvents(
-        id: String,
-        signal: StateFlow<Long>,
-        truncations: StateFlow<Long>,
-        afterSequenceId: Long,
-    ): Flow<LogLine> = flow {
-        val file = directory(id).resolve(EVENTS_FILE)
-        var tail = LineTail(file)
-        try {
-            var generation = truncations.value
-            var lastEmitted = afterSequenceId
-            signal.takeWhile { it != SESSION_DELETED_SIGNAL }.collect {
-                val current = truncations.value
-                if (current != generation) {
-                    generation = current
-                    tail.close()
-                    tail = LineTail(file)
-                }
-                lastEmitted = drainNewLines(tail, lastEmitted)
-            }
-        } finally {
-            tail.close()
-        }
-    }.flowOn(Dispatchers.IO)
-
     fun rewindEvents(id: String, lastSurvivingSequenceId: Long): AgentEvent.ConversationRewound {
         val directory = directory(id)
         val lines = directory.resolve(EVENTS_FILE).readLogLines(id, ::parseLogLine)
@@ -88,6 +54,9 @@ internal class SessionStore(dataDir: Path) {
         )
         return rewound
     }
+
+    fun tail(id: String, signal: EventLogSignal, afterSequenceId: Long): Flow<LogLine> =
+        logFile(id).tailLogLines(signal, afterSequenceId)
 
     fun writer(id: String? = null): EventLogWriter = EventLogWriter(id, ::logFile)
 
@@ -119,58 +88,5 @@ internal fun SessionStore.readEventsOrNull(id: String): List<AgentEvent>? = try 
 
 private fun LogLine.survivesCut(lastSurvivingSequenceId: Long): Boolean =
     sequenceId <= lastSurvivingSequenceId || type in PRESERVED_EVENT_TYPES
-
-private suspend fun FlowCollector<LogLine>.drainNewLines(tail: LineTail, lastEmitted: Long): Long {
-    var newest = lastEmitted
-    var line = tail.nextLine()
-    while (line != null) {
-        if (line.isNotBlank()) {
-            val parsed = parseLogLine(line)
-            if (parsed.sequenceId > newest) {
-                emit(parsed)
-                newest = parsed.sequenceId
-            }
-        }
-        line = tail.nextLine()
-    }
-    return newest
-}
-
-internal const val SESSION_DELETED_SIGNAL = Long.MIN_VALUE
-
-internal const val BEFORE_FIRST_EVENT = -1L
-
-private class LineTail(private val file: Path) : AutoCloseable {
-
-    private var input: InputStream? = null
-
-    private val partial = ByteArrayOutputStream()
-
-    fun nextLine(): String? {
-        val stream = input ?: openIfPresent() ?: return null
-        var byte = stream.read()
-        while (byte >= 0 && byte != '\n'.code) {
-            partial.write(byte)
-            byte = stream.read()
-        }
-        return if (byte < 0) {
-            null
-        } else {
-            val line = partial.toString(Charsets.UTF_8)
-            partial.reset()
-            line
-        }
-    }
-
-    override fun close() {
-        input?.close()
-    }
-
-    private fun openIfPresent(): InputStream? = try {
-        BufferedInputStream(Files.newInputStream(file)).also { input = it }
-    } catch (_: NoSuchFileException) {
-        null
-    }
-}
 
 private const val EVENTS_FILE = "events.jsonl"

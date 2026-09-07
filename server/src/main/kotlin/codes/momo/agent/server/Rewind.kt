@@ -38,10 +38,7 @@ private fun SessionRegistry.applyPlan(plan: RewindPlan): List<String> {
     plan.cuts.reversed().forEach { (sessionId, lastSurviving) ->
         if (sessionId !in gone) {
             val rewound = store.rewindEvents(sessionId, lastSurviving)
-            entryOrNull(sessionId)?.let { entry ->
-                entry.truncations.value += 1
-                entry.eventSignal.value = rewound.sequenceId
-            }
+            entryOrNull(sessionId)?.log?.cut(rewound.sequenceId)
         }
     }
     return deleted

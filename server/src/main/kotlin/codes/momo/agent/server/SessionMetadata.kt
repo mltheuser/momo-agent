@@ -55,5 +55,5 @@ private suspend fun SessionRegistry.appendToDormantLog(
     } catch (failure: IOException) {
         throw EventLogFailedException(failure)
     }
-    entry(id).eventSignal.value = stamped.sequenceId
+    entry(id).log.appended(stamped.sequenceId)
 }

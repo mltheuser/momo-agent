@@ -4,7 +4,6 @@ import ai.router.sdk.AiRouterClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
@@ -44,24 +43,20 @@ internal class SessionRegistry(dataDir: Path, val client: AiRouterClient) {
         members.asReversed().forEach { member ->
             val entry = entries.remove(member)
             store.delete(member)
-            entry?.eventSignal?.value = SESSION_DELETED_SIGNAL
+            entry?.log?.deleted()
         }
         return members
     }
 
-    fun eventsAfter(id: String, afterSequenceId: Long): Flow<LogLine> {
-        val entry = entry(id)
-        return store.tailEvents(id, entry.eventSignal, entry.truncations, afterSequenceId)
-    }
+    fun eventsAfter(id: String, afterSequenceId: Long): Flow<LogLine> =
+        store.tail(id, entry(id).log, afterSequenceId)
 }
 
 internal class SessionEntry {
 
     val mutex: Mutex = Mutex()
 
-    val eventSignal: MutableStateFlow<Long> = MutableStateFlow(BEFORE_FIRST_EVENT)
-
-    val truncations: MutableStateFlow<Long> = MutableStateFlow(0L)
+    val log: EventLogSignal = EventLogSignal()
 
     @Volatile
     var runtime: TreeRuntime? = null

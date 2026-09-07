@@ -93,7 +93,7 @@ private class TreeMemberListener(
 
     override fun onEvent(event: AgentEvent) {
         log.onEvent(event)
-        entry.eventSignal.value = event.sequenceId
+        entry.log.appended(event.sequenceId)
     }
 
     override fun listenerForSubagent(name: String, sessionId: String): AgentEventListener = TreeMemberListener(
