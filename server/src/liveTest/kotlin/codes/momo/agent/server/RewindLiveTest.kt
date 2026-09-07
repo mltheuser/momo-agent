@@ -2,6 +2,7 @@ package codes.momo.agent.server
 
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
+import codes.momo.agent.server.session.SessionStatus
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import org.junit.jupiter.api.DisplayName

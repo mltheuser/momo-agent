@@ -2,6 +2,7 @@ package codes.momo.agent.server
 
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
+import codes.momo.agent.server.session.SessionStatus
 import io.ktor.client.call.body
 import io.ktor.http.HttpStatusCode
 import org.junit.jupiter.api.DisplayName

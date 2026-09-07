@@ -1,4 +1,4 @@
-package codes.momo.agent.server
+package codes.momo.agent.server.cut
 
 import codes.momo.agent.AgentEvent
 import kotlinx.serialization.json.JsonPrimitive

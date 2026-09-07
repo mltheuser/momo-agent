@@ -2,6 +2,8 @@ package codes.momo.agent.server
 
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
+import codes.momo.agent.server.session.ModelSelection
+import codes.momo.agent.server.session.SessionStatus
 import io.ktor.client.HttpClient
 import io.ktor.http.HttpStatusCode
 import org.junit.jupiter.api.DisplayName

@@ -1,13 +1,16 @@
-package codes.momo.agent.server
+package codes.momo.agent.server.session
 
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.environment.Privilege
+import codes.momo.agent.server.storage.CorruptSessionException
+import codes.momo.agent.server.storage.UnknownSessionException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.io.IOException
+import java.nio.file.Path
 import kotlin.time.Duration
 
 @Serializable
@@ -111,6 +114,8 @@ private fun SessionRegistry.storedSpawn(parentId: String, childId: String): Agen
 } catch (_: CorruptSessionException) {
     null
 }
+
+internal fun normalizedWorkspace(path: String): String = Path.of(path).toAbsolutePath().normalize().toString()
 
 internal fun List<AgentEvent>.sessionStarted(): AgentEvent.SessionStarted = first() as AgentEvent.SessionStarted
 

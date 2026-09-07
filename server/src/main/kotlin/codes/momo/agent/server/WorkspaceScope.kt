@@ -1,5 +1,9 @@
 package codes.momo.agent.server
 
+import codes.momo.agent.server.session.SessionRegistry
+import codes.momo.agent.server.session.normalizedWorkspace
+import codes.momo.agent.server.storage.CorruptSessionException
+import codes.momo.agent.server.storage.UnknownSessionException
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.application.install
@@ -8,8 +12,6 @@ import io.ktor.server.routing.Route
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
-
-internal fun normalizedWorkspace(path: String): String = Path.of(path).toAbsolutePath().normalize().toString()
 
 internal fun ApplicationCall.workspaceParameter(): String? {
     val raw = request.queryParameters[WORKSPACE_PARAMETER] ?: return null

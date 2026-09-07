@@ -1,8 +1,9 @@
-package codes.momo.agent.server
+package codes.momo.agent.server.session
 
 import codes.momo.agent.Agent
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
+import codes.momo.agent.server.storage.EventLogFailedException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.runBlocking
