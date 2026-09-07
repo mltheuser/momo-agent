@@ -32,15 +32,6 @@ import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
-internal class UnknownSessionException(id: String) : RuntimeException("No such session: $id")
-
-internal class SessionConflictException(message: String) : RuntimeException(message)
-
-internal class EventLogFailedException(cause: IOException) :
-    RuntimeException("The session's event log failed: ${cause.message}", cause)
-
-internal class InvalidRewindPointException(message: String) : RuntimeException(message)
-
 @Suppress("TooManyFunctions")
 internal class SessionRegistry(
     dataDir: Path,

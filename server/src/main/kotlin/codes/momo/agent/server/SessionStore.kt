@@ -31,9 +31,6 @@ import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readLines
 import kotlin.io.path.useLines
 
-internal class CorruptSessionException(id: String, cause: Exception) :
-    RuntimeException("Stored session $id is unreadable: ${cause.message}", cause)
-
 internal class SessionStore(dataDir: Path) {
 
     private val sessionsDir: Path = dataDir.resolve("sessions")
