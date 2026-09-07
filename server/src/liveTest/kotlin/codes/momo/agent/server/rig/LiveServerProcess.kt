@@ -1,4 +1,4 @@
-package codes.momo.agent.server
+package codes.momo.agent.server.rig
 
 import java.io.IOException
 import java.net.HttpURLConnection

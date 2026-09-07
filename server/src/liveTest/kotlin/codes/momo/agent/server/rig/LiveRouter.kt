@@ -1,4 +1,4 @@
-package codes.momo.agent.server
+package codes.momo.agent.server.rig
 
 import ai.router.sdk.AiRouterClient
 import io.ktor.client.HttpClient

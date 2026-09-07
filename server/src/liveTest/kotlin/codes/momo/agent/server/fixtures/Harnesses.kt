@@ -1,4 +1,4 @@
-package codes.momo.agent.server
+package codes.momo.agent.server.fixtures
 
 import java.nio.file.Path
 import kotlin.io.path.createDirectories
@@ -30,3 +30,11 @@ internal fun writeHarness(
 }
 
 internal fun harnessPath(tempDir: Path): String = writeHarness(tempDir.resolve("harness")).toString()
+
+internal fun liveHarness(tempDir: Path): String =
+    writeHarness(
+        tempDir.resolve("harness"),
+        instructions = "You are a terse assistant working in a project workspace. " +
+            "Use the bash tool whenever a question concerns the workspace's files, " +
+            "and keep your final messages to a single short sentence.",
+    ).toString()

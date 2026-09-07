@@ -1,4 +1,4 @@
-package codes.momo.agent.server
+package codes.momo.agent.server.fixtures
 
 import java.awt.Color
 import java.awt.Font

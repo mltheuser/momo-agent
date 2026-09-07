@@ -1,7 +1,15 @@
-package codes.momo.agent.server
+package codes.momo.agent.server.rig
 
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.server.CreateSessionRequest
+import codes.momo.agent.server.PromptRequest
+import codes.momo.agent.server.PutTemplateRequest
+import codes.momo.agent.server.RenameRequest
+import codes.momo.agent.server.RewindRequest
+import codes.momo.agent.server.RewindResponse
+import codes.momo.agent.server.SelectModelRequest
+import codes.momo.agent.server.TemplateResponse
 import codes.momo.agent.server.session.SessionInfo
 import codes.momo.agent.server.session.SessionStatus
 import io.ktor.client.HttpClient
@@ -26,7 +34,6 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
-import io.ktor.util.AttributeKey
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
@@ -35,9 +42,7 @@ import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
-import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
-import kotlin.io.path.createDirectories
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.fail
@@ -45,25 +50,19 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
-internal fun localWorkspace(tempDir: Path, name: String = "workspace"): String =
-    tempDir.resolve(name).createDirectories().toString()
-
-internal fun serverHttpClient(baseUrl: String, wait: Duration): HttpClient = HttpClient(CIO) {
+internal fun liveHttpClient(baseUrl: String): HttpClient = HttpClient(CIO) {
     install(ContentNegotiation) {
         json()
     }
     install(SSE)
     install(HttpTimeout) {
-        requestTimeoutMillis = wait.inWholeMilliseconds
+        requestTimeoutMillis = LIVE_WAIT.inWholeMilliseconds
         connectTimeoutMillis = CONNECT_TIMEOUT.inWholeMilliseconds
     }
     defaultRequest {
         url(baseUrl)
     }
-}.also { it.attributes.put(WAIT_CEILING, wait) }
-
-internal val HttpClient.waitCeiling: Duration
-    get() = attributes[WAIT_CEILING]
+}
 
 internal suspend fun HttpClient.createSession(
     harnessPath: String,
@@ -86,6 +85,9 @@ internal suspend fun HttpClient.rawCreateSessionResponse(body: String): HttpResp
         setBody(TextContent(body, ContentType.Application.Json))
     }
 
+internal suspend fun HttpClient.prompt(sessionId: String, prompt: String): SessionInfo =
+    prompt(sessionId, prompt, liveChatModel)
+
 internal suspend fun HttpClient.prompt(
     sessionId: String,
     prompt: String,
@@ -96,6 +98,9 @@ internal suspend fun HttpClient.prompt(
     assertEquals(HttpStatusCode.Accepted, response.status, response.bodyAsText())
     return response.body()
 }
+
+internal suspend fun HttpClient.promptResponse(sessionId: String, prompt: String): HttpResponse =
+    promptResponse(sessionId, prompt, liveChatModel)
 
 internal suspend fun HttpClient.promptResponse(
     sessionId: String,
@@ -233,7 +238,7 @@ internal suspend fun HttpClient.putTemplateResponse(name: String, body: String):
     }
 
 internal suspend fun HttpClient.awaitRunEnd(sessionId: String) {
-    val ended = withTimeoutOrNull(waitCeiling) {
+    val ended = withTimeoutOrNull(LIVE_WAIT) {
         while (sessionInfo(sessionId).status == SessionStatus.RUNNING) {
             delay(POLL_INTERVAL)
         }
@@ -244,7 +249,7 @@ internal suspend fun HttpClient.awaitRunEnd(sessionId: String) {
     }
 }
 
-internal class ChangeStream(private val received: () -> Int, private val ceiling: Duration) {
+internal class ChangeStream(private val received: () -> Int) {
 
     suspend fun <T> signalled(what: String, mutation: suspend () -> T): T {
         val before = received()
@@ -254,14 +259,14 @@ internal class ChangeStream(private val received: () -> Int, private val ceiling
     }
 
     internal suspend fun awaitMoreThan(count: Int, what: String) {
-        val arrived = withTimeoutOrNull(ceiling) {
+        val arrived = withTimeoutOrNull(LIVE_WAIT) {
             while (received() <= count) {
                 delay(POLL_INTERVAL)
             }
             true
         }
         if (arrived == null) {
-            fail("the change stream did not signal after $what within $ceiling")
+            fail("the change stream did not signal after $what within $LIVE_WAIT")
         }
     }
 }
@@ -280,7 +285,7 @@ internal suspend fun <T> HttpClient.withChangeStream(block: suspend (ChangeStrea
                     }
             }
         }
-        val stream = ChangeStream({ received.size }, waitCeiling)
+        val stream = ChangeStream { received.size }
         stream.awaitMoreThan(0, "subscribing")
         try {
             block(stream)
@@ -299,7 +304,7 @@ internal suspend fun HttpClient.streamEvents(
     until: (AgentEvent) -> Boolean = { it is AgentEvent.RunFinished },
 ): List<SseEvent> {
     val received = CopyOnWriteArrayList<SseEvent>()
-    val completed = withTimeoutOrNull(waitCeiling) {
+    val completed = withTimeoutOrNull(LIVE_WAIT) {
         sse(
             "/v1/sessions/$sessionId/events",
             request = { afterSequenceId?.let { header("Last-Event-ID", it.toString()) } },
@@ -334,14 +339,14 @@ private suspend fun HttpClient.failWait(
 ): Nothing {
     val info = runCatching { sessionInfo(sessionId) }.getOrNull()
     fail(
-        "$problem within $waitCeiling. Session $sessionId: status=${info?.status}, lastRun=${info?.lastRun}. " +
+        "$problem within $LIVE_WAIT. Session $sessionId: status=${info?.status}, lastRun=${info?.lastRun}. " +
             "Events seen: ${seen.takeLast(EVENT_TAIL).map { "${it.id}:${it.event::class.simpleName}" }}",
     )
 }
 
-internal val POLL_INTERVAL: Duration = 20.milliseconds
+private val LIVE_WAIT: Duration = 90.seconds
 
-private val WAIT_CEILING: AttributeKey<Duration> = AttributeKey("momo.waitCeiling")
+private val POLL_INTERVAL: Duration = 20.milliseconds
 
 private val CONNECT_TIMEOUT: Duration = 10.seconds
 
