@@ -96,7 +96,7 @@ private fun conversationFrom(events: List<AgentEvent>): List<ChatMessage> {
         "Not a settled session log: the last run has no run_finished. Repair the log first."
     }
     require(events.unansweredToolCalls().isEmpty()) {
-        "Not a settled session log: a turn has tool calls without a tool_call_finished. Repair the log first."
+        "Not a settled session log: the last turn has tool calls without a tool_call_finished. Repair the log first."
     }
     return events.mapNotNull { event ->
         when (event) {

@@ -1,6 +1,5 @@
 package codes.momo.agent.internal
 
-import ai.router.sdk.models.ToolCall
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
 import codes.momo.agent.harness.PROMPT_SUBAGENT_TOOL
@@ -8,32 +7,17 @@ import kotlin.time.Duration
 
 internal class CutShortToolCall(val callId: String, val toolName: String, val started: Boolean)
 
-internal fun List<AgentEvent>.unansweredToolCalls(): List<CutShortToolCall> = buildList {
-    var turn = emptyList<ToolCall>()
-    val started = mutableSetOf<String>()
-    val answered = mutableSetOf<String>()
-
-    fun settleTurn() {
-        turn.filterNot { it.id in answered }
-            .mapTo(this) { CutShortToolCall(it.id, it.function.name, it.id in started) }
-        turn = emptyList()
-        started.clear()
-        answered.clear()
+internal fun List<AgentEvent>.unansweredToolCalls(): List<CutShortToolCall> {
+    val lastTurn = indexOfLast { it is AgentEvent.LlmCallFinished }
+    if (lastTurn < 0) {
+        return emptyList()
     }
-
-    for (event in this@unansweredToolCalls) {
-        when (event) {
-            is AgentEvent.LlmCallFinished -> {
-                settleTurn()
-                turn = event.message.toolCalls.orEmpty()
-            }
-
-            is AgentEvent.ToolCallStarted -> started += event.callId
-            is AgentEvent.ToolCallFinished -> answered += event.callId
-            else -> Unit
-        }
-    }
-    settleTurn()
+    val since = subList(lastTurn + 1, size)
+    val started = since.filterIsInstance<AgentEvent.ToolCallStarted>().mapTo(mutableSetOf()) { it.callId }
+    val answered = since.filterIsInstance<AgentEvent.ToolCallFinished>().mapTo(mutableSetOf()) { it.callId }
+    return (this[lastTurn] as AgentEvent.LlmCallFinished).message.toolCalls.orEmpty()
+        .filterNot { it.id in answered }
+        .map { CutShortToolCall(it.id, it.function.name, it.id in started) }
 }
 
 internal fun cutShortToolResult(

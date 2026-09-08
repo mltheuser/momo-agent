@@ -14,7 +14,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.seconds
 
-class SettledLogTest {
+class InterruptedRunTest {
 
     private fun turn(seq: Long, tokens: Int, vararg callIds: String) = AgentEvent.LlmCallFinished(
         sequenceId = seq,

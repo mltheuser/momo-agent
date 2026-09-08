@@ -52,7 +52,7 @@ internal class SessionRegistry(dataDir: Path, val client: AiRouterClient) {
 }
 
 internal suspend fun SessionRegistry.eventsAfter(id: String, afterSequenceId: Long): Flow<LogLine> {
-    val tree = treeOf(id)
+    val tree = settledTreeOf(id)
     return store.tail(tree.id, entry(tree.id).log, afterSequenceId)
 }
 

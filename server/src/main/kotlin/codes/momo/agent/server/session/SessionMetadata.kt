@@ -30,7 +30,7 @@ private suspend fun SessionRegistry.recordMetadata(
     onAgent: (Agent) -> Unit,
     storedEvent: (sequenceId: Long, timestampMillis: Long) -> AgentEvent,
 ): SessionInfo {
-    val tree = treeOf(id)
+    val tree = settledTreeOf(id)
     changes.announcing {
         tree.root.mutex.withLock {
             val agent = tree.root.run?.agentAt(tree.path)

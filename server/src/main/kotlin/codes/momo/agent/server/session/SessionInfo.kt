@@ -66,7 +66,7 @@ internal suspend fun SessionRegistry.list(workspace: String): List<SessionInfo> 
 }
 
 internal suspend fun SessionRegistry.info(id: String): SessionInfo {
-    val tree = treeOf(id)
+    val tree = settledTreeOf(id)
     return withContext(Dispatchers.IO) {
         val events = store.readEvents(id)
         val started = events.sessionStarted()

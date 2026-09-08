@@ -9,14 +9,14 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 internal suspend fun SessionRegistry.startRun(id: String, prompt: String, settings: RunSettings) {
-    val tree = treeOf(id)
+    val tree = settledTreeOf(id)
     tree.root.mutex.withLock {
         launchRun(tree) { agent -> agent.send(prompt, settings) }
     }
 }
 
 internal suspend fun SessionRegistry.retryRun(id: String) {
-    val tree = treeOf(id)
+    val tree = settledTreeOf(id)
     changes.announcing {
         tree.root.mutex.withLock {
             tree.requireNoRunInFlight()
@@ -28,7 +28,7 @@ internal suspend fun SessionRegistry.retryRun(id: String) {
 }
 
 internal suspend fun SessionRegistry.stopRun(id: String) {
-    val tree = treeOf(id)
+    val tree = settledTreeOf(id)
     tree.root.run?.loadedAgentAt(tree.path)?.stop()
 }
 

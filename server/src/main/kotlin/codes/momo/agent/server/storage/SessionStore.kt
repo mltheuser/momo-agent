@@ -4,7 +4,6 @@ import codes.momo.agent.AgentEvent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.serializer
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
@@ -99,18 +98,6 @@ internal fun SessionStore.pathTo(started: AgentEvent.SessionStarted): List<Strin
     return ancestry.asReversed()
 }
 
-internal fun SessionStore.spawnedTreeIds(rootId: String): List<String> {
-    val tree = mutableListOf(rootId)
-    var index = 0
-    while (index < tree.size) {
-        ifReadable { readLines(tree[index]) }.orEmpty()
-            .filter { it.type == SUBAGENT_SPAWNED }
-            .mapTo(tree) { decodeLogLineAs<AgentEvent.SubagentSpawned>(it.json).sessionId }
-        index++
-    }
-    return tree
-}
-
 internal fun SessionStore.subtreeIds(id: String): List<String> {
     val childrenByParent = sessionIds().groupBy { sessionId ->
         ifReadable { readSessionStarted(sessionId) }?.parent
@@ -125,5 +112,3 @@ internal fun SessionStore.subtreeIds(id: String): List<String> {
 }
 
 private const val EVENTS_FILE = "events.jsonl"
-
-private val SUBAGENT_SPAWNED: String = serializer<AgentEvent.SubagentSpawned>().descriptor.serialName

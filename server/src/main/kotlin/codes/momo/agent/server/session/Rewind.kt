@@ -13,7 +13,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 internal suspend fun SessionRegistry.rewind(id: String, firstDeletedSequenceId: Long): List<String> {
-    val tree = treeOf(id)
+    val tree = settledTreeOf(id)
     return changes.announcing {
         tree.root.mutex.withLock {
             tree.requireNoRunInFlight()
