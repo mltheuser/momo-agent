@@ -16,6 +16,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
@@ -44,14 +46,16 @@ internal class ActiveRun(
         descendantIds(path)?.fold(agent as Agent?) { current, childId -> current?.loadedSubagentBySessionId(childId) }
 
     fun closeLogs() {
-        logs.values.map { runCatching { it.close() } }
-            .firstNotNullOfOrNull { it.exceptionOrNull() }
-            ?.let { throw it }
+        logs.forEach { (sessionId, log) ->
+            runCatching { log.close() }.onFailure { logger.error("Closing session $sessionId's event log failed.", it) }
+        }
     }
 
     private fun descendantIds(path: List<String>): List<String>? =
         path.drop(this.path.size).takeIf { path.take(this.path.size) == this.path }
 }
+
+private val logger: Logger = LoggerFactory.getLogger(ActiveRun::class.java)
 
 internal class TreeMemberListener(
     private val registry: SessionRegistry,

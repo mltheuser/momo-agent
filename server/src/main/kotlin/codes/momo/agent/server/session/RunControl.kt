@@ -7,8 +7,6 @@ import codes.momo.agent.server.cut.retryPlan
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import org.slf4j.Logger
-import org.slf4j.LoggerFactory
 
 internal suspend fun SessionRegistry.startRun(id: String, prompt: String, settings: RunSettings) {
     val tree = treeOf(id)
@@ -43,11 +41,9 @@ private suspend fun SessionRegistry.launchRun(tree: SessionTree, run: suspend (A
         try {
             run(active.agent)
         } finally {
-            runCatching { active.closeLogs() }.onFailure { logger.error("Closing ${tree.id}'s event log failed.", it) }
+            active.closeLogs()
             tree.root.run = null
             changes.announce()
         }
     }
 }
-
-private val logger: Logger = LoggerFactory.getLogger("codes.momo.agent.server.session.RunControl")
