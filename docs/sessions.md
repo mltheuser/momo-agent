@@ -12,23 +12,19 @@ loads the agent from the log, runs it, and drops it again.
 A session's `status` is `running` while this server executes a run on it and
 `idle` otherwise.
 
-Every way a run ends leaves the log settled: a run that ends with a call
-still executing (a stop, a budget) first answers that call with an error
-saying why, then records its outcome. Killing the server mid-run is the one
-way to leave a log unsettled. Before serving any read of a tree the server
-settles it: unless a run is in flight in that tree, every member log left open
-by a kill gets its cut-short calls answered and a `run_finished(interrupted)`,
-on disk. Nothing is patched in memory.
+Every graceful end of a run leaves the log settled. Killing the server mid-run is the one
+way to leave a log unsettled. Before serving any read of a session the server
+settles it on disc.
 
 ## Lifecycle by example
 
 A user opens a project, creates a session over the `coder` harness, and works:
 
 1. **Prompt** "Add a test for the parser". The run's model and reasoning effort travel with the prompt; the harness sets neither. The run appends events until the model answers without tool calls (`completed`), a budget ends it (`turns_exhausted`, `timeout`), or an LLM call fails terminally (`error`). The client follows the event stream; no endpoint returns the outcome.
-2. **Stop** while the agent is still running `./gradlew test`. The tool's process tree is killed, the call is answered with an error ("tool execution cut short — a user stopped the run"), the run ends `stopped`, and the session is `idle` and promptable at once.
+2. **Stop** while the agent is still running `./gradlew test`. A stop is graceful: the run ends the way it always does, only early. The running command is terminated, its call is answered with an error saying a user stopped the run, the run records `stopped`, and the log is settled when the request returns. The session is `idle` and promptable at once. Nothing is lost or left open — that is what sets a stop apart from a kill (step 5).
 3. **Retry** after a run ended `error` (the router was down). The failed LLM call and its outcome are cut from the log; the run resumes from the turn before it under its recorded settings. Progress before the failure survives.
 4. **Rewind** to before "Add a test for the parser" because the approach was wrong. That prompt and every event after it are deleted from the log permanently and the agent forgets them. The workspace is not rewound: files stay as the deleted turns left them. Title and model selection survive a rewind. A rewind cuts from a user message (`run_started`) or an assistant message (`llm_call_finished`); naming any other event is a `400 invalid_request`.
-5. **Kill** the server mid-run (a crash, a forced update). The log is left with an open run. The next read of the session — the sidebar listing it, the chat panel streaming it, the next prompt — settles it first: the cut-short call is answered ("the server went down"), the run ends `interrupted`, and the next prompt resumes the conversation with that knowledge. An interrupted run is not retryable: a retry replays only an LLM call that got no answer, never a tool call that may have half-run.
+5. **Kill** the server mid-run (a crash, a forced update). Nothing gets to finish: the log is left with an open run and an unanswered call. The next read of the session — the sidebar listing it, the chat panel streaming it, the next prompt — settles it first: the cut-short call is answered ("the server went down"), the run ends `interrupted`, and the next prompt resumes the conversation with that knowledge. An interrupted run is not retryable: a retry replays only an LLM call that got no answer, never a tool call that may have half-run.
 6. **Delete** once the work is merged. The log is removed.
 
 A prompt while a run is in flight, or a rewind or retry while any run in the
