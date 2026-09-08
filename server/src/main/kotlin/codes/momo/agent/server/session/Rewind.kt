@@ -50,5 +50,4 @@ private fun SessionRegistry.cutLog(sessionId: String, lastSurvivingSequenceId: L
     )
     val surviving = lines.filter { it.survivesCut(lastSurvivingSequenceId) }.map { it.json }
     store.rewriteLog(sessionId, surviving + encodeLogLine(rewound))
-    entryOrNull(sessionId)?.log?.cut(rewound.sequenceId)
 }

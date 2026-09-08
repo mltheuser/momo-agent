@@ -7,14 +7,12 @@ import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.rig.assertRejected
 import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.createSession
+import codes.momo.agent.server.rig.events
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.rewindResponse
 import codes.momo.agent.server.rig.rewindSession
-import codes.momo.agent.server.rig.streamEvents
 import codes.momo.agent.server.rig.withLiveServer
 import codes.momo.agent.server.session.SessionStatus
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -37,61 +35,32 @@ class RewindLiveTest {
     fun rewindForgetsTheDeletedTurns() = withLiveServer { http ->
         val id = http.createSession(liveHarness(tempDir), localWorkspace(tempDir)).id
         http.prompt(id, "Remember this passphrase: $KEPT_TOKEN — I will ask you to repeat it later.")
-        val firstRun = http.streamEvents(id)
-        assertEquals(RunResult.Status.COMPLETED, assertIs<AgentEvent.RunFinished>(firstRun.last().event).status)
-        val firstRunEnd = firstRun.last().id
+        val firstRun = http.awaitRunEnd(id)
+        assertEquals(RunResult.Status.COMPLETED, assertIs<AgentEvent.RunFinished>(firstRun.last()).status)
 
         http.prompt(id, "A second passphrase to remember: $DELETED_TOKEN — I may ask for that one too.")
-        val secondRun = http.streamEvents(id, afterSequenceId = firstRunEnd)
-        assertEquals(RunResult.Status.COMPLETED, assertIs<AgentEvent.RunFinished>(secondRun.last().event).status)
-        val preCutMax = secondRun.last().id
+        val bothRuns = http.awaitRunEnd(id)
+        assertEquals(RunResult.Status.COMPLETED, assertIs<AgentEvent.RunFinished>(bothRuns.last()).status)
 
-        http.awaitRunEnd(id)
-        http.rewindResponse(id, firstRun.first { it.event is AgentEvent.LlmCallStarted }.id)
+        http.rewindResponse(id, firstRun.first { it is AgentEvent.LlmCallStarted }.sequenceId)
             .assertRejected("invalid_request", "a cut from inside a turn")
 
-        val namedAt = firstRun.last { it.event is AgentEvent.LlmCallFinished }.id
+        val namedAt = firstRun.last { it is AgentEvent.LlmCallFinished }.sequenceId
+        val survivors = firstRun.filter { it.sequenceId < namedAt }
 
-        val survivors = firstRun.map { it.id }.filter { it < namedAt }
-        val cutPoint = survivors.last()
-
-        val rewound = coroutineScope {
-            val watcher = async {
-                http.streamEvents(id, afterSequenceId = preCutMax) { it is AgentEvent.ConversationRewound }
-            }
-            val rewound = http.rewindSession(id, namedAt)
-            val received = watcher.await()
-            assertEquals(
-                preCutMax + 1,
-                received.single().id,
-                "the parked subscriber's open stream receives the announcement, and nothing else",
-            )
-            assertIs<AgentEvent.ConversationRewound>(received.single().event)
-            rewound
-        }
-
+        val rewound = http.rewindSession(id, namedAt)
         assertEquals(SessionStatus.IDLE, rewound.session.status, "a beheaded run reads as ended")
         assertTrue(rewound.deletedSessionIds.isEmpty())
 
-        val replay = http.streamEvents(id, until = { it is AgentEvent.ConversationRewound })
-        val tail = assertIs<AgentEvent.ConversationRewound>(replay.last().event)
-        assertEquals(cutPoint, tail.lastSurvivingSequenceId)
-        assertEquals(preCutMax + 1, tail.sequenceId, "the announcement is numbered above everything deleted")
-        assertEquals(survivors + tail.sequenceId, replay.map { it.id }, "the log ends at the event below the named one")
-        assertTrue(
-            replay.none { it.event is AgentEvent.RunFinished },
-            "the cut took the run's own completion: only the announcement closes it",
-        )
-        assertEquals(
-            1,
-            replay.count { it.event is AgentEvent.RunStarted },
-            "the second turn went with the range above the named event",
-        )
+        val cut = http.events(id)
+        val tail = assertIs<AgentEvent.ConversationRewound>(cut.last())
+        assertEquals(survivors.last().sequenceId, tail.lastSurvivingSequenceId)
+        assertEquals(survivors, cut.dropLast(1), "the log ends at the event below the named one")
+        assertTrue(cut.none { it is AgentEvent.RunFinished }, "the cut took the run's own completion")
+        assertEquals(1, cut.count { it is AgentEvent.RunStarted }, "the second turn went with the range above")
 
         http.prompt(id, "List every passphrase I have asked you to remember in this conversation, verbatim.")
-        val answer = assertIs<AgentEvent.RunFinished>(
-            http.streamEvents(id, afterSequenceId = tail.sequenceId).last().event,
-        )
+        val answer = assertIs<AgentEvent.RunFinished>(http.awaitRunEnd(id).last())
         assertEquals(RunResult.Status.COMPLETED, answer.status)
         val finalMessage = assertNotNull(answer.finalMessage)
         assertContains(finalMessage, KEPT_TOKEN, message = "the surviving turn's passphrase must still be known")
@@ -106,25 +75,22 @@ class RewindLiveTest {
     fun rewindToTheFirstMessageStartsTheConversationOver() = withLiveServer { http ->
         val id = http.createSession(liveHarness(tempDir), localWorkspace(tempDir)).id
         http.prompt(id, "Remember this passphrase: $FORGOTTEN_TOKEN. Reply with a single OK.")
-        val firstRun = http.streamEvents(id)
-        assertEquals(RunResult.Status.COMPLETED, assertIs<AgentEvent.RunFinished>(firstRun.last().event).status)
-        val started = firstRun.first()
-        assertIs<AgentEvent.SessionStarted>(started.event)
-        val runStart = firstRun.first { it.event is AgentEvent.RunStarted }.id
+        val firstRun = http.awaitRunEnd(id)
+        assertEquals(RunResult.Status.COMPLETED, assertIs<AgentEvent.RunFinished>(firstRun.last()).status)
+        val started = assertIs<AgentEvent.SessionStarted>(firstRun.first())
+        val runStart = firstRun.first { it is AgentEvent.RunStarted }.sequenceId
 
         val rewound = http.rewindSession(id, runStart)
 
         assertEquals(SessionStatus.IDLE, rewound.session.status, "the next run loads the cut log")
         assertNull(rewound.session.lastRun, "a log with no run has no consumption to report")
-        val replay = http.streamEvents(id, until = { it is AgentEvent.ConversationRewound })
-        val tail = assertIs<AgentEvent.ConversationRewound>(replay.last().event)
-        assertEquals(started.id, tail.lastSurvivingSequenceId, "the session_started is the cut point")
-        assertEquals(listOf(started.id, tail.sequenceId), replay.map { it.id }, "no run_started is left at all")
+        val cut = http.events(id)
+        val tail = assertIs<AgentEvent.ConversationRewound>(cut.last())
+        assertEquals(started.sequenceId, tail.lastSurvivingSequenceId, "the session_started is the cut point")
+        assertEquals(listOf(started, tail), cut, "no run_started is left at all")
 
         http.prompt(id, "List every passphrase I have asked you to remember in this conversation, verbatim.")
-        val answer = assertIs<AgentEvent.RunFinished>(
-            http.streamEvents(id, afterSequenceId = tail.sequenceId).last().event,
-        )
+        val answer = assertIs<AgentEvent.RunFinished>(http.awaitRunEnd(id).last())
         assertEquals(RunResult.Status.COMPLETED, answer.status)
         val finalMessage = assertNotNull(answer.finalMessage)
         assertFalse(

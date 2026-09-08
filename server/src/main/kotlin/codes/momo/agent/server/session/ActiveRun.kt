@@ -61,21 +61,18 @@ private val logger: Logger = LoggerFactory.getLogger(ActiveRun::class.java)
 internal class TreeMemberListener(
     private val registry: SessionRegistry,
     private val logs: ConcurrentHashMap<String, EventLogWriter>,
-    private val entry: SessionEntry,
     private val log: EventLogWriter,
 ) : AgentEventListener {
 
     override fun onEvent(event: AgentEvent) {
         log.onEvent(event)
-        entry.log.appended(event.sequenceId)
+        registry.changes.announce()
     }
 
-    override fun listenerForSubagent(name: String, sessionId: String): AgentEventListener = TreeMemberListener(
-        registry,
-        logs,
-        registry.entryFor(sessionId),
-        logs.computeIfAbsent(sessionId) { registry.store.writer(sessionId) },
-    )
+    override fun listenerForSubagent(name: String, sessionId: String): AgentEventListener {
+        registry.register(sessionId)
+        return TreeMemberListener(registry, logs, logs.computeIfAbsent(sessionId) { registry.store.writer(sessionId) })
+    }
 
     override suspend fun storedEventsFor(sessionId: String): List<AgentEvent>? = withContext(Dispatchers.IO) {
         registry.store.readEventsOrNull(sessionId)
@@ -88,7 +85,7 @@ internal fun SessionRegistry.loadRun(tree: SessionTree): ActiveRun {
     val environment = ExecutionEnvironment(Path.of(started.workspace))
     val logs = ConcurrentHashMap<String, EventLogWriter>()
     val log = store.writer(tree.id).also { logs[tree.id] = it }
-    val listener = TreeMemberListener(this, logs, entry(tree.id), log)
+    val listener = TreeMemberListener(this, logs, log)
     val agent = try {
         Agent.load(store.readEvents(tree.id), harness, client, environment, listener)
     } catch (unsettled: IllegalArgumentException) {

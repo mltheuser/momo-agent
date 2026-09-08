@@ -4,8 +4,10 @@ import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
+import codes.momo.agent.server.rig.awaitLogged
 import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.createSession
+import codes.momo.agent.server.rig.events
 import codes.momo.agent.server.rig.liveChatModel
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.renameSession
@@ -14,7 +16,6 @@ import codes.momo.agent.server.rig.sessionInfo
 import codes.momo.agent.server.rig.sessionInfoResponse
 import codes.momo.agent.server.rig.sessions
 import codes.momo.agent.server.rig.stopResponse
-import codes.momo.agent.server.rig.streamEvents
 import codes.momo.agent.server.rig.withLiveServer
 import codes.momo.agent.server.session.ModelSelection
 import codes.momo.agent.server.session.SessionStatus
@@ -48,8 +49,8 @@ class SubagentTreeLiveTest {
         val root = http.createSession(dispatcher, localWorkspace(tempDir))
         http.prompt(root.id, "What is the pass phrase? Report exactly what the oracle tells you.")
 
-        val events = http.streamEvents(root.id)
-        val finished = assertIs<AgentEvent.RunFinished>(events.last().event)
+        val events = http.awaitRunEnd(root.id)
+        val finished = assertIs<AgentEvent.RunFinished>(events.last())
         assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
         assertContains(
             assertNotNull(finished.finalMessage),
@@ -58,11 +59,10 @@ class SubagentTreeLiveTest {
             message = "only the child's instructions hold the pass phrase, so the parent must have delegated",
         )
         val spawn = assertIs<AgentEvent.SubagentSpawned>(
-            events.map { it.event }.single { it is AgentEvent.SubagentSpawned },
+            events.single { it is AgentEvent.SubagentSpawned },
             "the root spawned exactly one child",
         )
         assertEquals(ORACLE_TYPE, spawn.type)
-        http.awaitRunEnd(root.id)
 
         val child = http.sessionInfo(spawn.sessionId)
         assertEquals(root.id, child.parent, "the child names its parent")
@@ -81,12 +81,11 @@ class SubagentTreeLiveTest {
 
         http.prompt(spawn.sessionId, "Repeat the pass phrase you gave, verbatim, without using any tools.")
         assertEquals(SessionStatus.IDLE, http.sessionInfo(root.id).status, "no parent is driving this run")
-        val childAnswer = assertIs<AgentEvent.RunFinished>(http.streamEvents(spawn.sessionId).last().event)
+        val childAnswer = assertIs<AgentEvent.RunFinished>(http.awaitRunEnd(spawn.sessionId).last())
         assertEquals(RunResult.Status.COMPLETED, childAnswer.status, "error: ${childAnswer.error}")
         assertContains(assertNotNull(childAnswer.finalMessage), PASS_PHRASE, ignoreCase = true)
-        http.awaitRunEnd(spawn.sessionId)
 
-        val delegation = events.last { it.event is AgentEvent.LlmCallFinished && it.id < spawn.sequenceId }.id
+        val delegation = events.last { it is AgentEvent.LlmCallFinished && it.sequenceId < spawn.sequenceId }.sequenceId
         val rewound = http.rewindSession(root.id, delegation)
         assertEquals(listOf(spawn.sessionId), rewound.deletedSessionIds, "the deleted spawn takes its child")
         assertEquals(HttpStatusCode.NotFound, http.sessionInfoResponse(spawn.sessionId).status, "the child is gone")
@@ -103,16 +102,15 @@ class SubagentTreeLiveTest {
         assertEquals(HttpStatusCode.OK, http.stopResponse(rootId).status)
 
         listOf(rootId, childId).forEach { id ->
-            val events = http.streamEvents(id)
+            val events = http.awaitRunEnd(id)
             assertEquals(
                 RunResult.Status.STOPPED,
-                assertIs<AgentEvent.RunFinished>(events.last().event).status,
+                assertIs<AgentEvent.RunFinished>(events.last()).status,
                 "the stop must end $id's run as stopped, not abort it",
             )
-            assertEquals(List(events.size) { it.toLong() }, events.map { it.id }, "$id's log has gaps")
+            assertEquals(List(events.size) { it.toLong() }, events.map { it.sequenceId }, "$id's log has gaps")
         }
 
-        http.awaitRunEnd(rootId)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(rootId).status)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(childId).status)
 
@@ -126,15 +124,13 @@ class SubagentTreeLiveTest {
 
         assertEquals(HttpStatusCode.OK, http.stopResponse(childId).status)
 
-        val childEvents = http.streamEvents(childId)
-        assertEquals(RunResult.Status.STOPPED, assertIs<AgentEvent.RunFinished>(childEvents.last().event).status)
-        val rootEvents = http.streamEvents(rootId)
-        val parentRun = assertIs<AgentEvent.RunFinished>(rootEvents.last().event)
+        val childEvents = http.awaitRunEnd(childId)
+        assertEquals(RunResult.Status.STOPPED, assertIs<AgentEvent.RunFinished>(childEvents.last()).status)
+        val parentRun = assertIs<AgentEvent.RunFinished>(http.awaitRunEnd(rootId).last())
         assertEquals(RunResult.Status.COMPLETED, parentRun.status, "the parent ends its own run: ${parentRun.error}")
-        http.awaitRunEnd(rootId)
         assertEquals(
             1,
-            http.streamEvents(childId).count { it.event is AgentEvent.RunStarted },
+            http.events(childId).count { it is AgentEvent.RunStarted },
             "the parent reported the stop instead of driving the worker again",
         )
         assertEquals(SessionStatus.IDLE, http.sessionInfo(rootId).status)
@@ -154,38 +150,35 @@ private suspend fun HttpClient.workerInFlight(tempDir: Path): Pair<String, Strin
     val rootId = createSession(manager, localWorkspace(tempDir)).id
     prompt(rootId, "Have the worker run the command `$SLOW_COMMAND` and report what it printed.")
     val childId = spawnedChildId(rootId)
-    streamEvents(childId, until = { it is AgentEvent.ToolCallStarted })
+    awaitLogged<AgentEvent.ToolCallStarted>(childId)
     return rootId to childId
 }
 
 private suspend fun HttpClient.continueThroughTheWorker(rootId: String, childId: String) {
-    val rootBefore = streamEvents(rootId).last().id
-    val childBefore = streamEvents(childId).last().id
+    val rootBefore = events(rootId).size
+    val childBefore = events(childId).size
     prompt(rootId, RECALL_PROMPT)
 
-    val rootTail = streamEvents(rootId, afterSequenceId = rootBefore)
-    val finished = assertIs<AgentEvent.RunFinished>(rootTail.last().event)
+    val rootTail = awaitRunEnd(rootId).drop(rootBefore)
+    val finished = assertIs<AgentEvent.RunFinished>(rootTail.last())
     assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
     assertContains(assertNotNull(finished.finalMessage), SLOW_COMMAND, message = "the worker remembers its command")
-    assertEquals(0, rootTail.count { it.event is AgentEvent.SubagentSpawned }, "the manager reused its worker")
+    assertEquals(0, rootTail.count { it is AgentEvent.SubagentSpawned }, "the manager reused its worker")
 
-    val childTail = streamEvents(childId, afterSequenceId = childBefore)
-    assertEquals(1, childTail.count { it.event is AgentEvent.RunStarted }, "the worker ran once more")
-    assertEquals(RunResult.Status.COMPLETED, assertIs<AgentEvent.RunFinished>(childTail.last().event).status)
-    assertEquals(
-        (childBefore + 1..childBefore + childTail.size).toList(),
-        childTail.map { it.id },
-        "the worker's log continues without gaps",
-    )
-    awaitRunEnd(rootId)
+    val childLog = awaitRunEnd(childId)
+    val childTail = childLog.drop(childBefore)
+    assertEquals(1, childTail.count { it is AgentEvent.RunStarted }, "the worker ran once more")
+    assertEquals(RunResult.Status.COMPLETED, assertIs<AgentEvent.RunFinished>(childTail.last()).status)
+    assertEquals(List(childLog.size) { it.toLong() }, childLog.map { it.sequenceId }, "the worker's log has gaps")
     assertEquals(SessionStatus.IDLE, sessionInfo(rootId).status)
     assertEquals(SessionStatus.IDLE, sessionInfo(childId).status)
 }
 
 private suspend fun HttpClient.spawnedChildId(rootId: String): String =
-    assertIs<AgentEvent.SubagentSpawned>(
-        streamEvents(rootId, until = { it is AgentEvent.SubagentSpawned }).last().event,
-    ).sessionId
+    awaitLogged<AgentEvent.SubagentSpawned>(rootId)
+        .filterIsInstance<AgentEvent.SubagentSpawned>()
+        .single()
+        .sessionId
 
 private const val ORACLE_TYPE: String = "oracle"
 

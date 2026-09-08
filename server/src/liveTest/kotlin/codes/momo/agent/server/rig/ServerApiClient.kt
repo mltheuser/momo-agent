@@ -23,7 +23,6 @@ import io.ktor.client.plugins.sse.SSE
 import io.ktor.client.plugins.sse.sse
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
-import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.put
@@ -38,11 +37,8 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.Json
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -209,6 +205,8 @@ internal suspend fun HttpClient.retryResponse(sessionId: String): HttpResponse =
 
 internal suspend fun HttpClient.eventsResponse(sessionId: String): HttpResponse = get("/v1/sessions/$sessionId/events")
 
+internal suspend fun HttpClient.events(sessionId: String): List<AgentEvent> = eventsResponse(sessionId).body()
+
 internal suspend fun HttpClient.modelsResponse(): HttpResponse = get("/v1/models")
 
 internal suspend fun HttpClient.templateNames(): List<String> = get("/v1/templates").body()
@@ -239,7 +237,7 @@ internal suspend fun HttpResponse.assertRejected(
     if (names != null) assertContains(error.message, names, message = what)
 }
 
-internal suspend fun HttpClient.awaitRunEnd(sessionId: String) {
+internal suspend fun HttpClient.awaitRunEnd(sessionId: String): List<AgentEvent> {
     val ended = withTimeoutOrNull(LIVE_WAIT) {
         while (sessionInfo(sessionId).status == SessionStatus.RUNNING) {
             delay(POLL_INTERVAL)
@@ -249,9 +247,22 @@ internal suspend fun HttpClient.awaitRunEnd(sessionId: String) {
     if (ended == null) {
         failWait(sessionId, "the run never ended")
     }
+    return events(sessionId)
 }
 
-internal class ChangeStream(private val received: () -> Int) {
+internal suspend inline fun <reified T : AgentEvent> HttpClient.awaitLogged(sessionId: String): List<AgentEvent> {
+    val logged = withTimeoutOrNull(LIVE_WAIT) {
+        var log = events(sessionId)
+        while (log.none { it is T }) {
+            delay(POLL_INTERVAL)
+            log = events(sessionId)
+        }
+        log
+    }
+    return logged ?: failWait(sessionId, "the log never showed a ${T::class.simpleName}")
+}
+
+internal class ChangeStream(val received: () -> Int) {
 
     suspend fun <T> signalled(what: String, mutation: suspend () -> T): T {
         val before = received()
@@ -297,52 +308,12 @@ internal suspend fun <T> HttpClient.withChangeStream(block: suspend (ChangeStrea
     }
 }
 
-internal data class SseEvent(val id: Long, val event: AgentEvent)
-
-internal suspend fun HttpClient.streamEvents(
-    sessionId: String,
-    afterSequenceId: Long? = null,
-    onSubscribed: () -> Unit = {},
-    until: (AgentEvent) -> Boolean = { it is AgentEvent.RunFinished },
-): List<SseEvent> {
-    val received = CopyOnWriteArrayList<SseEvent>()
-    val completed = withTimeoutOrNull(LIVE_WAIT) {
-        sse(
-            "/v1/sessions/$sessionId/events",
-            request = { afterSequenceId?.let { header("Last-Event-ID", it.toString()) } },
-        ) {
-            onSubscribed()
-            incoming
-                .filter { it.data != null }
-                .map { frame ->
-                    SseEvent(
-                        id = checkNotNull(frame.id) { "every event frame carries an id" }.toLong(),
-                        event = Json.decodeFromString(checkNotNull(frame.data) { "every event frame carries data" }),
-                    )
-                }
-                .transformWhile { decoded ->
-                    emit(decoded)
-                    !until(decoded.event)
-                }
-                .collect { received += it }
-        }
-        true
-    }
-    if (completed == null) {
-        failWait(sessionId, "the event stream never reached its end condition", received)
-    }
-    return received.toList()
-}
-
-private suspend fun HttpClient.failWait(
-    sessionId: String,
-    problem: String,
-    seen: List<SseEvent> = emptyList(),
-): Nothing {
+internal suspend fun HttpClient.failWait(sessionId: String, problem: String): Nothing {
     val info = runCatching { sessionInfo(sessionId) }.getOrNull()
+    val tail = runCatching { events(sessionId) }.getOrDefault(emptyList()).takeLast(EVENT_TAIL)
     fail(
         "$problem within $LIVE_WAIT. Session $sessionId: status=${info?.status}, lastRun=${info?.lastRun}. " +
-            "Events seen: ${seen.takeLast(EVENT_TAIL).map { "${it.id}:${it.event::class.simpleName}" }}",
+            "Log tail: ${tail.map { "${it.sequenceId}:${it::class.simpleName}" }}",
     )
 }
 

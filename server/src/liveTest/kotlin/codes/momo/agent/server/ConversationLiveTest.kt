@@ -7,20 +7,18 @@ import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.deleteSession
+import codes.momo.agent.server.rig.events
+import codes.momo.agent.server.rig.eventsResponse
 import codes.momo.agent.server.rig.liveChatModel
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.sessionInfo
-import codes.momo.agent.server.rig.sessionInfoResponse
-import codes.momo.agent.server.rig.streamEvents
 import codes.momo.agent.server.rig.withChangeStream
 import codes.momo.agent.server.rig.withLiveServer
 import codes.momo.agent.server.session.ModelSelection
 import codes.momo.agent.server.session.SessionStatus
 import codes.momo.agent.tool.ToolRegistry
+import io.ktor.client.call.body
 import io.ktor.http.HttpStatusCode
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -38,7 +36,7 @@ class ConversationLiveTest {
     lateinit var tempDir: Path
 
     @Test
-    @DisplayName("Create, prompt, stream, complete: the token comes out of the workspace, and the next run recalls it")
+    @DisplayName("Create, prompt, complete: the token comes out of the workspace, and the next run recalls it")
     fun theFullPathAndAContinuation() = withLiveServer { http ->
         val workspace = localWorkspace(tempDir)
         Path.of(workspace).resolve("secret.txt").writeText("$TOKEN\n")
@@ -49,13 +47,14 @@ class ConversationLiveTest {
             stream.signalled("a run starting") {
                 assertEquals(SessionStatus.RUNNING, http.prompt(session.id, READ_AND_FLOOD_PROMPT).status)
             }
-
-            val events = stream.signalled("a run ending") { http.streamEvents(session.id) }
+            val before = stream.received()
+            val events = stream.signalled("a run ending") { http.awaitRunEnd(session.id) }
             assertEquals(SessionStatus.IDLE, http.sessionInfo(session.id).status)
+            assertTrue(stream.received() - before > 1, "the run's events ring the change stream, not only its end")
             events
         }
 
-        val finished = assertIs<AgentEvent.RunFinished>(events.last().event)
+        val finished = assertIs<AgentEvent.RunFinished>(events.last())
         assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
         assertContains(
             assertNotNull(finished.finalMessage),
@@ -63,13 +62,9 @@ class ConversationLiveTest {
             ignoreCase = true,
             message = "the planted token can only reach the answer through a tool call in the workspace",
         )
-        assertIs<AgentEvent.SessionStarted>(events.first().event)
-        assertEquals(
-            List(events.size) { it.toLong() },
-            events.map { it.id },
-            "the SSE ids must be the log's gapless sequence ids",
-        )
-        val truncated = events.map { it.event }.filterIsInstance<AgentEvent.ToolCallFinished>().filter { it.truncated }
+        assertIs<AgentEvent.SessionStarted>(events.first())
+        assertEquals(List(events.size) { it.toLong() }, events.map { it.sequenceId }, "the log has gaps")
+        val truncated = events.filterIsInstance<AgentEvent.ToolCallFinished>().filter { it.truncated }
         assertEquals(1, truncated.size, "exactly the flood command's result is cut to the model-facing cap")
         assertContains(
             truncated.single().resultText,
@@ -82,9 +77,7 @@ class ConversationLiveTest {
 
         Path.of(workspace).resolve("secret.txt").toFile().delete()
         http.prompt(session.id, "Without using any tools, repeat the exact token you read earlier.")
-        val recalled = assertIs<AgentEvent.RunFinished>(
-            http.streamEvents(session.id, afterSequenceId = events.last().id).last().event,
-        )
+        val recalled = assertIs<AgentEvent.RunFinished>(http.awaitRunEnd(session.id).last())
         assertEquals(RunResult.Status.COMPLETED, recalled.status, "error: ${recalled.error}")
         assertContains(
             assertNotNull(recalled.finalMessage),
@@ -95,42 +88,22 @@ class ConversationLiveTest {
     }
 
     @Test
-    @DisplayName("Streams: Last-Event-ID replays exactly the tail, two subscribers agree, a delete ends them")
-    fun theEventStreamContract() = withLiveServer { http ->
-        val id = http.createSession(liveHarness(tempDir), localWorkspace(tempDir, "streams")).id
+    @DisplayName("The log is served whole and settled, two reads agree, and a delete makes it a 404")
+    fun theLogAsAWhole() = withLiveServer { http ->
+        val id = http.createSession(liveHarness(tempDir), localWorkspace(tempDir, "whole")).id
+        assertEquals(listOf(0L), http.events(id).map { it.sequenceId }, "a fresh log holds its session_started")
 
-        val (first, second) = coroutineScope {
-            val first = async { http.streamEvents(id) }
-            val second = async { http.streamEvents(id) }
-            http.prompt(id, READY_PROMPT)
-            first.await() to second.await()
-        }
-        assertEquals(first, second, "two subscribers see the same events in the same order")
-        assertTrue(first.size > 2, "a run must log more than two events")
-        assertEquals(RunResult.Status.COMPLETED, assertIs<AgentEvent.RunFinished>(first.last().event).status)
+        http.prompt(id, READY_PROMPT)
+        val log = http.awaitRunEnd(id)
+        assertTrue(log.size > 2, "a run must log more than two events")
+        assertEquals(RunResult.Status.COMPLETED, assertIs<AgentEvent.RunFinished>(log.last()).status)
+        assertEquals(log, http.events(id), "two reads of an idle log agree")
 
-        val replay = http.streamEvents(id, afterSequenceId = first[1].id)
-        assertEquals(first.drop(2), replay, "Last-Event-ID resumes strictly after the named event")
-
-        http.awaitRunEnd(id)
-        coroutineScope {
-            val subscribed = CompletableDeferred<Unit>()
-
-            val watcher = async { http.streamEvents(id, until = untilTheServerEnds(subscribed)) }
-            subscribed.await()
-            http.deleteSession(id)
-            assertTrue(
-                watcher.await().isNotEmpty(),
-                "the parked subscriber must have been released, having seen the log"
-            )
-        }
-        assertEquals(HttpStatusCode.NotFound, http.sessionInfoResponse(id).status, "a deleted session is unknown")
+        http.deleteSession(id)
+        val gone = http.eventsResponse(id)
+        assertEquals(HttpStatusCode.NotFound, gone.status, "a deleted session's log is unknown")
+        assertEquals("unknown_session", gone.body<ApiError>().code)
     }
-}
-
-private fun untilTheServerEnds(subscribed: CompletableDeferred<Unit>): (AgentEvent) -> Boolean = {
-    subscribed.complete(Unit)
-    false
 }
 
 private const val TOKEN: String = "plugh-5507"

@@ -55,5 +55,4 @@ private suspend fun SessionRegistry.appendToStoredLog(
     } catch (failure: IOException) {
         throw EventLogFailedException(failure)
     }
-    entry(id).log.appended(stamped.sequenceId)
 }

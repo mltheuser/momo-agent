@@ -1,13 +1,12 @@
 package codes.momo.agent.server.session
 
 import ai.router.sdk.AiRouterClient
-import codes.momo.agent.server.storage.EventLogSignal
-import codes.momo.agent.server.storage.LogLine
 import codes.momo.agent.server.storage.SessionStore
 import codes.momo.agent.server.storage.UnknownSessionException
 import codes.momo.agent.server.storage.subtreeIds
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
@@ -34,33 +33,30 @@ internal class SessionRegistry(dataDir: Path, val client: AiRouterClient) {
 
     fun entryOrNull(id: String): SessionEntry? = entries[id]
 
-    fun entryFor(id: String): SessionEntry = entries.computeIfAbsent(id) { SessionEntry() }
-
-    fun register(id: String, entry: SessionEntry) {
-        entries[id] = entry
+    fun register(id: String) {
+        entries.computeIfAbsent(id) { SessionEntry() }
     }
 
     fun removeSubtree(id: String): List<String> {
         val members = store.subtreeIds(id)
         members.asReversed().forEach { member ->
-            val entry = entries.remove(member)
+            entries.remove(member)
             store.delete(member)
-            entry?.log?.deleted()
         }
         return members
     }
 }
 
-internal suspend fun SessionRegistry.eventsAfter(id: String, afterSequenceId: Long): Flow<LogLine> {
-    val tree = settledTreeOf(id)
-    return store.tail(tree.id, entry(tree.id).log, afterSequenceId)
+internal suspend fun SessionRegistry.events(id: String): String {
+    settledTreeOf(id)
+    return withContext(Dispatchers.IO) {
+        store.readLines(id).joinToString(separator = ",", prefix = "[", postfix = "]") { it.json }
+    }
 }
 
 internal class SessionEntry {
 
     val mutex: Mutex = Mutex()
-
-    val log: EventLogSignal = EventLogSignal()
 
     @Volatile
     var run: ActiveRun? = null

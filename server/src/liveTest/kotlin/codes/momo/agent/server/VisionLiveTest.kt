@@ -5,9 +5,9 @@ import codes.momo.agent.RunResult
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
 import codes.momo.agent.server.fixtures.writeWordImage
+import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.prompt
-import codes.momo.agent.server.rig.streamEvents
 import codes.momo.agent.server.rig.withLiveServer
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -45,7 +45,7 @@ class VisionLiveTest {
                 "in the first image and the word written in b.png, each spelled exactly as shown.",
         )
 
-        val events = http.streamEvents(id).map { it.event }
+        val events = http.awaitRunEnd(id)
         val finished = assertIs<AgentEvent.RunFinished>(events.last())
         assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
         val started = assertIs<AgentEvent.RunStarted>(events.single { it is AgentEvent.RunStarted })

@@ -10,7 +10,7 @@ import codes.momo.agent.server.session.SessionInfo
 import codes.momo.agent.server.session.SessionRegistry
 import codes.momo.agent.server.session.create
 import codes.momo.agent.server.session.delete
-import codes.momo.agent.server.session.eventsAfter
+import codes.momo.agent.server.session.events
 import codes.momo.agent.server.session.info
 import codes.momo.agent.server.session.list
 import codes.momo.agent.server.session.rename
@@ -19,7 +19,6 @@ import codes.momo.agent.server.session.rewind
 import codes.momo.agent.server.session.selectModel
 import codes.momo.agent.server.session.startRun
 import codes.momo.agent.server.session.stopRun
-import codes.momo.agent.server.storage.BEFORE_FIRST_EVENT
 import codes.momo.agent.server.storage.CorruptSessionException
 import codes.momo.agent.server.storage.EventLogFailedException
 import codes.momo.agent.server.storage.InvalidRewindPointException
@@ -35,12 +34,10 @@ import io.ktor.serialization.ContentConvertException
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
-import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.application.install
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
-import io.ktor.server.request.header
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
@@ -207,7 +204,9 @@ private fun Route.singleSessionRoutes(registry: SessionRegistry) {
         val deletedSessionIds = registry.rewind(id, request.firstDeletedSequenceId)
         call.respond(RewindResponse(registry.info(id), deletedSessionIds))
     }
-    eventStreamRoute(registry)
+    get("/events") {
+        call.respondText(registry.events(call.sessionId()), ContentType.Application.Json)
+    }
     post("/stop") {
         registry.stopRun(call.sessionId())
         call.respond(registry.info(call.sessionId()))
@@ -223,23 +222,6 @@ private fun Route.changeStreamRoute(registry: SessionRegistry) {
         sse {
             heartbeat()
             registry.changes.flow.onSubscription { emit(Unit) }.collect { send(event = CHANGE_EVENT) }
-        }
-    }
-}
-
-private fun Route.eventStreamRoute(registry: SessionRegistry) {
-    // A plugin, not a handler check: once the SSE handler runs the 200 is committed and a 404 is impossible.
-    val knownSessionGuard = createRouteScopedPlugin("KnownSessionGuard") {
-        onCall { call -> registry.requireKnown(call.sessionId()) }
-    }
-    route("/events") {
-        install(knownSessionGuard)
-        sse {
-            heartbeat()
-            val afterSequenceId = call.request.header("Last-Event-ID")?.toLongOrNull() ?: BEFORE_FIRST_EVENT
-            registry.eventsAfter(call.sessionId(), afterSequenceId).collect { event ->
-                send(data = event.json, id = event.sequenceId.toString())
-            }
         }
     }
 }

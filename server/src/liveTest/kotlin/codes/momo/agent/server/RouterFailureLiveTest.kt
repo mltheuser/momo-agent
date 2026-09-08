@@ -12,7 +12,6 @@ import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.liveHttpClient
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.sessionInfo
-import codes.momo.agent.server.rig.streamEvents
 import codes.momo.agent.server.session.SessionStatus
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.runBlocking
@@ -72,7 +71,7 @@ class RouterFailureLiveTest {
 
         http.prompt(id, "Reply with exactly this token and nothing else: $TOKEN")
 
-        val events = http.streamEvents(id).map { it.event }
+        val events = http.awaitRunEnd(id)
         val finished = assertIs<AgentEvent.RunFinished>(events.last())
         assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
         assertContains(assertNotNull(finished.finalMessage), TOKEN, message = "the forwarded call reached the model")
@@ -91,20 +90,16 @@ class RouterFailureLiveTest {
 
         http.prompt(id, "Reply with the single word: ready.")
 
-        val failed = http.streamEvents(id)
-        val events = failed.map { it.event }
+        val events = http.awaitRunEnd(id)
         val finished = assertIs<AgentEvent.RunFinished>(events.last())
         assertEquals(RunResult.Status.ERROR, finished.status)
         assertContains(assertNotNull(finished.error).message, "finish_reason 'error'")
         assertNull(finished.finalMessage, "a provider-side failure's text must not read as the model's answer")
         assertTrue(events.none { it is AgentEvent.LlmCallRetried }, "a 200 is never retried")
-        http.awaitRunEnd(id)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status, "the session stays idle")
 
         http.prompt(id, "Reply with exactly this token and nothing else: $TOKEN")
-        val recovered = assertIs<AgentEvent.RunFinished>(
-            http.streamEvents(id, afterSequenceId = failed.last().id).last().event,
-        )
+        val recovered = assertIs<AgentEvent.RunFinished>(http.awaitRunEnd(id).last())
         assertEquals(RunResult.Status.COMPLETED, recovered.status, "error: ${recovered.error}")
         assertContains(assertNotNull(recovered.finalMessage), TOKEN)
     }
@@ -117,7 +112,7 @@ class RouterFailureLiveTest {
 
         http.prompt(id, "Reply with the single word: ready.")
 
-        val events = http.streamEvents(id).map { it.event }
+        val events = http.awaitRunEnd(id)
         val finished = assertIs<AgentEvent.RunFinished>(events.last())
         assertEquals(RunResult.Status.ERROR, finished.status)
         val error = assertNotNull(finished.error, "the decoding failure is recorded")

@@ -37,7 +37,9 @@ private suspend fun SessionRegistry.settle(tree: SessionTree) {
         withContext(Dispatchers.IO) {
             store.subtreeIds(tree.path.first()).forEach { member ->
                 val repairs = store.ifReadable { repairTornRun(member, System.currentTimeMillis()) }.orEmpty()
-                repairs.lastOrNull()?.let { entryOrNull(member)?.log?.appended(it.sequenceId) }
+                if (repairs.isNotEmpty()) {
+                    changes.announce()
+                }
             }
         }
     }

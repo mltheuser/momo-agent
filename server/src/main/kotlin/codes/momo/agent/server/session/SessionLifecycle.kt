@@ -21,9 +21,8 @@ internal suspend fun SessionRegistry.create(harnessPath: String, workspace: Stri
             val harnessFolder = Path.of(harnessPath)
             val harness = Harness.load(harnessFolder)
             val environment = ExecutionEnvironment(Path.of(workspace))
-            val root = SessionEntry()
             val log = store.writer()
-            val listener = TreeMemberListener(this@create, ConcurrentHashMap(), root, log)
+            val listener = TreeMemberListener(this@create, ConcurrentHashMap(), log)
             val agent = Agent(harness, client, environment, title ?: harnessFolder.fileName.toString(), listener)
             try {
                 log.close()
@@ -31,7 +30,7 @@ internal suspend fun SessionRegistry.create(harnessPath: String, workspace: Stri
                 runCatching { store.delete(agent.sessionId) }
                 throw EventLogFailedException(failure)
             }
-            register(agent.sessionId, root)
+            register(agent.sessionId)
             info(agent.sessionId)
         }
     }

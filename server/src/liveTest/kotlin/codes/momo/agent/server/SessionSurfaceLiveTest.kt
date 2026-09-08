@@ -12,6 +12,7 @@ import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.createSessionResponse
 import codes.momo.agent.server.rig.deleteResponse
 import codes.momo.agent.server.rig.deleteSession
+import codes.momo.agent.server.rig.events
 import codes.momo.agent.server.rig.eventsResponse
 import codes.momo.agent.server.rig.liveChatModel
 import codes.momo.agent.server.rig.modelsResponse
@@ -34,7 +35,6 @@ import codes.momo.agent.server.rig.sessions
 import codes.momo.agent.server.rig.sessionsResponse
 import codes.momo.agent.server.rig.sharedLiveServer
 import codes.momo.agent.server.rig.stopResponse
-import codes.momo.agent.server.rig.streamEvents
 import codes.momo.agent.server.rig.templateNames
 import codes.momo.agent.server.rig.templateResponse
 import codes.momo.agent.server.rig.withChangeStream
@@ -45,8 +45,6 @@ import codes.momo.agent.server.session.SessionStatus
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -128,7 +126,7 @@ class SessionSurfaceLiveTest {
         ).assertRejected("invalid_request", "a declared privilege")
 
         val id = http.createSession(harness, workspace).id
-        val before = http.streamEvents(id, until = { it is AgentEvent.SessionStarted })
+        val before = http.events(id)
 
         http.promptResponse(id, "   ").assertRejected("invalid_request", "a blank prompt")
         http.promptResponse(id, "go", model = "   ").assertRejected("invalid_request", "a blank model")
@@ -141,11 +139,14 @@ class SessionSurfaceLiveTest {
         http.rawSelectModelResponse(id, """{"reasoningEffort": "high"}""")
             .assertRejected("invalid_request", "a selection without a model")
 
-        http.rewindResponse(id, before.first().id).assertRejected("invalid_request", "naming the session_started")
+        http.rewindResponse(
+            id,
+            before.first().sequenceId
+        ).assertRejected("invalid_request", "naming the session_started")
         http.renameSession(id, "Renamed, then named as a cut point")
-        val renamed = http.streamEvents(id, afterSequenceId = before.last().id) { it is AgentEvent.SessionRenamed }
-        http.rewindResponse(id, renamed.last().id).assertRejected("invalid_request", "naming a preserved event")
-        http.rewindResponse(id, renamed.last().id + 100).assertRejected("invalid_request", "an absent sequence ID")
+        val renamed = assertIs<AgentEvent.SessionRenamed>(http.events(id).last())
+        http.rewindResponse(id, renamed.sequenceId).assertRejected("invalid_request", "naming a preserved event")
+        http.rewindResponse(id, renamed.sequenceId + 100).assertRejected("invalid_request", "an absent sequence ID")
         listOf("{}", """{"firstDeletedSequenceId": "not-a-number"}""").forEach { body ->
             http.rawRewindResponse(id, body).assertRejected("invalid_request", "rewind body '$body'")
         }
@@ -153,8 +154,7 @@ class SessionSurfaceLiveTest {
         http.sessionsResponse(workspace = null).assertRejected("invalid_request", "an unscoped listing")
         http.sessionsResponse(workspace = "relative/path").assertRejected("invalid_request", "a relative workspace")
 
-        val after = http.streamEvents(id, until = { it is AgentEvent.SessionRenamed })
-        assertEquals(before + renamed, after, "a rejected request leaves the log as it was")
+        assertEquals(before + renamed, http.events(id), "a rejected request leaves the log as it was")
         assertEquals("Renamed, then named as a cut point", http.sessionInfo(id).title)
     }
 
@@ -196,25 +196,25 @@ class SessionSurfaceLiveTest {
     }
 
     @Test
-    @DisplayName("Rename and select-model append to the stored log between runs: the parked subscriber gets the frame")
+    @DisplayName("Rename and select-model append to the stored log between runs, each ringing the change stream")
     fun renameAndSelectModelBetweenRuns() = withLiveServer { http ->
         val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "metadata")).id
 
-        coroutineScope {
-            val watcher = async { http.streamEvents(id, until = { it is AgentEvent.ModelSelected }) }
-            val renamed = http.renameSession(id, "Chosen title")
+        http.withChangeStream { stream ->
+            val renamed = stream.signalled("a rename") { http.renameSession(id, "Chosen title") }
             assertEquals("Chosen title", renamed.title)
             assertEquals(SessionStatus.IDLE, renamed.status, "a rename starts no run")
-            val selected = http.selectModel(id, "picked-model", ReasoningEffort.HIGH)
+            val selected = stream.signalled(
+                "a selection"
+            ) { http.selectModel(id, "picked-model", ReasoningEffort.HIGH) }
             assertEquals(ModelSelection("picked-model", ReasoningEffort.HIGH), selected.modelSelection)
             assertEquals(SessionStatus.IDLE, selected.status, "a selection starts no run")
-
-            val appended = watcher.await().map { it.event }.drop(1)
-            assertEquals("Chosen title", assertIs<AgentEvent.SessionRenamed>(appended[0]).title)
-            val event = assertIs<AgentEvent.ModelSelected>(appended[1])
-            assertEquals("picked-model" to ReasoningEffort.HIGH, event.model to event.reasoningEffort)
-            assertEquals(listOf(1L, 2L), appended.map { it.sequenceId }, "appended gaplessly after session_started")
         }
+        val appended = http.events(id).drop(1)
+        assertEquals("Chosen title", assertIs<AgentEvent.SessionRenamed>(appended[0]).title)
+        val event = assertIs<AgentEvent.ModelSelected>(appended[1])
+        assertEquals("picked-model" to ReasoningEffort.HIGH, event.model to event.reasoningEffort)
+        assertEquals(listOf(1L, 2L), appended.map { it.sequenceId }, "appended gaplessly after session_started")
         val info = http.sessionInfo(id)
         assertEquals("Chosen title", info.title)
         assertEquals(ModelSelection("picked-model", ReasoningEffort.HIGH), info.modelSelection)

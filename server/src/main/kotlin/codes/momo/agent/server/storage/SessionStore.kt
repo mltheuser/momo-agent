@@ -1,7 +1,6 @@
 package codes.momo.agent.server.storage
 
 import codes.momo.agent.AgentEvent
-import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.nio.file.Files
@@ -47,9 +46,6 @@ internal class SessionStore(dataDir: Path) {
     fun rewriteLog(id: String, lines: List<String>) {
         replaceAtomically(logFile(id), lines.joinToString(separator = "\n", postfix = "\n"))
     }
-
-    fun tail(id: String, signal: EventLogSignal, afterSequenceId: Long): Flow<LogLine> =
-        logFile(id).tailLogLines(signal, afterSequenceId)
 
     fun writer(id: String? = null): EventLogWriter = EventLogWriter(id, ::logFile)
 

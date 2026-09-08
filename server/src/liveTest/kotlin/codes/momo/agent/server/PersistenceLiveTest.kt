@@ -8,13 +8,13 @@ import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.rig.LiveServerProcess
 import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.createSession
+import codes.momo.agent.server.rig.events
 import codes.momo.agent.server.rig.liveHttpClient
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.renameSession
 import codes.momo.agent.server.rig.selectModel
 import codes.momo.agent.server.rig.sessionInfo
 import codes.momo.agent.server.rig.sessions
-import codes.momo.agent.server.rig.streamEvents
 import codes.momo.agent.server.session.ModelSelection
 import codes.momo.agent.server.session.SessionStatus
 import io.ktor.client.HttpClient
@@ -72,16 +72,13 @@ private suspend fun HttpClient.readTheTokenAndDecorate(
     val id = createSession(harness, workspace).id
     prompt(id, "Read the file $TOKEN_FILE in the workspace with the bash tool and tell me the token it contains.")
 
-    val events = streamEvents(id)
-    val finished = assertIs<AgentEvent.RunFinished>(events.last().event)
+    val finished = assertIs<AgentEvent.RunFinished>(awaitRunEnd(id).last())
     assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
     assertContains(assertNotNull(finished.finalMessage), TOKEN, ignoreCase = true)
-    awaitRunEnd(id)
     renameSession(id, KEPT_TITLE)
     selectModel(id, PICKED_MODEL, ReasoningEffort.HIGH)
 
-    val lastStored = streamEvents(id, afterSequenceId = events.last().id) { it is AgentEvent.ModelSelected }.last().id
-    return FirstProcessOutcome(id, lastStored, finished.turnsUsed)
+    return FirstProcessOutcome(id, assertIs<AgentEvent.ModelSelected>(events(id).last()).sequenceId, finished.turnsUsed)
 }
 
 private suspend fun HttpClient.recallTheToken(before: FirstProcessOutcome, workspace: String) {
@@ -101,14 +98,15 @@ private suspend fun HttpClient.recallTheToken(before: FirstProcessOutcome, works
     )
 
     prompt(before.id, "Remind me of the exact token you read — you already have it in this conversation.")
-    val resumed = streamEvents(before.id, afterSequenceId = before.lastSequenceId)
+    val log = awaitRunEnd(before.id)
 
     assertEquals(
-        List(resumed.size) { before.lastSequenceId + 1 + it },
-        resumed.map { it.id },
+        List(log.size) { it.toLong() },
+        log.map { it.sequenceId },
         "the restarted process must continue the stored log's gapless sequence ids",
     )
-    val answer = assertIs<AgentEvent.RunFinished>(resumed.last().event)
+    assertIs<AgentEvent.RunStarted>(log[before.lastSequenceId.toInt() + 1], "the new run follows the stored log")
+    val answer = assertIs<AgentEvent.RunFinished>(log.last())
     assertEquals(RunResult.Status.COMPLETED, answer.status, "error: ${answer.error}")
     assertContains(
         assertNotNull(answer.finalMessage),
