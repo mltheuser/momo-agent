@@ -10,12 +10,14 @@ The log is the single source of truth. Nothing lives in memory between runs: a p
 loads the agent from the log, runs it, and drops it again.
 
 A session's `status` is `running` while this server executes a run on it and
-`idle` otherwise.
+`idle` otherwise. It comes from the server's memory, never from the log: a log
+left open by a kill is not a running session.
 
-Every graceful end of a run leaves the log settled. Killing the server mid-run is the one
-way to leave a log unsettled. Before serving any read of a session the server
-settles it on disc. An open run on disk therefore means this server is executing or
-resuming it now.
+A run in flight has no `run_finished` yet; every graceful end of a run leaves
+the log settled. Killing the server mid-run is the one way to leave a log
+unsettled after the fact. Before serving any read of a session that is not
+running, the server settles it on disk, so a reader never sees an open run
+that nobody is executing.
 
 The server serves the whole log on `GET /v1/sessions/{id}/events` and rings
 `GET /v1/sessions/changes` (SSE, one dataless `change` frame per mutation, coalesced)
@@ -28,7 +30,7 @@ A user opens a project, creates a session over the `coder` harness, and works:
 
 1. **Prompt** "Add a test for the parser". The run's model and reasoning effort travel with the prompt; the harness sets neither. The run appends events until the model answers without tool calls (`completed`), a budget ends it (`turns_exhausted`, `timeout`), or an LLM call fails terminally (`error`). The client refetches the log as the change stream rings; no endpoint returns the outcome.
 2. **Stop** while the agent is still running `./gradlew test`. The running command is terminated, its call is answered with an error saying a user stopped the run, the run records `stopped`, and the log ends up settled.
-3. **Retry** after a run ended `error` (the router was down). The failed LLM call and its outcome are cut from the log; the run resumes from the turn before it under its recorded settings. Progress before the failure survives. The cut leaves the run open and the resumption reopens it in the same step under the tree's lock, so the run's `run_finished` is the one the retry records.
+3. **Retry** after a run ended `error` (the router was down). The failed LLM call and its `run_finished` are cut from the log and the session is running again at once, opened by `run_resumed` instead of a new `run_started`: the model is asked the same question it failed to answer, with the same history, under the run's recorded model and reasoning effort. Progress before the failure survives.
 4. **Rewind** to before "Add a test for the parser" because the approach was wrong. That prompt and every event after it are deleted from the log permanently and the agent forgets them. The workspace is not rewound: files stay as the deleted turns left them. Title and model selection survive a rewind. A rewind cuts from a user message; naming an event that is not a user message is a `400`. Since a user message opens a run, the log after a rewind ends where the previous run ended and is settled without any marker.
 5. **Kill** the server mid-run. Nothing gets to finish: the log is left in an incomplete state. The next read of the session repairs and settles it.
 6. **Delete** once the session is no longer needed. The log is removed.
