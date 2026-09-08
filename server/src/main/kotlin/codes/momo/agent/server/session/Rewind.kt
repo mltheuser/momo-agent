@@ -1,6 +1,7 @@
 package codes.momo.agent.server.session
 
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.answerCallsCutByRewind
 import codes.momo.agent.server.cut.RewindPlan
 import codes.momo.agent.server.cut.lastSurvivorOfCutFrom
 import codes.momo.agent.server.cut.rewindPlan
@@ -11,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 
 internal suspend fun SessionRegistry.rewind(id: String, firstDeletedSequenceId: Long): List<String> {
     val tree = treeOf(id)
@@ -43,12 +45,18 @@ private fun SessionRegistry.applyPlan(plan: RewindPlan): List<String> {
 
 private fun SessionRegistry.cutLog(sessionId: String, lastSurvivingSequenceId: Long) {
     val lines = store.readLines(sessionId)
+    val surviving = lines.filter { it.survivesCut(lastSurvivingSequenceId) }
+    val now = System.currentTimeMillis()
+    val answers = answerCallsCutByRewind(
+        surviving = surviving.map { Json.decodeFromString<AgentEvent>(it.json) },
+        firstSequenceId = lines.last().sequenceId + 1,
+        timestampMillis = now,
+    )
     val rewound = AgentEvent.ConversationRewound(
-        sequenceId = lines.last().sequenceId + 1,
-        timestampMillis = System.currentTimeMillis(),
+        sequenceId = lines.last().sequenceId + 1 + answers.size,
+        timestampMillis = now,
         lastSurvivingSequenceId = lastSurvivingSequenceId,
     )
-    val surviving = lines.filter { it.survivesCut(lastSurvivingSequenceId) }.map { it.json }
-    store.rewriteLog(sessionId, surviving + encodeLogLine(rewound))
+    store.rewriteLog(sessionId, surviving.map { it.json } + (answers + rewound).map(::encodeLogLine))
     entryOrNull(sessionId)?.log?.cut(rewound.sequenceId)
 }

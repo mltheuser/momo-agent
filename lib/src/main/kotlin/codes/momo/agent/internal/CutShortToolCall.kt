@@ -38,20 +38,20 @@ internal fun List<AgentEvent>.unansweredToolCalls(): List<CutShortToolCall> = bu
 
 internal fun cutShortToolResult(
     call: CutShortToolCall,
-    runStatus: RunResult.Status,
+    resultText: String,
     sequenceId: Long,
     timestampMillis: Long,
 ): AgentEvent.ToolCallFinished = AgentEvent.ToolCallFinished(
     sequenceId = sequenceId,
     timestampMillis = timestampMillis,
     callId = call.callId,
-    resultText = cutShortText(call, runStatus),
+    resultText = resultText,
     outcome = AgentEvent.ToolCallFinished.Outcome.ERROR,
     duration = Duration.ZERO,
     truncated = false,
 )
 
-private fun cutShortText(call: CutShortToolCall, runStatus: RunResult.Status): String {
+internal fun CutShortToolCall.cutShortByRunEnd(runStatus: RunResult.Status): String {
     val cut = when (runStatus) {
         RunResult.Status.STOPPED -> "a user stopped the run"
         RunResult.Status.ERROR -> "the run failed"
@@ -60,9 +60,9 @@ private fun cutShortText(call: CutShortToolCall, runStatus: RunResult.Status): S
         RunResult.Status.COMPLETED -> "the run ended"
         RunResult.Status.INTERRUPTED -> "the server went down"
     }
-    val prompt = call.toolName == PROMPT_SUBAGENT_TOOL
+    val prompt = toolName == PROMPT_SUBAGENT_TOOL
     return when {
-        prompt && call.started ->
+        prompt && started ->
             "Error: prompt interrupted — $cut while the subagent was working on this message. The subagent " +
                 "received the message and keeps whatever progress it made; prompting it again continues " +
                 "that conversation."
@@ -71,10 +71,20 @@ private fun cutShortText(call: CutShortToolCall, runStatus: RunResult.Status): S
             "Error: prompt not delivered — $cut before this call could execute. The subagent never received " +
                 "this message; prompt it again to deliver it."
 
-        call.started ->
+        started ->
             "Error: tool execution cut short — $cut while this call was executing; it may have taken partial effect."
 
         else ->
             "Error: tool call not executed — $cut before this call could execute; it had no effect."
     }
+}
+
+internal fun CutShortToolCall.rewoundAway(): String = when {
+    started ->
+        "Error: result rewound — the conversation was rewound to before this call's result. The call may have " +
+            "run and taken effect, but what it returned is gone."
+
+    else ->
+        "Error: tool call not executed — the conversation was rewound before this call could execute; " +
+            "it had no effect."
 }

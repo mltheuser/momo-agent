@@ -1,8 +1,10 @@
 package codes.momo.agent
 
 import codes.momo.agent.internal.ZERO_USAGE
+import codes.momo.agent.internal.cutShortByRunEnd
 import codes.momo.agent.internal.cutShortToolResult
 import codes.momo.agent.internal.plus
+import codes.momo.agent.internal.rewoundAway
 import codes.momo.agent.internal.unansweredToolCalls
 import kotlin.time.Duration
 
@@ -13,7 +15,7 @@ public fun repairInterruptedRun(openRun: List<AgentEvent>, timestampMillis: Long
     require(openRun.none { it is AgentEvent.RunFinished }) { "An open run has no run_finished." }
     var nextSequenceId = openRun.last().sequenceId + 1
     val cutShort = openRun.unansweredToolCalls().map { call ->
-        cutShortToolResult(call, RunResult.Status.INTERRUPTED, nextSequenceId++, timestampMillis)
+        cutShortToolResult(call, call.cutShortByRunEnd(RunResult.Status.INTERRUPTED), nextSequenceId++, timestampMillis)
     }
     val turns = openRun.filterIsInstance<AgentEvent.LlmCallFinished>()
     val finished = AgentEvent.RunFinished(
@@ -26,4 +28,12 @@ public fun repairInterruptedRun(openRun: List<AgentEvent>, timestampMillis: Long
         elapsed = openRun.filterIsInstance<AgentEvent.BudgetUpdated>().lastOrNull()?.elapsed ?: Duration.ZERO,
     )
     return cutShort + finished
+}
+
+public fun answerCallsCutByRewind(
+    surviving: List<AgentEvent>,
+    firstSequenceId: Long,
+    timestampMillis: Long,
+): List<AgentEvent.ToolCallFinished> = surviving.unansweredToolCalls().mapIndexed { index, call ->
+    cutShortToolResult(call, call.rewoundAway(), firstSequenceId + index, timestampMillis)
 }

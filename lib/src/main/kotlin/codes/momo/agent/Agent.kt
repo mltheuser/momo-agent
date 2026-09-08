@@ -18,6 +18,7 @@ import codes.momo.agent.internal.SessionState
 import codes.momo.agent.internal.ZERO_USAGE
 import codes.momo.agent.internal.awaitsModel
 import codes.momo.agent.internal.coreToolRegistry
+import codes.momo.agent.internal.cutShortByRunEnd
 import codes.momo.agent.internal.cutShortToolResult
 import codes.momo.agent.internal.plus
 import codes.momo.agent.internal.resolvePromptAttachments
@@ -210,7 +211,7 @@ public class Agent internal constructor(
 
     private fun finishCutShortCalls(run: RunState, status: RunResult.Status) {
         run.events.unansweredToolCalls().forEach { call ->
-            val result = emitter.emit { id, at -> cutShortToolResult(call, status, id, at) }
+            val result = emitter.emit { id, at -> cutShortToolResult(call, call.cutShortByRunEnd(status), id, at) }
             history += toolResultMessage(call.callId, result.resultText)
         }
     }

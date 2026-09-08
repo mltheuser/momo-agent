@@ -6,6 +6,7 @@ import codes.momo.agent.AgentEventListener
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.loadedSubagentBySessionId
+import codes.momo.agent.server.storage.CorruptSessionException
 import codes.momo.agent.server.storage.EventLogWriter
 import codes.momo.agent.server.storage.readEventsOrNull
 import codes.momo.agent.subagentBySessionId
@@ -88,5 +89,11 @@ internal fun SessionRegistry.loadRun(tree: SessionTree): ActiveRun {
     val logs = ConcurrentHashMap<String, EventLogWriter>()
     val log = store.writer(tree.id).also { logs[tree.id] = it }
     val listener = TreeMemberListener(this, logs, entry(tree.id), log)
-    return ActiveRun(tree.path, Agent.load(store.readEvents(tree.id), harness, client, environment, listener), logs)
+    val agent = try {
+        Agent.load(store.readEvents(tree.id), harness, client, environment, listener)
+    } catch (unsettled: IllegalArgumentException) {
+        log.close()
+        throw CorruptSessionException(tree.id, unsettled.message, unsettled)
+    }
+    return ActiveRun(tree.path, agent, logs)
 }
