@@ -6,24 +6,19 @@ A session is one conversation between a user and an agent. On disk it is one
 file, `<data-dir>/sessions/<id>/events.jsonl`: the event log, one JSON
 `AgentEvent` per line, appended as the agent works.
 
-The log is the only state. Nothing lives in memory between runs: a prompt
-loads the agent from the log, runs it, and drops it again; the next prompt
-loads the log as it stands then. The log is read strictly: a change to a
-field or serial name in `AgentEvent` or `RunResult.Status` breaks every stored
-session and needs a wipe of the data directory.
+The log is the single source of truth. Nothing lives in memory between runs: a prompt
+loads the agent from the log, runs it, and drops it again.
 
 A session's `status` is `running` while this server executes a run on it and
-`idle` otherwise. It is never derived from the log.
+`idle` otherwise.
 
-A log is *settled* when its last run has a `run_finished` and every tool call
-in its last turn has a `tool_call_finished`. Every way a run ends keeps the log
-settled: a run that ends with a call still executing (a stop, a budget) first
-answers that call with an error saying why, then records its outcome. The one
-way to leave a log unsettled is to kill the server mid-run. Before serving any
-read of a tree the server settles it: unless a run is in flight in that tree,
-every member log left open by a kill gets its cut-short calls answered and a
-`run_finished(interrupted)`, on disk. Nothing is patched in memory; the agent
-refuses to load an unsettled log.
+Every way a run ends leaves the log settled: a run that ends with a call
+still executing (a stop, a budget) first answers that call with an error
+saying why, then records its outcome. Killing the server mid-run is the one
+way to leave a log unsettled. Before serving any read of a tree the server
+settles it: unless a run is in flight in that tree, every member log left open
+by a kill gets its cut-short calls answered and a `run_finished(interrupted)`,
+on disk. Nothing is patched in memory.
 
 ## Lifecycle by example
 

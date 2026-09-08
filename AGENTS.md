@@ -23,6 +23,7 @@ hold the internals.
 | ---- | ------- |
 | abort | Delete, shutdown or a kill cancelling a run. Records no outcome itself. |
 | interrupted | The outcome recorded for an aborted run when its log is next read. |
+| settled | A log whose last run has its `run_finished` and whose last turn has every `tool_call_finished`. The only state the agent will load. |
 | stop | The user's run-scoped command. Records a `stopped` outcome. |
 | rewind | Cutting the stored log back to an earlier event. |
 | retry | Cutting a failed run's failure tail and resuming it in place (a rewind plus `Agent.retry`). |
