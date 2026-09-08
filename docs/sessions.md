@@ -29,7 +29,7 @@ A user opens a project, creates a session over the `coder` harness, and works:
 2. **Stop** while the agent is still running `./gradlew test`. The tool's process tree is killed, the run ends `stopped`, the session is `idle` and promptable at once. Nothing else changes.
 3. **Retry** after a run ended `error` (the router was down). The failed LLM call and its outcome are cut from the log; the run resumes from the turn before it under its recorded settings. Progress before the failure survives.
 4. **Rewind** to before "Add a test for the parser" because the approach was wrong. That prompt and every event after it are deleted from the log permanently and the agent forgets them. The workspace is not rewound: files stay as the deleted turns left them. Title and model selection survive a rewind.
-5. **Kill** the server mid-run (a crash, a forced update). The next startup ends that run `interrupted`; the next prompt resumes the conversation, the cut-short tool call reported to the model as such. An `interrupted` run can also be retried like an `error`.
+5. **Kill** the server mid-run (a crash). The next startup repairs that run and ens it as `run_finished(interrupted)`; the next prompt resumes the conversation. An `interrupted` run can also be retried like an `error`.
 6. **Delete** once the work is merged. The log is removed.
 
 A prompt while a run is in flight, or a rewind or retry while any run in the

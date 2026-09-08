@@ -19,8 +19,6 @@ hold the internals.
 
 ## Vocabulary
 
-These five name different things. Never swap them.
-
 | Word | Meaning |
 | ---- | ------- |
 | abort | Delete, shutdown or a kill cancelling a run. Records no outcome itself. |
