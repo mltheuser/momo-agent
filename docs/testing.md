@@ -35,7 +35,7 @@ ai-router to script failures the live router would never produce.
 `fixtures` holds what a test writes into its `@TempDir` before it starts: the
 harness folder and the workspace the agent runs against.
 
-Adding a test: one class per user flow, one `@TempDir`, a `@DisplayName` stating the flow. Write the harness, `createSession(harnessPath, localWorkspace(tempDir))`, drive it through the API client, assert on events and `SessionInfo`.
+Adding a test: one class per user flow, one `@TempDir`, a `@DisplayName` stating the flow. Write the harness, `createSession(harnessPath, localWorkspace(tempDir))`, drive it through the API client, assert on events and `SessionInfo`. A run is awaited by polling: `awaitRunEnd(id)` waits for the session to read idle and returns the whole log, `awaitLogged<Event>(id)` waits for an event of a type to land mid-run, and `withChangeStream` asserts that a mutation rang the change stream.
 
 ## Running unit tests
 

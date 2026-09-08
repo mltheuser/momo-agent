@@ -8,7 +8,7 @@ through the local [ai-router](https://github.com/mltheuser/ai-router).
 | Module    | Role |
 | --------- | ---- |
 | `lib/`    | Embeddable library (`codes.momo.agent`): loads a harness, drives the LLM/tool loop, runs tools on the host, records an event log. |
-| `server/` | Ktor HTTP + SSE server over `lib`: persisted sessions, run control, model catalog, prompt templates. |
+| `server/` | Ktor HTTP server over `lib`: persisted sessions, run control, a change stream, model catalog, prompt templates. |
 
 ## Quick start
 
