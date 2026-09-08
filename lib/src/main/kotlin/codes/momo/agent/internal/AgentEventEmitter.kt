@@ -9,11 +9,12 @@ internal class AgentEventEmitter(
 ) {
 
     @Synchronized
-    fun emit(event: (sequenceId: Long, timestampMillis: Long) -> AgentEvent) {
+    fun <T : AgentEvent> emit(event: (sequenceId: Long, timestampMillis: Long) -> T): T {
         val stamped = event(nextSequenceId++, System.currentTimeMillis())
         try {
             listener.onEvent(stamped)
         } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
         }
+        return stamped
     }
 }

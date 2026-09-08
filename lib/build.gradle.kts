@@ -14,4 +14,10 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
 
     implementation(libs.slf4j.api)
+
+    testImplementation(libs.kotlin.test)
+}
+
+tasks.test {
+    useJUnitPlatform()
 }

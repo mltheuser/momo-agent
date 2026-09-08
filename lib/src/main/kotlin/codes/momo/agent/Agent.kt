@@ -18,13 +18,14 @@ import codes.momo.agent.internal.SessionState
 import codes.momo.agent.internal.ZERO_USAGE
 import codes.momo.agent.internal.awaitsModel
 import codes.momo.agent.internal.coreToolRegistry
+import codes.momo.agent.internal.cutShortToolResult
 import codes.momo.agent.internal.plus
 import codes.momo.agent.internal.resolvePromptAttachments
 import codes.momo.agent.internal.restoredSession
 import codes.momo.agent.internal.retryTransientFailures
 import codes.momo.agent.internal.systemMessage
-import codes.momo.agent.internal.toolCallRepairs
 import codes.momo.agent.internal.toolResultMessage
+import codes.momo.agent.internal.unansweredToolCalls
 import codes.momo.agent.internal.userMessage
 import codes.momo.agent.subagent.Subagents
 import codes.momo.agent.tool.TOOL_TIMEOUT
@@ -194,8 +195,6 @@ public class Agent internal constructor(
             status = RunResult.Status.ERROR
         } finally {
             currentRun = null
-
-            history += toolCallRepairs(history, run.startedCallIds, status ?: RunResult.Status.INTERRUPTED)
         }
         val result = RunResult(checkNotNull(status), run.finalMessage, run.failure)
         if (result.status == RunResult.Status.ERROR) {
@@ -204,8 +203,16 @@ public class Agent internal constructor(
             } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
             }
         }
+        finishCutShortCalls(run, result.status)
         emitRunFinished(run, result)
         return result
+    }
+
+    private fun finishCutShortCalls(run: RunState, status: RunResult.Status) {
+        run.events.unansweredToolCalls().forEach { call ->
+            val result = emitter.emit { id, at -> cutShortToolResult(call, status, id, at) }
+            history += toolResultMessage(call.callId, result.resultText)
+        }
     }
 
     private fun emitRunFinished(run: RunState, result: RunResult) {
@@ -279,7 +286,7 @@ public class Agent internal constructor(
         run.turnsUsed++
         run.usage += response.usage
         history += response.message
-        emitter.emit { id, at ->
+        run.events += emitter.emit { id, at ->
             AgentEvent.LlmCallFinished(id, at, response.message, response.usage, response.finishReason)
         }
         emitter.emit { id, at ->
@@ -295,15 +302,14 @@ public class Agent internal constructor(
     }
 
     private suspend fun executeCall(run: RunState, call: ToolCall) {
-        run.startedCallIds += call.id
-        emitter.emit { id, at ->
+        run.events += emitter.emit { id, at ->
             AgentEvent.ToolCallStarted(id, at, call.id, call.function.name, call.function.arguments)
         }
         val timeout = minOf(TOOL_TIMEOUT, run.remaining.coerceAtLeast(Duration.ZERO))
         val execution = registry.execute(call.function.name, call.function.arguments, environment, timeout)
         val media = execution.result.media
         history += toolResultMessage(call.id, execution.result.text, media)
-        emitter.emit { id, at ->
+        run.events += emitter.emit { id, at ->
             AgentEvent.ToolCallFinished(
                 sequenceId = id,
                 timestampMillis = at,
@@ -387,7 +393,7 @@ public class Agent internal constructor(
         var finalMessage: String? = null
         var failure: Exception? = null
 
-        val startedCallIds: MutableSet<String> = mutableSetOf()
+        val events: MutableList<AgentEvent> = mutableListOf()
 
         var blocked: Duration = Duration.ZERO
 

@@ -56,6 +56,9 @@ class RunControlLiveTest {
 
         val events = http.streamEvents(id)
         assertEquals(RunResult.Status.STOPPED, assertIs<AgentEvent.RunFinished>(events.last().event).status)
+        val cut = assertIs<AgentEvent.ToolCallFinished>(events[events.lastIndex - 1].event, "the stop answers the call")
+        assertEquals(AgentEvent.ToolCallFinished.Outcome.ERROR, cut.outcome)
+        assertContains(cut.resultText, "a user stopped the run")
         assertEquals(1, events.count { it.event is AgentEvent.RunStarted }, "the 409s started no run")
         assertEquals(
             beforeGuards,
@@ -76,7 +79,7 @@ class RunControlLiveTest {
     }
 
     @Test
-    @DisplayName("A kill mid-run is repaired on restart: the run ends interrupted, the session is idle and resumes")
+    @DisplayName("A kill mid-run is repaired on the first read: the cut call and the run end, the session resumes")
     fun aKillMidRunIsRepairedOnRestart() {
         val dataDir = tempDir.resolve("data")
         val harness = liveHarness(tempDir)
@@ -100,19 +103,23 @@ class RunControlLiveTest {
                 runBlocking {
                     assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status, "nothing runs after a restart")
                     val stored = http.streamEvents(id)
-                    val repaired = assertIs<AgentEvent.RunFinished>(stored.last().event)
-                    assertEquals(RunResult.Status.INTERRUPTED, repaired.status, "the torn run was closed on startup")
-                    assertNull(repaired.finalMessage)
-                    assertEquals(1, repaired.turnsUsed, "the stats come from the run's own events")
-                    assertEquals(lastStored + 1, stored.last().id, "the marker continues the log without a gap")
+                    val (cutCall, repaired) = stored.takeLast(2).map { it.event }
+                    val cut = assertIs<AgentEvent.ToolCallFinished>(cutCall, "the torn call is answered on disk")
+                    assertEquals(AgentEvent.ToolCallFinished.Outcome.ERROR, cut.outcome)
+                    assertContains(cut.resultText, "the server went down")
+                    val finished = assertIs<AgentEvent.RunFinished>(repaired)
+                    assertEquals(RunResult.Status.INTERRUPTED, finished.status, "the torn run is ended on first read")
+                    assertNull(finished.finalMessage)
+                    assertEquals(1, finished.turnsUsed, "the stats come from the run's own events")
+                    assertEquals(lastStored + 2, stored.last().id, "the repairs continue the log without a gap")
                     assertEquals(List(stored.size) { it.toLong() }, stored.map { it.id }, "the log has gaps")
 
                     assertEquals(SessionStatus.RUNNING, http.prompt(id, RECALL_PROMPT).status)
                     val resumed = http.streamEvents(id, afterSequenceId = stored.last().id)
-                    val finished = assertIs<AgentEvent.RunFinished>(resumed.last().event)
-                    assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
+                    val answer = assertIs<AgentEvent.RunFinished>(resumed.last().event)
+                    assertEquals(RunResult.Status.COMPLETED, answer.status, "error: ${answer.error}")
                     assertContains(
-                        assertNotNull(finished.finalMessage),
+                        assertNotNull(answer.finalMessage),
                         SLOW_COMMAND,
                         message = "the interrupted turn is remembered",
                     )

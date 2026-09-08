@@ -3,7 +3,6 @@ package codes.momo.agent.server.session
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.server.storage.ifReadable
-import codes.momo.agent.server.storage.pathTo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -66,24 +65,24 @@ internal suspend fun SessionRegistry.list(workspace: String): List<SessionInfo> 
     }.sortedBy { it.createdAtMillis }
 }
 
-internal suspend fun SessionRegistry.info(id: String): SessionInfo = withContext(Dispatchers.IO) {
-    requireKnown(id)
-    val events = store.readEvents(id)
-    val started = events.sessionStarted()
-    val path = store.pathTo(started)
-    val running = entryOrNull(path.first())?.run?.isRunning(path) == true
-    SessionInfo(
-        id = id,
-        parent = started.parent,
-        title = events.sessionTitle(),
-        harnessPath = started.harnessFolder,
-        workspace = started.workspace,
-        status = if (running) SessionStatus.RUNNING else SessionStatus.IDLE,
-        createdAtMillis = started.timestampMillis,
-        updatedAtMillis = events.sessionUpdatedAtMillis(),
-        lastRun = events.lastRunStats(),
-        modelSelection = events.modelSelection() ?: spawnPinnedSelection(started),
-    )
+internal suspend fun SessionRegistry.info(id: String): SessionInfo {
+    val tree = treeOf(id)
+    return withContext(Dispatchers.IO) {
+        val events = store.readEvents(id)
+        val started = events.sessionStarted()
+        SessionInfo(
+            id = id,
+            parent = started.parent,
+            title = events.sessionTitle(),
+            harnessPath = started.harnessFolder,
+            workspace = started.workspace,
+            status = if (tree.root.run?.isRunning(tree.path) == true) SessionStatus.RUNNING else SessionStatus.IDLE,
+            createdAtMillis = started.timestampMillis,
+            updatedAtMillis = events.sessionUpdatedAtMillis(),
+            lastRun = events.lastRunStats(),
+            modelSelection = events.modelSelection() ?: spawnPinnedSelection(started),
+        )
+    }
 }
 
 private fun SessionRegistry.spawnPinnedSelection(started: AgentEvent.SessionStarted): ModelSelection? =

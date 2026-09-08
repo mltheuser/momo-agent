@@ -16,10 +16,12 @@ runs it, and drops it again; the next prompt loads the log as it stands then.
 A session's `status` is `running` while this server executes a run on it and
 `idle` otherwise.
 
-An open run in a log means this server is executing it now. Startup keeps
-that true: before it listens, the server scans every log's tail and finishes
-any run a kill left open with `run_finished(interrupted)`, so nothing has to
-guess at a session's state from the age of its last event.
+The log is settled whenever it is read: every run has its `run_finished`, and
+every tool call the model asked for has its `tool_call_finished` — a call a
+stop cut short is answered with an error saying so before the run ends. A
+kill leaves a run open; the first read of that tree afterwards answers the
+open call and ends the run `interrupted`, on disk, before anything is served
+from it. Nothing is patched in memory: the agent refuses an unsettled log.
 
 ## Lifecycle by example
 

@@ -2,7 +2,6 @@ package codes.momo.agent.internal
 
 import ai.router.sdk.models.ChatMessage
 import codes.momo.agent.AgentEvent
-import codes.momo.agent.RunResult
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
 import codes.momo.agent.harness.SUBAGENT_TOOL_NAMES
@@ -91,35 +90,25 @@ private fun requireToolCallsSupported(events: List<AgentEvent>, harness: Harness
     }
 }
 
-private fun conversationFrom(events: List<AgentEvent>): List<ChatMessage> = buildList {
-    val startedCallIds = mutableSetOf<String>()
-    var runStatus: RunResult.Status? = null
-
-    fun openRun() {
-        addAll(toolCallRepairs(this, startedCallIds, runStatus ?: RunResult.Status.INTERRUPTED))
-        startedCallIds.clear()
-        runStatus = null
+private fun conversationFrom(events: List<AgentEvent>): List<ChatMessage> {
+    val lastRun = events.subList(events.indexOfLast { it.opensRun() }.coerceAtLeast(0), events.size)
+    require(lastRun.none { it.opensRun() } || lastRun.any { it.closesRun() }) {
+        "Not a settled session log: the last run has no run_finished. Repair the log first."
     }
-
-    for (event in events) {
+    require(events.unansweredToolCalls().isEmpty()) {
+        "Not a settled session log: a turn has tool calls without a tool_call_finished. Repair the log first."
+    }
+    return events.mapNotNull { event ->
         when (event) {
-            is AgentEvent.RunStarted -> {
-                openRun()
-                add(userMessage(event.userMessage, event.attachments))
-            }
-
-            is AgentEvent.RunResumed -> openRun()
-
-            is AgentEvent.RunFinished -> runStatus = event.status
-
-            is AgentEvent.ToolCallStarted -> startedCallIds += event.callId
-
-            is AgentEvent.LlmCallFinished -> add(event.message)
-
-            is AgentEvent.ToolCallFinished -> add(toolResultMessage(event.callId, event.resultText, event.media))
-
-            else -> Unit
+            is AgentEvent.RunStarted -> userMessage(event.userMessage, event.attachments)
+            is AgentEvent.LlmCallFinished -> event.message
+            is AgentEvent.ToolCallFinished -> toolResultMessage(event.callId, event.resultText, event.media)
+            else -> null
         }
     }
-    addAll(toolCallRepairs(this, startedCallIds, runStatus ?: RunResult.Status.INTERRUPTED))
 }
+
+private fun AgentEvent.opensRun(): Boolean = this is AgentEvent.RunStarted || this is AgentEvent.RunResumed
+
+private fun AgentEvent.closesRun(): Boolean =
+    this is AgentEvent.RunFinished || this is AgentEvent.ConversationRewound
