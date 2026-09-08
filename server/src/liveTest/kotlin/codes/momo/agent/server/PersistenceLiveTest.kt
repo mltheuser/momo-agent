@@ -91,7 +91,7 @@ private suspend fun HttpClient.recallTheToken(before: FirstProcessOutcome, works
     )
     val reloaded = sessionInfo(before.id)
 
-    assertEquals(SessionStatus.CLOSED, reloaded.status)
+    assertEquals(SessionStatus.IDLE, reloaded.status)
     assertEquals(before.turnsUsed, reloaded.lastRun?.turnsUsed)
     assertEquals(KEPT_TITLE, reloaded.title, "the title is derived from the stored log")
     assertEquals(

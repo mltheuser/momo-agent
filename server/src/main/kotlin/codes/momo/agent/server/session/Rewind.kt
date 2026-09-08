@@ -27,16 +27,7 @@ internal suspend fun SessionRegistry.rewind(id: String, firstDeletedSequenceId: 
 
 internal suspend fun SessionRegistry.cutTree(tree: SessionTree, lastSurvivingSequenceId: Long): List<String> =
     withContext(NonCancellable + Dispatchers.IO) {
-        val plan = rewindPlan(tree.id, lastSurvivingSequenceId, store::readEventsOrNull)
-        val detached = tree.root.detachRuntime()
-        if (detached == null) {
-            applyPlan(plan)
-        } else {
-            val harness = store.readSessionStarted(tree.rootId).loadHarness()
-            val deleted = applyPlan(plan)
-            runCatching { tree.root.runtime = loadTreeRuntime(tree.root, tree.rootId, harness, detached.environment) }
-            deleted
-        }
+        applyPlan(rewindPlan(tree.id, lastSurvivingSequenceId, store::readEventsOrNull))
     }
 
 private fun SessionRegistry.applyPlan(plan: RewindPlan): List<String> {

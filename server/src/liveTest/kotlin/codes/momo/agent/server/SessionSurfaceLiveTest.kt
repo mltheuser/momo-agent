@@ -7,10 +7,7 @@ import codes.momo.agent.AgentEvent
 import codes.momo.agent.server.fixtures.harnessPath
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
-import codes.momo.agent.server.rig.abandonedClose
 import codes.momo.agent.server.rig.assertRejected
-import codes.momo.agent.server.rig.closeResponse
-import codes.momo.agent.server.rig.closeSession
 import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.createSessionResponse
 import codes.momo.agent.server.rig.deleteResponse
@@ -64,7 +61,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -74,7 +70,7 @@ class SessionSurfaceLiveTest {
     lateinit var tempDir: Path
 
     @Test
-    @DisplayName("Lifecycle: create, get, list, close, delete — each mutation followed by a change-stream signal")
+    @DisplayName("Lifecycle: create, get, list, delete — each mutation followed by a change-stream signal")
     fun lifecycleWithTheChangeStream() = withLiveServer { http ->
         val harness = harnessPath(tempDir)
         val workspace = localWorkspace(tempDir, "lifecycle")
@@ -98,18 +94,7 @@ class SessionSurfaceLiveTest {
 
             val stopped = http.stopResponse(first.id)
             assertEquals(HttpStatusCode.OK, stopped.status, stopped.bodyAsText())
-            assertEquals(SessionStatus.IDLE, stopped.body<SessionInfo>().status)
-
-            stream.signalled("a close whose caller hung up") { http.abandonedClose(first.id) }
-            val closed = http.sessionInfo(first.id)
-            assertEquals(SessionStatus.CLOSED, closed.status)
-            assertEquals(closed, http.sessions(workspace).single { it.id == first.id })
-            assertEquals(SessionStatus.IDLE, http.sessionInfo(second.id).status, "sessions close independently")
-            val closedAgain = stream.signalled("closing again") { http.closeResponse(first.id) }
-            assertEquals(HttpStatusCode.OK, closedAgain.status)
-            assertEquals(SessionStatus.CLOSED, closedAgain.body<SessionInfo>().status)
-            val whileClosed = http.stopResponse(first.id)
-            assertEquals(SessionStatus.CLOSED, whileClosed.body<SessionInfo>().status, "a stop does not attach")
+            assertEquals(SessionStatus.IDLE, stopped.body<SessionInfo>().status, "a stop with no run is a no-op")
 
             stream.signalled("deleting") { http.deleteSession(first.id) }
             val lookup = http.sessionInfoResponse(first.id)
@@ -187,7 +172,6 @@ class SessionSurfaceLiveTest {
             "rewind" to http.rewindResponse(unknown, 0),
             "retry" to http.retryResponse(unknown),
             "stop" to http.stopResponse(unknown),
-            "close" to http.closeResponse(unknown),
             "delete" to http.deleteResponse(unknown),
             "events" to http.eventsResponse(unknown),
         ).forEach { (route, response) ->
@@ -212,47 +196,36 @@ class SessionSurfaceLiveTest {
     }
 
     @Test
-    @DisplayName(
-        "Rename and select-model reach a live and a closed session alike: the parked subscriber gets the frame"
-    )
-    fun renameAndSelectModelOnLiveAndClosedSessions() = withLiveServer { http ->
-        val live = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "live")).id
-        val closed = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "closed")).id
-        http.closeSession(closed)
+    @DisplayName("Rename and select-model append to the stored log between runs: the parked subscriber gets the frame")
+    fun renameAndSelectModelBetweenRuns() = withLiveServer { http ->
+        val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "metadata")).id
 
-        for ((id, expectedStatus) in listOf(live to SessionStatus.IDLE, closed to SessionStatus.CLOSED)) {
-            coroutineScope {
-                val watcher = async { http.streamEvents(id, until = { it is AgentEvent.ModelSelected }) }
-                val renamed = http.renameSession(id, "Chosen title")
-                assertEquals("Chosen title", renamed.title)
-                assertEquals(expectedStatus, renamed.status, "a rename must neither resume nor park: $id")
-                val selected = http.selectModel(id, "picked-model", ReasoningEffort.HIGH)
-                assertEquals(ModelSelection("picked-model", ReasoningEffort.HIGH), selected.modelSelection)
-                assertEquals(expectedStatus, selected.status, "a selection must neither resume nor park: $id")
+        coroutineScope {
+            val watcher = async { http.streamEvents(id, until = { it is AgentEvent.ModelSelected }) }
+            val renamed = http.renameSession(id, "Chosen title")
+            assertEquals("Chosen title", renamed.title)
+            assertEquals(SessionStatus.IDLE, renamed.status, "a rename starts no run")
+            val selected = http.selectModel(id, "picked-model", ReasoningEffort.HIGH)
+            assertEquals(ModelSelection("picked-model", ReasoningEffort.HIGH), selected.modelSelection)
+            assertEquals(SessionStatus.IDLE, selected.status, "a selection starts no run")
 
-                val appended = watcher.await().map { it.event }.drop(1)
-                assertEquals("Chosen title", assertIs<AgentEvent.SessionRenamed>(appended[0]).title)
-                val event = assertIs<AgentEvent.ModelSelected>(appended[1])
-                assertEquals("picked-model" to ReasoningEffort.HIGH, event.model to event.reasoningEffort)
-                assertEquals(listOf(1L, 2L), appended.map { it.sequenceId }, "appended gaplessly after session_started")
-            }
-            val info = http.sessionInfo(id)
-            assertEquals("Chosen title", info.title)
-            assertEquals(ModelSelection("picked-model", ReasoningEffort.HIGH), info.modelSelection)
-            assertEquals(expectedStatus, info.status)
+            val appended = watcher.await().map { it.event }.drop(1)
+            assertEquals("Chosen title", assertIs<AgentEvent.SessionRenamed>(appended[0]).title)
+            val event = assertIs<AgentEvent.ModelSelected>(appended[1])
+            assertEquals("picked-model" to ReasoningEffort.HIGH, event.model to event.reasoningEffort)
+            assertEquals(listOf(1L, 2L), appended.map { it.sequenceId }, "appended gaplessly after session_started")
         }
-        assertEquals("Chosen title", http.sessions(localWorkspace(tempDir, "closed")).single().title, "listed too")
+        val info = http.sessionInfo(id)
+        assertEquals("Chosen title", info.title)
+        assertEquals(ModelSelection("picked-model", ReasoningEffort.HIGH), info.modelSelection)
+        assertEquals("Chosen title", http.sessions(localWorkspace(tempDir, "metadata")).single().title, "listed too")
     }
 
     @Test
-    @DisplayName(
-        "Privilege is reported while attached and null when closed; corrupt stored state is loud, never poison"
-    )
-    fun privilegeAndCorruptState() = withLiveServer { http ->
-
+    @DisplayName("Corrupt stored state is loud, never poison: skipped by the list, a 500 on lookup, deletable")
+    fun corruptStateIsLoudNeverPoison() = withLiveServer { http ->
         val workspace = localWorkspace(tempDir, "shared")
         val healthy = http.createSession(harnessPath(tempDir), workspace)
-        assertNotNull(healthy.privilege, "a built environment must report the posture it found")
 
         val corrupt = http.createSession(harnessPath(tempDir), workspace)
         sharedLiveServer.dataDir.resolve("sessions/${corrupt.id}/events.jsonl").writeText("not json")
@@ -265,8 +238,7 @@ class SessionSurfaceLiveTest {
             http.deleteSession(corrupt.id)
         }
         assertEquals(HttpStatusCode.NotFound, http.sessionInfoResponse(corrupt.id).status)
-
-        assertNull(http.closeSession(healthy.id).privilege, "with no environment built there is nothing to report")
+        assertEquals(healthy, http.sessionInfo(healthy.id), "the healthy neighbour is untouched")
     }
 
     @Test

@@ -8,7 +8,6 @@ import codes.momo.agent.environment.EnvironmentStartupException
 import codes.momo.agent.harness.HarnessValidationException
 import codes.momo.agent.server.session.SessionInfo
 import codes.momo.agent.server.session.SessionRegistry
-import codes.momo.agent.server.session.closeSession
 import codes.momo.agent.server.session.create
 import codes.momo.agent.server.session.delete
 import codes.momo.agent.server.session.info
@@ -210,10 +209,6 @@ private fun Route.singleSessionRoutes(registry: SessionRegistry) {
     eventStreamRoute(registry)
     post("/stop") {
         registry.stopRun(call.sessionId())
-        call.respond(registry.info(call.sessionId()))
-    }
-    post("/close") {
-        registry.closeSession(call.sessionId())
         call.respond(registry.info(call.sessionId()))
     }
     delete {

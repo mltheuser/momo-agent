@@ -66,7 +66,7 @@ class RewindLiveTest {
             rewound
         }
 
-        assertEquals(SessionStatus.IDLE, rewound.session.status, "a beheaded run reads as ended, the tree attached")
+        assertEquals(SessionStatus.IDLE, rewound.session.status, "a beheaded run reads as ended")
         assertTrue(rewound.deletedSessionIds.isEmpty())
 
         val replay = http.streamEvents(id, until = { it is AgentEvent.ConversationRewound })
@@ -110,7 +110,7 @@ class RewindLiveTest {
 
         val rewound = http.rewindSession(id, runStart)
 
-        assertEquals(SessionStatus.IDLE, rewound.session.status, "the tree stays attached, reloaded from the cut log")
+        assertEquals(SessionStatus.IDLE, rewound.session.status, "the next run loads the cut log")
         assertNull(rewound.session.lastRun, "a log with no run has no consumption to report")
         val replay = http.streamEvents(id, until = { it is AgentEvent.ConversationRewound })
         val tail = assertIs<AgentEvent.ConversationRewound>(replay.last().event)

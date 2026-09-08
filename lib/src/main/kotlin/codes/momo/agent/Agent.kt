@@ -339,12 +339,12 @@ public class Agent internal constructor(
         )
     }
 
-    internal suspend fun reviveChild(name: String, sessionId: String, type: String?): Agent? {
+    internal suspend fun loadChild(name: String, sessionId: String, type: String?): Agent? {
         val events = eventListener.storedEventsFor(sessionId) ?: return null
         if (type == null) {
             throw SubagentRevivalException(
                 "subagent '$name' was spawned without a type " +
-                    "and cannot be revived — spawn a fresh subagent instead.",
+                    "and cannot be loaded — spawn a fresh subagent instead.",
             )
         }
         val childHarness = harness.subagents[type]?.harness ?: throw SubagentRevivalException(
@@ -421,8 +421,8 @@ private fun CancellationException.isRunStopped(): Boolean =
 
 public suspend fun Agent.subagentBySessionId(sessionId: String): Agent? = subagents.childBySessionId(sessionId)
 
-public suspend fun Agent.liveSubagentBySessionId(sessionId: String): Agent? =
-    subagents.liveChildBySessionId(sessionId)
+public suspend fun Agent.loadedSubagentBySessionId(sessionId: String): Agent? =
+    subagents.loadedChildBySessionId(sessionId)
 
 private fun AgentEventListener.subagentListener(name: String, sessionId: String): AgentEventListener = try {
     listenerForSubagent(name, sessionId)

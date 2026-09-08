@@ -7,14 +7,11 @@ import kotlinx.coroutines.withContext
 
 internal class SessionTree(val path: List<String>, val root: SessionEntry) {
 
-    val rootId: String
-        get() = path.first()
-
     val id: String
         get() = path.last()
 
     fun requireNoRunInFlight() {
-        if (root.runtime?.hasRunInFlight() == true) {
+        if (root.run != null) {
             throw SessionConflictException("A run is in flight in the session's tree.")
         }
     }

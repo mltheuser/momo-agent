@@ -99,7 +99,7 @@ class RouterFailureLiveTest {
         assertNull(finished.finalMessage, "a provider-side failure's text must not read as the model's answer")
         assertTrue(events.none { it is AgentEvent.LlmCallRetried }, "a 200 is never retried")
         http.awaitRunEnd(id)
-        assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status, "the session stays attached and idle")
+        assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status, "the session stays idle")
 
         http.prompt(id, "Reply with exactly this token and nothing else: $TOKEN")
         val recovered = assertIs<AgentEvent.RunFinished>(

@@ -2,7 +2,6 @@ package codes.momo.agent.server.session
 
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.AgentEvent
-import codes.momo.agent.environment.Privilege
 import codes.momo.agent.server.storage.ifReadable
 import codes.momo.agent.server.storage.pathTo
 import kotlinx.coroutines.Dispatchers
@@ -21,7 +20,6 @@ internal data class SessionInfo(
     val harnessPath: String,
     val workspace: String,
 
-    val privilege: Privilege?,
     val status: SessionStatus,
     val createdAtMillis: Long,
 
@@ -40,9 +38,6 @@ internal enum class SessionStatus {
 
     @SerialName("idle")
     IDLE,
-
-    @SerialName("closed")
-    CLOSED,
 }
 
 @Serializable
@@ -76,19 +71,14 @@ internal suspend fun SessionRegistry.info(id: String): SessionInfo = withContext
     val events = store.readEvents(id)
     val started = events.sessionStarted()
     val path = store.pathTo(started)
-    val runtime = entryOrNull(path.first())?.runtime
+    val running = entryOrNull(path.first())?.run?.isRunning(path) == true
     SessionInfo(
         id = id,
         parent = started.parent,
         title = events.sessionTitle(),
         harnessPath = started.harnessFolder,
         workspace = started.workspace,
-        privilege = runtime?.environment?.privilege,
-        status = when {
-            runtime == null -> SessionStatus.CLOSED
-            runtime.isRunning(path) -> SessionStatus.RUNNING
-            else -> SessionStatus.IDLE
-        },
+        status = if (running) SessionStatus.RUNNING else SessionStatus.IDLE,
         createdAtMillis = started.timestampMillis,
         updatedAtMillis = events.sessionUpdatedAtMillis(),
         lastRun = events.lastRunStats(),

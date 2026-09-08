@@ -7,7 +7,6 @@ import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.rig.LiveServerProcess
 import codes.momo.agent.server.rig.assertRejected
 import codes.momo.agent.server.rig.awaitRunEnd
-import codes.momo.agent.server.rig.closeSession
 import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.liveHttpClient
 import codes.momo.agent.server.rig.prompt
@@ -77,30 +76,6 @@ class RunControlLiveTest {
     }
 
     @Test
-    @DisplayName("Closing a session with a run in flight aborts the run, and the next prompt resumes it")
-    fun closeAbortsAnInFlightRunAndTheSessionResumes() = withLiveServer { http ->
-        val id = http.createSession(liveHarness(tempDir), localWorkspace(tempDir, "closed")).id
-        http.prompt(id, SLOW_PROMPT)
-        http.streamEvents(id, until = { it is AgentEvent.ToolCallStarted })
-
-        assertEquals(SessionStatus.CLOSED, http.closeSession(id).status)
-
-        assertEquals(SessionStatus.RUNNING, http.prompt(id, RECALL_PROMPT).status)
-        val events = http.streamEvents(id)
-
-        assertEquals(2, events.count { it.event is AgentEvent.RunStarted }, "the aborted run plus the resumed one")
-        assertEquals(
-            1,
-            events.count { it.event is AgentEvent.RunFinished },
-            "an abort leaves its run without a RunFinished; only the resumed run has one",
-        )
-        val finished = assertIs<AgentEvent.RunFinished>(events.last().event)
-        assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
-        assertContains(assertNotNull(finished.finalMessage), SLOW_COMMAND, message = "the aborted turn is remembered")
-        assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status)
-    }
-
-    @Test
     @DisplayName("A kill mid-run is repaired on restart: the run ends interrupted, the session is idle and resumes")
     fun aKillMidRunIsRepairedOnRestart() {
         val dataDir = tempDir.resolve("data")
@@ -123,7 +98,7 @@ class RunControlLiveTest {
         LiveServerProcess.start(dataDir).use { server ->
             liveHttpClient(server.baseUrl).use { http ->
                 runBlocking {
-                    assertEquals(SessionStatus.CLOSED, http.sessionInfo(id).status, "nothing runs after a restart")
+                    assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status, "nothing runs after a restart")
                     val stored = http.streamEvents(id)
                     val repaired = assertIs<AgentEvent.RunFinished>(stored.last().event)
                     assertEquals(RunResult.Status.INTERRUPTED, repaired.status, "the torn run was closed on startup")

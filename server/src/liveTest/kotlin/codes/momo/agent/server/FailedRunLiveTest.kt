@@ -50,7 +50,7 @@ class FailedRunLiveTest {
         assertNull(failure.finalMessage, "a failed run has no answer")
         http.awaitRunEnd(id)
         val info = http.sessionInfo(id)
-        assertEquals(SessionStatus.IDLE, info.status, "a failed run leaves the session attached and idle")
+        assertEquals(SessionStatus.IDLE, info.status, "a failed run leaves the session idle")
         assertNotNull(info.lastRun, "the failed run's consumption is still reported")
         val runStart = failed.single { it.event is AgentEvent.RunStarted }.id
         val callStart = failed.single { it.event is AgentEvent.LlmCallStarted }.id

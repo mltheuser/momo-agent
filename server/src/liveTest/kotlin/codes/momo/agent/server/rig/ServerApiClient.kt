@@ -192,18 +192,6 @@ internal suspend fun HttpClient.rawRewindResponse(sessionId: String, body: Strin
 
 internal suspend fun HttpClient.stopResponse(sessionId: String): HttpResponse = post("/v1/sessions/$sessionId/stop")
 
-internal suspend fun HttpClient.abandonedClose(sessionId: String) {
-    withTimeoutOrNull(ABANDON_AFTER) { closeResponse(sessionId) }
-}
-
-internal suspend fun HttpClient.closeSession(sessionId: String): SessionInfo {
-    val response = closeResponse(sessionId)
-    assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
-    return response.body()
-}
-
-internal suspend fun HttpClient.closeResponse(sessionId: String): HttpResponse = post("/v1/sessions/$sessionId/close")
-
 internal suspend fun HttpClient.deleteSession(sessionId: String) {
     val response = deleteResponse(sessionId)
     assertEquals(HttpStatusCode.NoContent, response.status, response.bodyAsText())
@@ -365,5 +353,3 @@ private val POLL_INTERVAL: Duration = 20.milliseconds
 private val CONNECT_TIMEOUT: Duration = 10.seconds
 
 private const val EVENT_TAIL: Int = 10
-
-private val ABANDON_AFTER: Duration = 1.milliseconds

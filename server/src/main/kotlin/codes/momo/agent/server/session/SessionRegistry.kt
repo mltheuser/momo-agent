@@ -6,11 +6,8 @@ import codes.momo.agent.server.storage.LogLine
 import codes.momo.agent.server.storage.SessionStore
 import codes.momo.agent.server.storage.UnknownSessionException
 import codes.momo.agent.server.storage.subtreeIds
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
@@ -64,15 +61,5 @@ internal class SessionEntry {
     val log: EventLogSignal = EventLogSignal()
 
     @Volatile
-    var runtime: TreeRuntime? = null
-
-    suspend fun detachRuntime(): TreeRuntime? {
-        val detached = runtime ?: return null
-        runtime = null
-        withContext(NonCancellable + Dispatchers.IO) {
-            detached.abortRuns()
-            detached.closeLogs()
-        }
-        return detached
-    }
+    var run: ActiveRun? = null
 }

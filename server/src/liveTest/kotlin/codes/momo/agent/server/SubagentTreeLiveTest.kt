@@ -5,7 +5,6 @@ import codes.momo.agent.RunResult
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
 import codes.momo.agent.server.rig.awaitRunEnd
-import codes.momo.agent.server.rig.closeSession
 import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.liveChatModel
 import codes.momo.agent.server.rig.prompt
@@ -90,7 +89,7 @@ class SubagentTreeLiveTest {
         val rewound = http.rewindSession(root.id, spawn.sequenceId)
         assertEquals(listOf(spawn.sessionId), rewound.deletedSessionIds, "the deleted spawn takes its child")
         assertEquals(HttpStatusCode.NotFound, http.sessionInfoResponse(spawn.sessionId).status, "the child is gone")
-        assertEquals(SessionStatus.IDLE, rewound.session.status, "the root stays attached and promptable")
+        assertEquals(SessionStatus.IDLE, rewound.session.status, "the root stays promptable")
         assertEquals(SessionStatus.RUNNING, http.prompt(root.id, "Without tools or subagents, reply: ok.").status)
         http.awaitRunEnd(root.id)
     }
@@ -139,19 +138,6 @@ class SubagentTreeLiveTest {
         )
         assertEquals(SessionStatus.IDLE, http.sessionInfo(rootId).status)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(childId).status)
-
-        http.continueThroughTheWorker(rootId, childId)
-    }
-
-    @Test
-    @DisplayName("A closed tree revives the worker on the next prompt with its conversation intact")
-    fun aClosedTreeRevivesTheWorker() = withLiveServer { http ->
-        val (rootId, childId) = http.workerInFlight(tempDir)
-        assertEquals(HttpStatusCode.OK, http.stopResponse(rootId).status)
-        http.awaitRunEnd(rootId)
-
-        assertEquals(SessionStatus.CLOSED, http.closeSession(rootId).status)
-        assertEquals(SessionStatus.CLOSED, http.sessionInfo(childId).status, "a child closes with its root")
 
         http.continueThroughTheWorker(rootId, childId)
     }

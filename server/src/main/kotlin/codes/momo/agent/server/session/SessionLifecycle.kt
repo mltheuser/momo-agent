@@ -11,7 +11,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 
 internal suspend fun SessionRegistry.create(harnessPath: String, workspace: String, title: String?): SessionInfo =
     changes.announcing {
@@ -21,26 +23,18 @@ internal suspend fun SessionRegistry.create(harnessPath: String, workspace: Stri
             val environment = ExecutionEnvironment(Path.of(workspace))
             val root = SessionEntry()
             val log = store.writer()
-            val runtime = buildTreeRuntime(root, environment, log) { listener ->
-                Agent(harness, client, environment, title ?: harnessFolder.fileName.toString(), listener)
-            }
-            log.failure?.let { failure ->
-                runCatching { log.close() }
-                runCatching { store.delete(runtime.rootId) }
+            val listener = TreeMemberListener(this@create, ConcurrentHashMap(), root, log)
+            val agent = Agent(harness, client, environment, title ?: harnessFolder.fileName.toString(), listener)
+            try {
+                log.close()
+            } catch (failure: IOException) {
+                runCatching { store.delete(agent.sessionId) }
                 throw EventLogFailedException(failure)
             }
-            root.runtime = runtime
-            register(runtime.rootId, root)
-            info(runtime.rootId)
+            register(agent.sessionId, root)
+            info(agent.sessionId)
         }
     }
-
-internal suspend fun SessionRegistry.closeSession(id: String) {
-    val tree = treeOf(id)
-    changes.announcing {
-        tree.root.mutex.withLock { tree.root.detachRuntime() }
-    }
-}
 
 internal suspend fun SessionRegistry.delete(id: String) {
     val target = entry(id)
@@ -48,7 +42,7 @@ internal suspend fun SessionRegistry.delete(id: String) {
     val root = rootId?.let(::entryOrNull) ?: target
     changes.announcing {
         root.mutex.withLock {
-            root.detachRuntime()
+            root.run?.abort()
             withContext(NonCancellable + Dispatchers.IO) {
                 removeSubtree(id)
             }
@@ -58,8 +52,6 @@ internal suspend fun SessionRegistry.delete(id: String) {
 
 internal fun SessionRegistry.shutdown() {
     runBlocking {
-        ids.forEach { id ->
-            runCatching { closeSession(id) }
-        }
+        ids.mapNotNull { entryOrNull(it)?.run }.forEach { run -> runCatching { run.abort() } }
     }
 }

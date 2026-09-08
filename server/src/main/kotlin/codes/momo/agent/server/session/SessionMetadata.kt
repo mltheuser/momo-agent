@@ -4,7 +4,6 @@ import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.Agent
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.server.storage.EventLogFailedException
-import codes.momo.agent.server.storage.UnknownSessionException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -13,7 +12,7 @@ import java.io.IOException
 internal suspend fun SessionRegistry.rename(id: String, title: String): SessionInfo = recordMetadata(
     id,
     onAgent = { it.title = title },
-    dormantEvent = { sequenceId, at -> AgentEvent.SessionRenamed(sequenceId, at, title) },
+    storedEvent = { sequenceId, at -> AgentEvent.SessionRenamed(sequenceId, at, title) },
 )
 
 internal suspend fun SessionRegistry.selectModel(
@@ -23,22 +22,21 @@ internal suspend fun SessionRegistry.selectModel(
 ): SessionInfo = recordMetadata(
     id,
     onAgent = { it.recordModelSelection(model, reasoningEffort) },
-    dormantEvent = { sequenceId, at -> AgentEvent.ModelSelected(sequenceId, at, model, reasoningEffort) },
+    storedEvent = { sequenceId, at -> AgentEvent.ModelSelected(sequenceId, at, model, reasoningEffort) },
 )
 
 private suspend fun SessionRegistry.recordMetadata(
     id: String,
     onAgent: (Agent) -> Unit,
-    dormantEvent: (sequenceId: Long, timestampMillis: Long) -> AgentEvent,
+    storedEvent: (sequenceId: Long, timestampMillis: Long) -> AgentEvent,
 ): SessionInfo {
     val tree = treeOf(id)
     changes.announcing {
         tree.root.mutex.withLock {
-            val runtime = tree.root.runtime
-            if (runtime == null) {
-                appendToDormantLog(id, dormantEvent)
+            val agent = tree.root.run?.agentAt(tree.path)
+            if (agent == null) {
+                appendToStoredLog(id, storedEvent)
             } else {
-                val agent = runtime.agentAt(tree.path) ?: throw UnknownSessionException(id)
                 withContext(Dispatchers.IO) { onAgent(agent) }
             }
         }
@@ -46,7 +44,7 @@ private suspend fun SessionRegistry.recordMetadata(
     return info(id)
 }
 
-private suspend fun SessionRegistry.appendToDormantLog(
+private suspend fun SessionRegistry.appendToStoredLog(
     id: String,
     event: (sequenceId: Long, timestampMillis: Long) -> AgentEvent,
 ) = withContext(Dispatchers.IO) {

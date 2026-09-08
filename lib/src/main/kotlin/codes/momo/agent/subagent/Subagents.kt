@@ -23,42 +23,11 @@ internal class Subagents(
     spawned: Map<String, SpawnedChild>,
 ) {
 
-    private sealed interface Child {
-        val sessionId: String
-
-        val type: String?
-
-        val modelId: String?
-
-        val reasoningEffort: ReasoningEffort?
-    }
-
-    private class Live(
-        val agent: Agent,
-        override val type: String?,
-        override val modelId: String?,
-        override val reasoningEffort: ReasoningEffort?,
-    ) : Child {
-        override val sessionId: String
-            get() = agent.sessionId
-    }
-
-    private class Dormant(
-        override val sessionId: String,
-        override val type: String?,
-        override val modelId: String?,
-        override val reasoningEffort: ReasoningEffort?,
-    ) : Child
-
     private val mutex = Mutex()
 
-    private val children = LinkedHashMap<String, Child>()
+    private val children = LinkedHashMap<String, SpawnedChild>(spawned)
 
-    init {
-        spawned.forEach { (name, child) ->
-            children[name] = Dormant(child.sessionId, child.type, child.modelId, child.reasoningEffort)
-        }
-    }
+    private val loaded = HashMap<String, Agent>()
 
     suspend fun spawn(
         name: String,
@@ -71,7 +40,8 @@ internal class Subagents(
         return rejection ?: mutex.withLock {
             rejectSpawn(name, type, modelId) ?: run {
                 val child = parent.spawnChild(name, type, modelId, reasoningEffort)
-                children[name] = Live(child, type, modelId, reasoningEffort)
+                children[name] = SpawnedChild(child.sessionId, type, modelId, reasoningEffort)
+                loaded[name] = child
                 ToolResult.Success("spawned subagent '$name'")
             }
         }
@@ -94,50 +64,49 @@ internal class Subagents(
     }
 
     suspend fun prompt(name: String, message: String): ToolResult {
-        val child = mutex.withLock { resolve(name) }
+        val (child, agent) = mutex.withLock { children[name] to resolve(name) }
         return when {
-            child == null -> ToolResult.Error(
+            child == null || agent == null -> ToolResult.Error(
                 "no subagent named '$name' — spawn it first. Existing subagents: ${formatNames()}.",
             )
 
             message.isBlank() -> ToolResult.Error("the message to a subagent must not be blank.")
 
-            else -> promptChild(child, name, message)
+            else -> promptChild(agent, child, name, message)
         }
     }
 
     suspend fun childBySessionId(sessionId: String): Agent? = mutex.withLock {
-        children.entries.firstOrNull { it.value.sessionId == sessionId }?.let { resolve(it.key)?.agent }
+        children.entries.firstOrNull { it.value.sessionId == sessionId }?.let { resolve(it.key) }
     }
 
-    suspend fun liveChildBySessionId(sessionId: String): Agent? = mutex.withLock {
-        children.values.firstNotNullOfOrNull { child -> (child as? Live)?.agent?.takeIf { it.sessionId == sessionId } }
+    suspend fun loadedChildBySessionId(sessionId: String): Agent? = mutex.withLock {
+        loaded.values.firstOrNull { it.sessionId == sessionId }
     }
 
-    private suspend fun resolve(name: String): Live? = when (val child = children[name]) {
-        null -> null
-
-        is Live -> child
-
-        is Dormant -> {
-            val revived = parent.reviveChild(name, child.sessionId, child.type)
-            if (revived == null) {
-                children.remove(name)
-                null
-            } else {
-                Live(revived, child.type, child.modelId, child.reasoningEffort).also { children[name] = it }
-            }
+    private suspend fun resolve(name: String): Agent? {
+        val child = children[name] ?: return null
+        val agent = loaded[name] ?: parent.loadChild(name, child.sessionId, child.type)
+        if (agent == null) {
+            children.remove(name)
+        } else {
+            loaded[name] = agent
         }
+        return agent
     }
 
-    private suspend fun promptChild(child: Live, name: String, message: String): ToolResult = try {
+    private suspend fun promptChild(
+        agent: Agent,
+        child: SpawnedChild,
+        name: String,
+        message: String,
+    ): ToolResult = try {
         parent.awaitingChildRun { settings ->
-
             val pinned = settings.copy(
                 model = child.modelId ?: settings.model,
                 reasoningEffort = child.reasoningEffort ?: settings.reasoningEffort,
             )
-            child.agent.send(message, pinned)
+            agent.send(message, pinned)
         }.asToolResult(name)
     } catch (cancellation: CancellationException) {
         throw cancellation
