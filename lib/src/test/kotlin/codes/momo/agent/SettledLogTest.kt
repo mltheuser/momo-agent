@@ -62,20 +62,6 @@ class SettledLogTest {
     }
 
     @Test
-    @DisplayName("A rewind that lands inside a turn answers the calls whose results it cut away")
-    fun aRewindInsideATurnIsSettled() {
-        val surviving = listOf(AgentEvent.RunStarted(1, 1, "go"), turn(2, 1, "ran", "queued"), started(3, "ran"))
-
-        val answers = answerCallsCutByRewind(surviving, firstSequenceId = 10, timestampMillis = 99)
-
-        assertEquals(listOf(10L, 11L), answers.map { it.sequenceId }, "numbered where the caller says, above the cut")
-        assertEquals(listOf("ran", "queued"), answers.map { it.callId })
-        assertContains(answers[0].resultText, "result rewound")
-        assertContains(answers[1].resultText, "not executed")
-        assertEquals(emptyList(), answerCallsCutByRewind(surviving + answers, 12, 99), "a settled log needs nothing")
-    }
-
-    @Test
     @DisplayName("Only an open run can be repaired")
     fun aSettledRunIsRefused() {
         val finished =

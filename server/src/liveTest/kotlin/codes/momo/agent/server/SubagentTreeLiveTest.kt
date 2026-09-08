@@ -86,7 +86,8 @@ class SubagentTreeLiveTest {
         assertContains(assertNotNull(childAnswer.finalMessage), PASS_PHRASE, ignoreCase = true)
         http.awaitRunEnd(spawn.sessionId)
 
-        val rewound = http.rewindSession(root.id, spawn.sequenceId)
+        val delegation = events.last { it.event is AgentEvent.LlmCallFinished && it.id < spawn.sequenceId }.id
+        val rewound = http.rewindSession(root.id, delegation)
         assertEquals(listOf(spawn.sessionId), rewound.deletedSessionIds, "the deleted spawn takes its child")
         assertEquals(HttpStatusCode.NotFound, http.sessionInfoResponse(spawn.sessionId).status, "the child is gone")
         assertEquals(SessionStatus.IDLE, rewound.session.status, "the root stays promptable")

@@ -4,7 +4,6 @@ import codes.momo.agent.internal.ZERO_USAGE
 import codes.momo.agent.internal.cutShortByRunEnd
 import codes.momo.agent.internal.cutShortToolResult
 import codes.momo.agent.internal.plus
-import codes.momo.agent.internal.rewoundAway
 import codes.momo.agent.internal.unansweredToolCalls
 import kotlin.time.Duration
 
@@ -28,12 +27,4 @@ public fun repairInterruptedRun(openRun: List<AgentEvent>, timestampMillis: Long
         elapsed = openRun.filterIsInstance<AgentEvent.BudgetUpdated>().lastOrNull()?.elapsed ?: Duration.ZERO,
     )
     return cutShort + finished
-}
-
-public fun answerCallsCutByRewind(
-    surviving: List<AgentEvent>,
-    firstSequenceId: Long,
-    timestampMillis: Long,
-): List<AgentEvent.ToolCallFinished> = surviving.unansweredToolCalls().mapIndexed { index, call ->
-    cutShortToolResult(call, call.rewoundAway(), firstSequenceId + index, timestampMillis)
 }

@@ -78,13 +78,3 @@ internal fun CutShortToolCall.cutShortByRunEnd(runStatus: RunResult.Status): Str
             "Error: tool call not executed — $cut before this call could execute; it had no effect."
     }
 }
-
-internal fun CutShortToolCall.rewoundAway(): String = when {
-    started ->
-        "Error: result rewound — the conversation was rewound to before this call's result. The call may have " +
-            "run and taken effect, but what it returned is gone."
-
-    else ->
-        "Error: tool call not executed — the conversation was rewound before this call could execute; " +
-            "it had no effect."
-}

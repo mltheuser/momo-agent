@@ -28,16 +28,13 @@ internal suspend fun SessionRegistry.treeOf(id: String): SessionTree = withConte
 }
 
 private suspend fun SessionRegistry.settle(tree: SessionTree) {
-    if (tree.root.settled) {
-        return
-    }
     tree.root.mutex.withLock {
-        if (!tree.root.settled) {
-            store.spawnedTreeIds(tree.path.first()).forEach { member ->
-                val repairs = store.ifReadable { repairTornRun(member, System.currentTimeMillis()) }.orEmpty()
-                repairs.lastOrNull()?.let { entryOrNull(member)?.log?.appended(it.sequenceId) }
-            }
-            tree.root.settled = true
+        if (tree.root.run != null) {
+            return
+        }
+        store.spawnedTreeIds(tree.path.first()).forEach { member ->
+            val repairs = store.ifReadable { repairTornRun(member, System.currentTimeMillis()) }.orEmpty()
+            repairs.lastOrNull()?.let { entryOrNull(member)?.log?.appended(it.sequenceId) }
         }
     }
 }

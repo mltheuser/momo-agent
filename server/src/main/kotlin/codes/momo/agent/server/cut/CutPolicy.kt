@@ -22,6 +22,8 @@ internal fun AgentEvent.isPreservedByACut(): Boolean = PRESERVED_EVENTS.any { it
 internal fun LogLine.survivesCut(lastSurvivingSequenceId: Long): Boolean =
     sequenceId <= lastSurvivingSequenceId || type in PRESERVED_EVENT_TYPES
 
+private fun AgentEvent.isRewindBoundary(): Boolean = this is AgentEvent.RunStarted || this is AgentEvent.LlmCallFinished
+
 internal fun List<AgentEvent>.lastSurvivorOfCutFrom(sessionId: String, firstDeletedSequenceId: Long): Long {
     val named = firstOrNull { it.sequenceId == firstDeletedSequenceId }
     val below = filter { it.sequenceId < firstDeletedSequenceId }
@@ -32,6 +34,9 @@ internal fun List<AgentEvent>.lastSurvivorOfCutFrom(sessionId: String, firstDele
                 "so it cannot be an event to cut from."
         below.isEmpty() ->
             "Sequence ID $firstDeletedSequenceId opens session $sessionId's log, and a cut must leave it standing."
+        !named.isRewindBoundary() ->
+            "Sequence ID $firstDeletedSequenceId names an event inside a turn in session $sessionId's log; " +
+                "a rewind cuts from a user message (run_started) or an assistant message (llm_call_finished)."
         else -> null
     }
     if (refusal != null) {

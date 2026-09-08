@@ -64,7 +64,4 @@ internal class SessionEntry {
 
     @Volatile
     var run: ActiveRun? = null
-
-    @Volatile
-    var settled: Boolean = false
 }

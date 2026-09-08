@@ -4,9 +4,11 @@ import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
 import codes.momo.agent.server.fixtures.liveHarness
 import codes.momo.agent.server.fixtures.localWorkspace
+import codes.momo.agent.server.rig.assertRejected
 import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.prompt
+import codes.momo.agent.server.rig.rewindResponse
 import codes.momo.agent.server.rig.rewindSession
 import codes.momo.agent.server.rig.streamEvents
 import codes.momo.agent.server.rig.withLiveServer
@@ -45,6 +47,8 @@ class RewindLiveTest {
         val preCutMax = secondRun.last().id
 
         http.awaitRunEnd(id)
+        http.rewindResponse(id, firstRun.first { it.event is AgentEvent.LlmCallStarted }.id)
+            .assertRejected("invalid_request", "a cut from inside a turn")
 
         val namedAt = firstRun.last { it.event is AgentEvent.LlmCallFinished }.id
 
