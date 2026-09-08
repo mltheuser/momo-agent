@@ -26,4 +26,4 @@ hold the internals.
 | settled | A log whose last run has its `run_finished` and whose last turn has every `tool_call_finished`. The server settles a tree before every read. |
 | stop | The user's run-scoped command. Records a `stopped` outcome. |
 | rewind | Cutting the stored log back to before a user message. |
-| retry | Cutting a failed run's failure tail and resuming it in place (a rewind plus `Agent.retry`). |
+| retry | Restoring the log to before the failed LLM call and making that call again, settings and all. Leaves no trace of the failure. |
