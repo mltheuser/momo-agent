@@ -26,11 +26,12 @@ class CutPolicyTest {
     }
 
     @Test
-    @DisplayName("A cut may not start at an unknown, preserved or opening event, nor inside a turn")
+    @DisplayName("A cut starts at a user message only: unknown, preserved, opening and in-turn events are refused")
     fun invalidCutPointsAreRefused() {
-        assertFailsWith<InvalidRewindPointException> { log.lastSurvivorOfCutFrom("s", firstDeletedSequenceId = 3) }
-        assertFailsWith<InvalidRewindPointException> { log.lastSurvivorOfCutFrom("s", firstDeletedSequenceId = 2) }
-        assertFailsWith<InvalidRewindPointException> { log.lastSurvivorOfCutFrom("s", firstDeletedSequenceId = 6) }
-        assertFailsWith<InvalidRewindPointException> { log.lastSurvivorOfCutFrom("s", firstDeletedSequenceId = 0) }
+        listOf<Long>(3, 2, 6, 0).forEach { named ->
+            assertFailsWith<InvalidRewindPointException>("cut from $named") {
+                log.lastSurvivorOfCutFrom("s", firstDeletedSequenceId = named)
+            }
+        }
     }
 }

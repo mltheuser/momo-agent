@@ -91,12 +91,8 @@ private fun requireToolCallsSupported(events: List<AgentEvent>, harness: Harness
 }
 
 private fun conversationFrom(events: List<AgentEvent>): List<ChatMessage> {
-    val lastRun = events.subList(events.indexOfLast { it.opensRun() }.coerceAtLeast(0), events.size)
-    require(lastRun.none { it.opensRun() } || lastRun.any { it.closesRun() }) {
-        "Not a settled session log: the last run has no run_finished. Repair the log first."
-    }
     require(events.unansweredToolCalls().isEmpty()) {
-        "Not a settled session log: the last turn has tool calls without a tool_call_finished. Repair the log first."
+        "Not a loadable session log: the last turn has tool calls without a tool_call_finished. Repair the log first."
     }
     return events.mapNotNull { event ->
         when (event) {
@@ -107,8 +103,3 @@ private fun conversationFrom(events: List<AgentEvent>): List<ChatMessage> {
         }
     }
 }
-
-private fun AgentEvent.opensRun(): Boolean = this is AgentEvent.RunStarted || this is AgentEvent.RunResumed
-
-private fun AgentEvent.closesRun(): Boolean =
-    this is AgentEvent.RunFinished || this is AgentEvent.ConversationRewound

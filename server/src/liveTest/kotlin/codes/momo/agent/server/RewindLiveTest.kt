@@ -31,7 +31,9 @@ class RewindLiveTest {
     lateinit var tempDir: Path
 
     @Test
-    @DisplayName("A rewind from an assistant message cuts mid-run, reads idle, and no longer knows the deleted turns")
+    @DisplayName(
+        "A rewind from a user message deletes that run whole, reads idle, and no longer knows the deleted turns"
+    )
     fun rewindForgetsTheDeletedTurns() = withLiveServer { http ->
         val id = http.createSession(liveHarness(tempDir), localWorkspace(tempDir)).id
         http.prompt(id, "Remember this passphrase: $KEPT_TOKEN — I will ask you to repeat it later.")
@@ -44,20 +46,14 @@ class RewindLiveTest {
 
         http.rewindResponse(id, firstRun.first { it is AgentEvent.LlmCallStarted }.sequenceId)
             .assertRejected("invalid_request", "a cut from inside a turn")
+        http.rewindResponse(id, firstRun.last { it is AgentEvent.LlmCallFinished }.sequenceId)
+            .assertRejected("invalid_request", "a cut from an assistant message")
 
-        val namedAt = firstRun.last { it is AgentEvent.LlmCallFinished }.sequenceId
-        val survivors = firstRun.filter { it.sequenceId < namedAt }
-
-        val rewound = http.rewindSession(id, namedAt)
-        assertEquals(SessionStatus.IDLE, rewound.session.status, "a beheaded run reads as ended")
+        val secondPrompt = bothRuns.drop(firstRun.size).first { it is AgentEvent.RunStarted }
+        val rewound = http.rewindSession(id, secondPrompt.sequenceId)
+        assertEquals(SessionStatus.IDLE, rewound.session.status)
         assertTrue(rewound.deletedSessionIds.isEmpty())
-
-        val cut = http.events(id)
-        val tail = assertIs<AgentEvent.ConversationRewound>(cut.last())
-        assertEquals(survivors.last().sequenceId, tail.lastSurvivingSequenceId)
-        assertEquals(survivors, cut.dropLast(1), "the log ends at the event below the named one")
-        assertTrue(cut.none { it is AgentEvent.RunFinished }, "the cut took the run's own completion")
-        assertEquals(1, cut.count { it is AgentEvent.RunStarted }, "the second turn went with the range above")
+        assertEquals(firstRun, http.events(id), "the log ends at the first run's run_finished, as it did before")
 
         http.prompt(id, "List every passphrase I have asked you to remember in this conversation, verbatim.")
         val answer = assertIs<AgentEvent.RunFinished>(http.awaitRunEnd(id).last())
@@ -84,10 +80,7 @@ class RewindLiveTest {
 
         assertEquals(SessionStatus.IDLE, rewound.session.status, "the next run loads the cut log")
         assertNull(rewound.session.lastRun, "a log with no run has no consumption to report")
-        val cut = http.events(id)
-        val tail = assertIs<AgentEvent.ConversationRewound>(cut.last())
-        assertEquals(started.sequenceId, tail.lastSurvivingSequenceId, "the session_started is the cut point")
-        assertEquals(listOf(started, tail), cut, "no run_started is left at all")
+        assertEquals(listOf<AgentEvent>(started), http.events(id), "only the session_started is left")
 
         http.prompt(id, "List every passphrase I have asked you to remember in this conversation, verbatim.")
         val answer = assertIs<AgentEvent.RunFinished>(http.awaitRunEnd(id).last())

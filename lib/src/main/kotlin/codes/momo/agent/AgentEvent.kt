@@ -199,15 +199,6 @@ public sealed interface AgentEvent {
     ) : AgentEvent
 
     @Serializable
-    @SerialName("conversation_rewound")
-    public data class ConversationRewound(
-        override val sequenceId: Long,
-        override val timestampMillis: Long,
-
-        val lastSurvivingSequenceId: Long,
-    ) : AgentEvent
-
-    @Serializable
     @SerialName("budget_updated")
     public data class BudgetUpdated(
         override val sequenceId: Long,

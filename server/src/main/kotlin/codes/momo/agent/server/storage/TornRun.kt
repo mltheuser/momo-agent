@@ -41,5 +41,4 @@ private inline fun <reified T : AgentEvent> storedType(): String = serializer<T>
 
 private val RUN_OPENERS: Set<String> = setOf(storedType<AgentEvent.RunStarted>(), storedType<AgentEvent.RunResumed>())
 
-private val RUN_BOUNDARIES: Set<String> =
-    RUN_OPENERS + storedType<AgentEvent.RunFinished>() + storedType<AgentEvent.ConversationRewound>()
+private val RUN_BOUNDARIES: Set<String> = RUN_OPENERS + storedType<AgentEvent.RunFinished>()
