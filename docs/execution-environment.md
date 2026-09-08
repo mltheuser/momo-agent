@@ -20,8 +20,8 @@ server to `400 invalid_environment` with every missing binary named.
 
 ## Command privileges
 
-The environment discovers what the host grants (root, sudo, unprivileged) when it is built and tells the
-model.
+The environment discovers what the host grants (root, sudo, unprivileged) when it is built, once per run,
+and tells the model.
 
 ### Granting passwordless sudo
 

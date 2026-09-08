@@ -19,11 +19,12 @@ hold the internals.
 
 ## Vocabulary
 
-These four name different things. Never swap them.
+These five name different things. Never swap them.
 
 | Word | Meaning |
 | ---- | ------- |
-| abort | Close, delete or shutdown cancelling a tree's runs. No recorded outcome. |
+| abort | Delete, shutdown or a kill cancelling a run. Records no outcome itself. |
+| interrupted | The outcome the next startup records for a run it finds aborted. |
 | stop | The user's run-scoped command. Records a `stopped` outcome. |
 | rewind | Cutting the stored log back to an earlier event. |
 | retry | Cutting a failed run's failure tail and resuming it in place (a rewind plus `Agent.retry`). |

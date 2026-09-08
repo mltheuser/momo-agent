@@ -28,8 +28,8 @@ Two sub-packages hold what they stand on.
 `rig` is everything a test needs to talk to a real server. It starts the
 installed server as a child process, points it at the live ai-router, and
 gives the test an HTTP client with one function per API call. Most tests share
-one server for the whole suite; a test that restarts or crashes the server
-starts its own. The rig can also put a fake router between server and
+one server for the whole suite; a test that restarts or kills the server
+starts its own over its own data directory. The rig can also put a fake router between server and
 ai-router to script failures the live router would never produce.
 
 `fixtures` holds what a test writes into its `@TempDir` before it starts: the
