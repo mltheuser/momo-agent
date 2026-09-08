@@ -195,7 +195,7 @@ public class Agent internal constructor(
         } finally {
             currentRun = null
 
-            history += toolCallRepairs(history, run.startedCallIds, status)
+            history += toolCallRepairs(history, run.startedCallIds, status ?: RunResult.Status.INTERRUPTED)
         }
         val result = RunResult(checkNotNull(status), run.finalMessage, run.failure)
         if (result.status == RunResult.Status.ERROR) {

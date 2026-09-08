@@ -29,5 +29,8 @@ public data class RunResult(
 
         @SerialName("error")
         ERROR,
+
+        @SerialName("interrupted")
+        INTERRUPTED,
     }
 }

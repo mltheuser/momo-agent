@@ -175,4 +175,9 @@ private fun RunResult.asToolResult(name: String): ToolResult = when (status) {
         "subagent '$name' run ended as ERROR — ${error ?: "its LLM call failed"}. The subagent received this " +
             "prompt and keeps whatever progress it made; prompting it again continues where it left off.",
     )
+
+    RunResult.Status.INTERRUPTED -> ToolResult.Error(
+        "subagent '$name' run ended as INTERRUPTED — the server went down while it was working. The subagent " +
+            "keeps whatever progress it made; prompting it again continues where it left off.",
+    )
 }

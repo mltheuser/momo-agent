@@ -96,7 +96,7 @@ private fun conversationFrom(events: List<AgentEvent>): List<ChatMessage> = buil
     var runStatus: RunResult.Status? = null
 
     fun openRun() {
-        addAll(toolCallRepairs(this, startedCallIds, runStatus))
+        addAll(toolCallRepairs(this, startedCallIds, runStatus ?: RunResult.Status.INTERRUPTED))
         startedCallIds.clear()
         runStatus = null
     }
@@ -121,5 +121,5 @@ private fun conversationFrom(events: List<AgentEvent>): List<ChatMessage> = buil
             else -> Unit
         }
     }
-    addAll(toolCallRepairs(this, startedCallIds, runStatus))
+    addAll(toolCallRepairs(this, startedCallIds, runStatus ?: RunResult.Status.INTERRUPTED))
 }

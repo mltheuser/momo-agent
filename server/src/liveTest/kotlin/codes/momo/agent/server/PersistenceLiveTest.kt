@@ -61,61 +61,6 @@ class PersistenceLiveTest {
             }
         }
     }
-
-    @Test
-    @DisplayName(
-        "A crash mid-run leaves a resumable session: closed on restart, its log unfinished, the next prompt completes"
-    )
-    fun aCrashMidRunLeavesAResumableSession() {
-        val dataDir = tempDir.resolve("data")
-        val harness = liveHarness(tempDir)
-        val workspace = localWorkspace(tempDir)
-
-        val first = LiveServerProcess.start(dataDir)
-        val id = try {
-            liveHttpClient(first.baseUrl).use { http ->
-                runBlocking {
-                    val id = http.createSession(harness, workspace).id
-                    http.prompt(id, SLOW_PROMPT)
-
-                    http.streamEvents(id, until = { it is AgentEvent.ToolCallStarted })
-                    id
-                }
-            }
-        } finally {
-            first.crash()
-        }
-
-        LiveServerProcess.start(dataDir).use { server ->
-            liveHttpClient(server.baseUrl).use { http ->
-                runBlocking {
-                    val reloaded = http.sessionInfo(id)
-                    assertEquals(SessionStatus.CLOSED, reloaded.status, "dormant, not gone")
-                    val stored = http.streamEvents(id, until = { it is AgentEvent.ToolCallStarted })
-                    assertTrue(
-                        stored.none { it.event is AgentEvent.RunFinished },
-                        "a crash records no outcome: the log ends without a run_finished",
-                    )
-
-                    http.prompt(id, "That command is no longer needed. Without using any tools, reply: resumed.")
-                    val events = http.streamEvents(id)
-                    assertEquals(
-                        2,
-                        events.count { it.event is AgentEvent.RunStarted },
-                        "the crashed run plus the new one"
-                    )
-                    assertEquals(
-                        1,
-                        events.count { it.event is AgentEvent.RunFinished },
-                        "only the new run has an outcome"
-                    )
-                    val finished = assertIs<AgentEvent.RunFinished>(events.last().event)
-                    assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
-                    assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status)
-                }
-            }
-        }
-    }
 }
 
 private data class FirstProcessOutcome(val id: String, val lastSequenceId: Long, val turnsUsed: Int)
@@ -181,6 +126,3 @@ private const val TOKEN: String = "plugh-2860"
 private const val KEPT_TITLE: String = "Kept title"
 
 private const val PICKED_MODEL: String = "picked-model"
-
-private const val SLOW_PROMPT: String =
-    "Using the bash tool, run the command 'sleep 5 && echo done' and then report what it printed."

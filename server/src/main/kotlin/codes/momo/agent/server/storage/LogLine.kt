@@ -4,6 +4,7 @@ import codes.momo.agent.AgentEvent
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.NoSuchFileException
@@ -60,3 +61,37 @@ internal fun Path.dropTornTail() {
         }
     }
 }
+
+internal fun <T> Path.readingBackwards(read: (Sequence<String>) -> T): T =
+    FileChannel.open(this, StandardOpenOption.READ).use { channel ->
+        val chunk = ByteBuffer.allocate(BACKWARD_CHUNK_BYTES)
+        var end = channel.size()
+        val pending = ByteArrayOutputStream()
+        val lines = sequence {
+            while (end > 0) {
+                val start = maxOf(0L, end - chunk.capacity())
+                chunk.clear().limit((end - start).toInt())
+                while (chunk.hasRemaining()) {
+                    channel.read(chunk, start + chunk.position())
+                }
+                end = start
+                for (index in chunk.limit() - 1 downTo 0) {
+                    if (chunk.get(index) == '\n'.code.toByte()) {
+                        yield(pending.takeLine())
+                    } else {
+                        pending.write(chunk.get(index).toInt())
+                    }
+                }
+            }
+            yield(pending.takeLine())
+        }
+        read(lines)
+    }
+
+private fun ByteArrayOutputStream.takeLine(): String {
+    val line = toByteArray().apply { reverse() }.toString(Charsets.UTF_8)
+    reset()
+    return line
+}
+
+private const val BACKWARD_CHUNK_BYTES: Int = 64 * 1024

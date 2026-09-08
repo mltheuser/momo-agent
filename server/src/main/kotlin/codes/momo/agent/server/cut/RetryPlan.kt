@@ -8,8 +8,8 @@ import codes.momo.agent.server.storage.SessionConflictException
 internal class RetryPlan(val lastSurvivingSequenceId: Long, val settings: RunSettings)
 
 internal fun retryPlan(events: List<AgentEvent>): RetryPlan {
-    val tail = events.lastOrNull { !it.isPreservedByACut() }
-    if ((tail as? AgentEvent.RunFinished)?.status != RunResult.Status.ERROR) {
+    val tail = events.lastOrNull { !it.isPreservedByACut() } as? AgentEvent.RunFinished
+    if (tail == null || tail.status !in RETRYABLE_OUTCOMES) {
         throw SessionConflictException("Nothing to retry: the session's last run did not fail.")
     }
     val opening = events.indexOfLast { it is AgentEvent.RunStarted || it is AgentEvent.RunResumed }
@@ -21,6 +21,8 @@ internal fun retryPlan(events: List<AgentEvent>): RetryPlan {
     val lastSurviving = events.last { it.sequenceId < failureTail.sequenceId && it.carriesConversation() }
     return RetryPlan(lastSurviving.sequenceId, runSettingsOf(events[opening]))
 }
+
+private val RETRYABLE_OUTCOMES: Set<RunResult.Status> = setOf(RunResult.Status.ERROR, RunResult.Status.INTERRUPTED)
 
 private fun AgentEvent.carriesConversation(): Boolean = when (this) {
     is AgentEvent.SessionStarted, is AgentEvent.RunStarted,

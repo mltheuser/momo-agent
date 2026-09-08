@@ -4,10 +4,12 @@ import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
 import codes.momo.agent.server.fixtures.liveHarness
 import codes.momo.agent.server.fixtures.localWorkspace
+import codes.momo.agent.server.rig.LiveServerProcess
 import codes.momo.agent.server.rig.assertRejected
 import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.closeSession
 import codes.momo.agent.server.rig.createSession
+import codes.momo.agent.server.rig.liveHttpClient
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.promptResponse
 import codes.momo.agent.server.rig.retryResponse
@@ -18,6 +20,7 @@ import codes.momo.agent.server.rig.streamEvents
 import codes.momo.agent.server.rig.withLiveServer
 import codes.momo.agent.server.session.SessionStatus
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -26,6 +29,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class RunControlLiveTest {
 
@@ -94,6 +98,54 @@ class RunControlLiveTest {
         assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
         assertContains(assertNotNull(finished.finalMessage), SLOW_COMMAND, message = "the aborted turn is remembered")
         assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status)
+    }
+
+    @Test
+    @DisplayName("A kill mid-run is repaired on restart: the run ends interrupted, the session is idle and resumes")
+    fun aKillMidRunIsRepairedOnRestart() {
+        val dataDir = tempDir.resolve("data")
+        val harness = liveHarness(tempDir)
+        val workspace = localWorkspace(tempDir, "killed")
+
+        val killed = LiveServerProcess.start(dataDir)
+        val (id, lastStored) = try {
+            liveHttpClient(killed.baseUrl).use { http ->
+                runBlocking {
+                    val id = http.createSession(harness, workspace).id
+                    http.prompt(id, SLOW_PROMPT)
+                    id to http.streamEvents(id, until = { it is AgentEvent.ToolCallStarted }).last().id
+                }
+            }
+        } finally {
+            killed.crash()
+        }
+
+        LiveServerProcess.start(dataDir).use { server ->
+            liveHttpClient(server.baseUrl).use { http ->
+                runBlocking {
+                    assertEquals(SessionStatus.CLOSED, http.sessionInfo(id).status, "nothing runs after a restart")
+                    val stored = http.streamEvents(id)
+                    val repaired = assertIs<AgentEvent.RunFinished>(stored.last().event)
+                    assertEquals(RunResult.Status.INTERRUPTED, repaired.status, "the torn run was closed on startup")
+                    assertNull(repaired.finalMessage)
+                    assertEquals(1, repaired.turnsUsed, "the stats come from the run's own events")
+                    assertEquals(lastStored + 1, stored.last().id, "the marker continues the log without a gap")
+                    assertEquals(List(stored.size) { it.toLong() }, stored.map { it.id }, "the log has gaps")
+
+                    assertEquals(SessionStatus.RUNNING, http.prompt(id, RECALL_PROMPT).status)
+                    val resumed = http.streamEvents(id, afterSequenceId = stored.last().id)
+                    val finished = assertIs<AgentEvent.RunFinished>(resumed.last().event)
+                    assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
+                    assertContains(
+                        assertNotNull(finished.finalMessage),
+                        SLOW_COMMAND,
+                        message = "the interrupted turn is remembered",
+                    )
+                    http.awaitRunEnd(id)
+                    assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status)
+                }
+            }
+        }
     }
 }
 

@@ -62,7 +62,7 @@ internal class SessionStore(dataDir: Path) {
         Files.deleteIfExists(directory)
     }
 
-    private inline fun <T> readingLog(id: String, read: (Path) -> T): T = try {
+    inline fun <T> readingLog(id: String, read: (Path) -> T): T = try {
         read(logFile(id))
     } catch (_: NoSuchFileException) {
         throw UnknownSessionException(id)

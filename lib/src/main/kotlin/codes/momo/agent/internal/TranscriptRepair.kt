@@ -19,19 +19,19 @@ private fun unansweredToolCalls(messages: List<ChatMessage>): List<ToolCall> {
 internal fun toolCallRepairs(
     messages: List<ChatMessage>,
     startedCallIds: Set<String>,
-    runStatus: RunResult.Status?,
+    runStatus: RunResult.Status,
 ): List<ChatMessage> = unansweredToolCalls(messages).map { call ->
     toolResultMessage(call.id, toolCallRepairText(call.function.name, call.id in startedCallIds, runStatus))
 }
 
-private fun toolCallRepairText(toolName: String, started: Boolean, runStatus: RunResult.Status?): String {
+private fun toolCallRepairText(toolName: String, started: Boolean, runStatus: RunResult.Status): String {
     val cut = when (runStatus) {
         RunResult.Status.STOPPED -> "a user stopped the run"
         RunResult.Status.ERROR -> "the run failed"
         RunResult.Status.TURNS_EXHAUSTED -> "the run's turn budget ran out"
         RunResult.Status.TIMEOUT -> "the run's wall-clock budget ran out"
         RunResult.Status.COMPLETED -> "the run ended"
-        null -> "the run was aborted"
+        RunResult.Status.INTERRUPTED -> "the server went down"
     }
     val prompt = toolName == PROMPT_SUBAGENT_TOOL
     return when {
