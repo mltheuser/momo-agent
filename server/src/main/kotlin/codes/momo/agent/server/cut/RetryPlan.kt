@@ -14,6 +14,9 @@ internal fun retryPlan(events: List<AgentEvent>): RetryPlan {
     }
     val started = events.filterIsInstance<AgentEvent.RunStarted>().last()
     val run = events.subList(events.indexOf(started), events.size)
+    if (run.count { it is AgentEvent.RunFinished } != 1) {
+        throw SessionConflictException("Nothing to retry: the log's last run is not one failed run.")
+    }
     val failedCall = run.lastOrNull { it is AgentEvent.LlmCallStarted } ?: tail
     val lastMessage = events.last { it.sequenceId < failedCall.sequenceId && it.carriesConversation() }
     return RetryPlan(lastMessage.sequenceId, started.settingsToRerunWith())

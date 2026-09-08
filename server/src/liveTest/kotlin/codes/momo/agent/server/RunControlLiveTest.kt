@@ -65,14 +65,14 @@ class RunControlLiveTest {
         assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status)
 
         assertEquals(SessionStatus.RUNNING, http.prompt(id, RECALL_PROMPT).status)
-        val resumed = assertIs<AgentEvent.RunFinished>(http.awaitRunEnd(id).last())
-        assertEquals(RunResult.Status.COMPLETED, resumed.status, "error: ${resumed.error}")
-        assertContains(assertNotNull(resumed.finalMessage), SLOW_COMMAND, message = "the stopped turn is remembered")
+        val answer = assertIs<AgentEvent.RunFinished>(http.awaitRunEnd(id).last())
+        assertEquals(RunResult.Status.COMPLETED, answer.status, "error: ${answer.error}")
+        assertContains(assertNotNull(answer.finalMessage), SLOW_COMMAND, message = "the stopped turn is remembered")
         assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status)
     }
 
     @Test
-    @DisplayName("A kill mid-run is repaired on the first read: the cut call and the run end, the session resumes")
+    @DisplayName("A kill mid-run is repaired on the first read: the cut call and the run end, the session carries on")
     fun aKillMidRunIsRepairedOnRestart() {
         val dataDir = tempDir.resolve("data")
         val harness = liveHarness(tempDir)
