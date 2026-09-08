@@ -12,15 +12,15 @@ internal fun retryPlan(events: List<AgentEvent>): RetryPlan {
     if ((tail as? AgentEvent.RunFinished)?.status != RunResult.Status.ERROR) {
         throw SessionConflictException("Nothing to retry: the session's last run did not fail.")
     }
-    val opening = events.indexOfLast { it is AgentEvent.RunStarted || it is AgentEvent.RunResumed }
-    val run = if (opening == -1) emptyList() else events.subList(opening, events.size)
-    if (run.count { it is AgentEvent.RunFinished } != 1) {
-        throw SessionConflictException("Nothing to retry: the log records no run to resume.")
-    }
-    val failureTail = run.lastOrNull { it is AgentEvent.LlmCallStarted } ?: tail
-    val lastSurviving = events.last { it.sequenceId < failureTail.sequenceId && it.carriesConversation() }
-    return RetryPlan(lastSurviving.sequenceId, runSettingsOf(events[opening]))
+    val started = events.filterIsInstance<AgentEvent.RunStarted>().last()
+    val run = events.subList(events.indexOf(started), events.size)
+    val failedCall = run.lastOrNull { it is AgentEvent.LlmCallStarted } ?: tail
+    val lastMessage = events.last { it.sequenceId < failedCall.sequenceId && it.carriesConversation() }
+    return RetryPlan(lastMessage.sequenceId, started.settingsToRerunWith())
 }
+
+private fun AgentEvent.RunStarted.settingsToRerunWith(): RunSettings = model?.let { RunSettings(it, reasoningEffort) }
+    ?: throw SessionConflictException("Nothing to retry: the failed run records no model to rerun with.")
 
 private fun AgentEvent.carriesConversation(): Boolean = when (this) {
     is AgentEvent.SessionStarted, is AgentEvent.RunStarted,
@@ -29,9 +29,3 @@ private fun AgentEvent.carriesConversation(): Boolean = when (this) {
 
     else -> false
 }
-
-private fun runSettingsOf(opening: AgentEvent): RunSettings = when (opening) {
-    is AgentEvent.RunStarted -> opening.model?.let { RunSettings(it, opening.reasoningEffort) }
-    is AgentEvent.RunResumed -> RunSettings(opening.model, opening.reasoningEffort)
-    else -> null
-} ?: throw SessionConflictException("Nothing to retry: the failed run records no model to rerun with.")

@@ -66,15 +66,6 @@ public sealed interface AgentEvent {
     }
 
     @Serializable
-    @SerialName("run_resumed")
-    public data class RunResumed(
-        override val sequenceId: Long,
-        override val timestampMillis: Long,
-        val model: String,
-        val reasoningEffort: ReasoningEffort? = null,
-    ) : AgentEvent
-
-    @Serializable
     @SerialName("run_finished")
     public data class RunFinished(
         override val sequenceId: Long,

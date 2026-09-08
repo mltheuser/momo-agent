@@ -134,35 +134,22 @@ public class Agent internal constructor(
         require(history.last().awaitsModel) {
             "Nothing to retry: the conversation is not waiting on the model."
         }
-        return guardedRun(text = null, settings)
+        return guardedRun(newUserMessage = null, settings)
     }
 
-    private suspend fun guardedRun(text: String?, settings: RunSettings): RunResult {
+    private suspend fun guardedRun(newUserMessage: String?, settings: RunSettings): RunResult {
         check(running.compareAndSet(false, true)) {
             "A run is already running on this agent — await the active one before starting another."
         }
 
         val run = RunState(settings, loop = Job(coroutineContext[Job]))
         try {
-            return executeRun(text, run)
+            return executeRun(newUserMessage, run)
         } finally {
             run.loop.complete()
             running.set(false)
 
             run.ended.complete()
-        }
-    }
-
-    private fun emitRunOpening(
-        text: String?,
-        settings: RunSettings,
-        attachments: List<AgentEvent.RunStarted.Attachment>,
-    ) {
-        emitter.emit { id, at ->
-            when (text) {
-                null -> AgentEvent.RunResumed(id, at, settings.model, settings.reasoningEffort)
-                else -> AgentEvent.RunStarted(id, at, text, settings.model, settings.reasoningEffort, attachments)
-            }
         }
     }
 
@@ -174,16 +161,13 @@ public class Agent internal constructor(
         run.ended.join()
     }
 
-    private suspend fun executeRun(text: String?, run: RunState): RunResult {
+    private suspend fun executeRun(newUserMessage: String?, run: RunState): RunResult {
         currentRun = run
-        val attachments = if (text == null) emptyList() else resolvePromptAttachments(text, environment)
-        if (text != null) {
-            history += userMessage(text, attachments)
-        }
-
         var status: RunResult.Status? = null
         try {
-            emitRunOpening(text, run.settings, attachments)
+            if (newUserMessage != null) {
+                openRun(newUserMessage, run.settings)
+            }
             status = withContext(run.loop) { runLoop(run) }
         } catch (cancellation: CancellationException) {
             if (!cancellation.isRunStopped()) {
@@ -213,6 +197,14 @@ public class Agent internal constructor(
         run.events.unansweredToolCalls().forEach { call ->
             val result = emitter.emit { id, at -> cutShortToolResult(call, call.cutShortByRunEnd(status), id, at) }
             history += toolResultMessage(call.callId, result.resultText)
+        }
+    }
+
+    private suspend fun openRun(userMessage: String, settings: RunSettings) {
+        val attachments = resolvePromptAttachments(userMessage, environment)
+        history += userMessage(userMessage, attachments)
+        emitter.emit { id, at ->
+            AgentEvent.RunStarted(id, at, userMessage, settings.model, settings.reasoningEffort, attachments)
         }
     }
 

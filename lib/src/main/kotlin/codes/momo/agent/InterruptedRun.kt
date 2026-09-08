@@ -8,9 +8,7 @@ import codes.momo.agent.internal.unansweredToolCalls
 import kotlin.time.Duration
 
 public fun repairInterruptedRun(openRun: List<AgentEvent>, timestampMillis: Long): List<AgentEvent> {
-    require(openRun.firstOrNull().let { it is AgentEvent.RunStarted || it is AgentEvent.RunResumed }) {
-        "An open run starts with run_started or run_resumed."
-    }
+    require(openRun.firstOrNull() is AgentEvent.RunStarted) { "An open run starts with run_started." }
     require(openRun.none { it is AgentEvent.RunFinished }) { "An open run has no run_finished." }
     var nextSequenceId = openRun.last().sequenceId + 1
     val cutShort = openRun.unansweredToolCalls().map { call ->

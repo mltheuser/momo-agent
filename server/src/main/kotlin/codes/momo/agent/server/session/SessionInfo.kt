@@ -112,7 +112,6 @@ internal fun List<AgentEvent>.modelSelection(): ModelSelection? =
         when (event) {
             is AgentEvent.ModelSelected -> ModelSelection(event.model, event.reasoningEffort)
             is AgentEvent.RunStarted -> event.model?.let { ModelSelection(it, event.reasoningEffort) }
-            is AgentEvent.RunResumed -> ModelSelection(event.model, event.reasoningEffort)
             else -> null
         }
     }

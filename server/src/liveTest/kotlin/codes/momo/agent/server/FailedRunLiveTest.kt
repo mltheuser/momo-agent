@@ -32,9 +32,9 @@ class FailedRunLiveTest {
 
     @Test
     @DisplayName(
-        "An unknown model fails the run with the router's 404; retry resumes it in place; completion ends retrying"
+        "An unknown model fails the run with the router's 404; every retry remakes the call; completion ends retrying"
     )
-    fun unknownModelFailsRetryResumesCompletionEndsRetrying() = withLiveServer { http ->
+    fun unknownModelFailsEveryRetryRecreatesTheCallCompletionEndsRetrying() = withLiveServer { http ->
         val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir)).id
         http.prompt(id, "Reply with the single word: ready.", model = UNKNOWN_MODEL)
 
@@ -51,17 +51,18 @@ class FailedRunLiveTest {
         assertEquals(SessionStatus.IDLE, info.status, "a failed run leaves the session idle")
         assertNotNull(info.lastRun, "the failed run's consumption is still reported")
         val runStart = failed.single { it is AgentEvent.RunStarted }
-
-        http.retryRun(id)
-        val retried = http.awaitRunEnd(id)
         val survivors = failed.takeWhile { it.sequenceId <= runStart.sequenceId }
-        assertEquals(survivors, retried.take(survivors.size), "the cut lands just before the failed LLM call")
-        val resumed = assertIs<AgentEvent.RunResumed>(retried[survivors.size], "the cut is followed by the resumption")
-        assertEquals(UNKNOWN_MODEL, resumed.model, "the retry reruns under the failed run's own settings")
-        assertEquals(1, retried.count { it is AgentEvent.RunStarted }, "a retry opens no second run")
-        val failedAgain = assertIs<AgentEvent.RunFinished>(retried.last())
-        assertEquals(RunResult.Status.ERROR, failedAgain.status, "the same model fails the same way")
-        assertEquals(404, failedAgain.error?.statusCode)
+
+        repeat(2) { attempt ->
+            http.retryRun(id)
+            val retried = http.awaitRunEnd(id)
+            assertEquals(survivors, retried.take(survivors.size), "retry $attempt: the log up to the prompt is kept")
+            assertEquals(failed.map { it::class }, retried.map { it::class }, "retry $attempt: same call, same shape")
+            assertIs<AgentEvent.LlmCallStarted>(retried[survivors.size], "retry $attempt: the call follows the prompt")
+            val failedAgain = assertIs<AgentEvent.RunFinished>(retried.last())
+            assertEquals(RunResult.Status.ERROR, failedAgain.status, "retry $attempt: the model fails the same way")
+            assertEquals(404, failedAgain.error?.statusCode)
+        }
 
         http.prompt(id, "Reply with the single word: ready.")
         val completed = assertIs<AgentEvent.RunFinished>(http.awaitRunEnd(id).last())

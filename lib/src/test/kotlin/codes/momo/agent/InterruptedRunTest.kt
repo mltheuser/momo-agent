@@ -35,7 +35,7 @@ class InterruptedRunTest {
     @DisplayName("A run a kill left open gets its cut-short calls answered, then a run_finished(interrupted)")
     fun anOpenRunIsSettled() {
         val openRun = listOf(
-            AgentEvent.RunResumed(3, 3, model = "m"),
+            AgentEvent.RunStarted(3, 3, "go"),
             turn(4, 10),
             AgentEvent.BudgetUpdated(5, 5, turnsUsed = 1, turnsRemaining = 9, elapsed = 3.seconds),
             turn(6, 5, "running", "queued"),

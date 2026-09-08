@@ -22,7 +22,7 @@ internal fun SessionStore.repairTornRun(id: String, timestampMillis: Long): List
 internal fun openRunOf(linesNewestFirst: Sequence<LogLine>): List<LogLine>? {
     val tail = mutableListOf<LogLine>()
     val boundary = linesNewestFirst.onEach { tail += it }.firstOrNull { it.type in RUN_BOUNDARIES }
-    return tail.asReversed().takeIf { boundary?.type in RUN_OPENERS }
+    return tail.asReversed().takeIf { boundary?.type == RUN_STARTED }
 }
 
 private fun Path.openRunOf(sessionId: String): List<LogLine>? = readingBackwards { lines ->
@@ -39,6 +39,6 @@ private fun parseUnlessTorn(sessionId: String, indexFromEnd: Int, line: String):
 
 private inline fun <reified T : AgentEvent> storedType(): String = serializer<T>().descriptor.serialName
 
-private val RUN_OPENERS: Set<String> = setOf(storedType<AgentEvent.RunStarted>(), storedType<AgentEvent.RunResumed>())
+private val RUN_STARTED: String = storedType<AgentEvent.RunStarted>()
 
-private val RUN_BOUNDARIES: Set<String> = RUN_OPENERS + storedType<AgentEvent.RunFinished>()
+private val RUN_BOUNDARIES: Set<String> = setOf(RUN_STARTED, storedType<AgentEvent.RunFinished>())

@@ -11,6 +11,7 @@ import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.liveHttpClient
 import codes.momo.agent.server.rig.prompt
+import codes.momo.agent.server.rig.retryRun
 import codes.momo.agent.server.rig.sessionInfo
 import codes.momo.agent.server.session.SessionStatus
 import io.ktor.client.HttpClient
@@ -83,12 +84,14 @@ class RouterFailureLiveTest {
     }
 
     @Test
-    @DisplayName("A completion reporting finish_reason 'error' ends the run in error and leaves the session promptable")
-    fun finishReasonErrorFailsTheRun() = withFaultyServer { http ->
+    @DisplayName(
+        "A completion reporting finish_reason 'error' ends the run in error; a retry remakes the call, leaving no trace"
+    )
+    fun finishReasonErrorFailsTheRunAndARetryLeavesNoTrace() = withFaultyServer { http ->
         val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "finish-reason")).id
         router.script(Reply.FinishReasonError)
 
-        http.prompt(id, "Reply with the single word: ready.")
+        http.prompt(id, "Reply with exactly this token and nothing else: $TOKEN")
 
         val events = http.awaitRunEnd(id)
         val finished = assertIs<AgentEvent.RunFinished>(events.last())
@@ -98,10 +101,18 @@ class RouterFailureLiveTest {
         assertTrue(events.none { it is AgentEvent.LlmCallRetried }, "a 200 is never retried")
         assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status, "the session stays idle")
 
-        http.prompt(id, "Reply with exactly this token and nothing else: $TOKEN")
-        val recovered = assertIs<AgentEvent.RunFinished>(http.awaitRunEnd(id).last())
+        http.retryRun(id)
+        val retried = http.awaitRunEnd(id)
+        val prompt = events.single { it is AgentEvent.RunStarted }
+        val survivors = events.takeWhile { it.sequenceId <= prompt.sequenceId }
+        assertEquals(survivors, retried.take(survivors.size), "the log up to the prompt is untouched")
+        assertEquals(1, retried.count { it is AgentEvent.RunStarted }, "the retried run is the run the prompt opened")
+        val recovered = assertIs<AgentEvent.RunFinished>(retried.last())
         assertEquals(RunResult.Status.COMPLETED, recovered.status, "error: ${recovered.error}")
         assertContains(assertNotNull(recovered.finalMessage), TOKEN)
+        assertEquals(1, retried.count { it is AgentEvent.RunFinished }, "the failed run_finished is gone")
+        assertEquals(1, retried.count { it is AgentEvent.LlmCallStarted }, "the call sits where the failed one was")
+        assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status)
     }
 
     @Test
