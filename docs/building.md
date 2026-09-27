@@ -4,7 +4,7 @@
 
 The ai-router Kotlin SDK is consumed as a Gradle composite build.
 
-- Path: `~/Develop/Private/ai-router/SDKs/kotlin`, hardcoded in `settings.gradle.kts`.
+- Path: `../ai-router/SDKs/kotlin`, relative to this repo, hardcoded in `settings.gradle.kts`. Clone ai-router beside momo-agent; the [momo-codes](https://github.com/mltheuser/momo-codes) workspace lays them out this way.
 - The SDK is compiled from that folder's current source on every build; there is no version pin.
 - The same checkout is the router the live suite talks to. See the docs of the ai-router project for how to run it.
 
