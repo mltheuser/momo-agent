@@ -1,6 +1,7 @@
 package codes.momo.agent.server
 
-import ai.router.sdk.models.Capability
+import ai.router.sdk.models.ChatFeature
+import ai.router.sdk.models.ChatModel
 import ai.router.sdk.models.ModelList
 import ai.router.sdk.models.ReasoningEffort
 import codes.momo.agent.AgentEvent
@@ -8,6 +9,7 @@ import codes.momo.agent.server.fixtures.harnessPath
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
 import codes.momo.agent.server.rig.assertRejected
+import codes.momo.agent.server.rig.chatModelsResponse
 import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.createSessionResponse
 import codes.momo.agent.server.rig.deleteResponse
@@ -15,7 +17,6 @@ import codes.momo.agent.server.rig.deleteSession
 import codes.momo.agent.server.rig.events
 import codes.momo.agent.server.rig.eventsResponse
 import codes.momo.agent.server.rig.liveChatModel
-import codes.momo.agent.server.rig.modelsResponse
 import codes.momo.agent.server.rig.promptResponse
 import codes.momo.agent.server.rig.putTemplate
 import codes.momo.agent.server.rig.putTemplateResponse
@@ -242,26 +243,25 @@ class SessionSurfaceLiveTest {
     }
 
     @Test
-    @DisplayName("GET /v1/models serves the running router's catalog, filtered to what an agent run can use")
-    fun modelsServeTheUsableCatalog() = withLiveServer { http ->
-        val response = http.modelsResponse()
+    @DisplayName(
+        "GET /v1/chat/models serves the router's chat catalog in its own shape, filtered to what an agent run can use"
+    )
+    fun chatModelsServeTheUsableCatalog() = withLiveServer { http ->
+        val response = http.chatModelsResponse()
         val body = response.bodyAsText()
 
         assertEquals(HttpStatusCode.OK, response.status, body)
 
         assertContains(body, "\"provider_type\"")
-        val served = response.body<ModelList>()
-        assertEquals("list", served.`object`)
+        assertContains(body, "\"features\"")
+        val served = response.body<ModelList<ChatModel>>()
         assertContains(
             served.data.map { it.model },
             liveChatModel,
-            "the model this tier converses with must survive the route's capability filter",
+            "the model this tier converses with must survive the route's tools filter",
         )
         served.data.forEach { model ->
-            assertTrue(
-                model.hasCapability(Capability.CHAT) && model.hasCapability(Capability.TOOLS),
-                "an agent run needs both chat and tools: $model",
-            )
+            assertTrue(model.has(ChatFeature.TOOLS), "an agent run needs tools: $model")
         }
     }
 

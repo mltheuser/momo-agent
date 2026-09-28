@@ -207,7 +207,7 @@ internal suspend fun HttpClient.eventsResponse(sessionId: String): HttpResponse 
 
 internal suspend fun HttpClient.events(sessionId: String): List<AgentEvent> = eventsResponse(sessionId).body()
 
-internal suspend fun HttpClient.modelsResponse(): HttpResponse = get("/v1/models")
+internal suspend fun HttpClient.chatModelsResponse(): HttpResponse = get("/v1/chat/models")
 
 internal suspend fun HttpClient.templateNames(): List<String> = get("/v1/templates").body()
 

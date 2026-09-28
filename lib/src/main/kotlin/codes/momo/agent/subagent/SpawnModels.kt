@@ -1,13 +1,13 @@
 package codes.momo.agent.subagent
 
 import ai.router.sdk.AiRouterClient
-import ai.router.sdk.models.ModelInfo
-import codes.momo.agent.usableModels
+import ai.router.sdk.models.ChatModel
+import codes.momo.agent.usableChatModels
 import kotlinx.coroutines.CancellationException
 
 internal suspend fun AiRouterClient.spawnModelRejection(modelId: String): String? {
     val usable = try {
-        usableModels().data
+        usableChatModels().data
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (@Suppress("TooGenericExceptionCaught") exception: Exception) {
@@ -16,10 +16,10 @@ internal suspend fun AiRouterClient.spawnModelRejection(modelId: String): String
     return if (usable.any { modelId.addresses(it) }) null else unknownModelMessage(modelId, usable)
 }
 
-private fun String.addresses(entry: ModelInfo): Boolean =
+private fun String.addresses(entry: ChatModel): Boolean =
     this == entry.model || this == entry.model.substringBeforeLast('@')
 
-private fun unknownModelMessage(modelId: String, usable: List<ModelInfo>): String = buildString {
+private fun unknownModelMessage(modelId: String, usable: List<ChatModel>): String = buildString {
     append("model_id '").append(modelId).append("' is not in the router's catalog. Closest usable models:")
     val suggestions = closestModels(modelId, usable.map { it.model })
     if (suggestions.isEmpty()) append(" (none)")

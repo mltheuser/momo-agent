@@ -1,12 +1,12 @@
 package codes.momo.agent.server.rig
 
-import ai.router.sdk.models.Capability
+import ai.router.sdk.models.ChatFeature
 import ai.router.sdk.models.ChatMessage
+import ai.router.sdk.models.ChatModel
 import ai.router.sdk.models.ChatResponse
 import ai.router.sdk.models.ChatUsage
 import ai.router.sdk.models.ContentPart
 import ai.router.sdk.models.ContentPartType
-import ai.router.sdk.models.ModelInfo
 import ai.router.sdk.models.ModelList
 import ai.router.sdk.models.ProviderType
 import io.ktor.client.HttpClient
@@ -68,10 +68,13 @@ internal class FaultyRouter private constructor() : AutoCloseable {
 
     private fun Application.standIn() {
         routing {
-            get("/v1/models") {
-                call.respondText(wire.encodeToString(ModelList.serializer(), CATALOG), ContentType.Application.Json)
+            get("/v1/chat/models") {
+                call.respondText(
+                    wire.encodeToString(ModelList.serializer(ChatModel.serializer()), CATALOG),
+                    ContentType.Application.Json,
+                )
             }
-            post("/v1/chat/completions") {
+            post("/v1/chat") {
                 received.incrementAndGet()
                 val body = call.receiveText()
                 when (val reply = script.poll() ?: Reply.Forward) {
@@ -86,7 +89,7 @@ internal class FaultyRouter private constructor() : AutoCloseable {
                         ContentType.Application.Json,
                     )
                     Reply.Forward -> {
-                        val response = upstream.post("$liveBaseUrl/v1/chat/completions") {
+                        val response = upstream.post("$liveBaseUrl/v1/chat") {
                             contentType(ContentType.Application.Json)
                             setBody(body)
                         }
@@ -113,14 +116,13 @@ internal class FaultyRouter private constructor() : AutoCloseable {
         }
 
         private val CATALOG = ModelList(
-            `object` = "list",
             data = listOf(
-                ModelInfo(
-                    id = liveChatModel.substringBefore(':'),
+                ChatModel(
+                    id = liveChatModel.substringBeforeLast('@').substringBeforeLast(':'),
                     model = liveChatModel,
                     provider = liveChatModel.substringAfterLast('@'),
                     providerType = ProviderType.CLOUD,
-                    capabilities = listOf(Capability.CHAT, Capability.TOOLS),
+                    features = listOf(ChatFeature.TOOLS),
                 ),
             ),
         )

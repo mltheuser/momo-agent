@@ -27,7 +27,7 @@ import codes.momo.agent.server.storage.SessionConflictException
 import codes.momo.agent.server.storage.TemplateStore
 import codes.momo.agent.server.storage.UnknownSessionException
 import codes.momo.agent.server.storage.UnknownTemplateException
-import codes.momo.agent.usableModels
+import codes.momo.agent.usableChatModels
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.ContentConvertException
@@ -149,8 +149,8 @@ private val catalogJson = Json {
 }
 
 private fun Route.modelRoutes(client: AiRouterClient) {
-    get("/v1/models") {
-        call.respondText(catalogJson.encodeToString(client.usableModels()), ContentType.Application.Json)
+    get("/v1/chat/models") {
+        call.respondText(catalogJson.encodeToString(client.usableChatModels()), ContentType.Application.Json)
     }
 }
 
