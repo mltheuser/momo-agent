@@ -14,6 +14,7 @@ import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.createSessionResponse
 import codes.momo.agent.server.rig.deleteResponse
 import codes.momo.agent.server.rig.deleteSession
+import codes.momo.agent.server.rig.deleteTemplateResponse
 import codes.momo.agent.server.rig.events
 import codes.momo.agent.server.rig.eventsResponse
 import codes.momo.agent.server.rig.liveChatModel
@@ -267,7 +268,8 @@ class SessionSurfaceLiveTest {
 
     @Test
     @DisplayName(
-        "Templates: PUT lands as a file, the list sorts, GET reads back, a blank body is 400, a missing name 404"
+        "Templates: PUT lands as a file, the list sorts, GET reads back, DELETE removes the file, " +
+            "a blank body is 400, a missing name 404"
     )
     fun templates() = withLiveServer { http ->
 
@@ -293,5 +295,12 @@ class SessionSurfaceLiveTest {
         val missing = http.templateResponse("surface-no-such-template")
         assertEquals(HttpStatusCode.NotFound, missing.status)
         assertEquals("unknown_template", missing.body<ApiError>().code)
+
+        assertEquals(HttpStatusCode.NoContent, http.deleteTemplateResponse(review).status)
+        assertFalse(file.isRegularFile(), "DELETE removes $file")
+        assertEquals(listOf(bugfix), http.templateNames().filter { it.startsWith("surface-") }, "no longer listed")
+        val deletedAgain = http.deleteTemplateResponse(review)
+        assertEquals(HttpStatusCode.NotFound, deletedAgain.status)
+        assertEquals("unknown_template", deletedAgain.body<ApiError>().code)
     }
 }

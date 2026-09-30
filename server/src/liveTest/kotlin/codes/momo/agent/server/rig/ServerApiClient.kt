@@ -225,6 +225,8 @@ internal suspend fun HttpClient.putTemplateResponse(name: String, body: String):
         setBody(PutTemplateRequest(body))
     }
 
+internal suspend fun HttpClient.deleteTemplateResponse(name: String): HttpResponse = delete("/v1/templates/$name")
+
 internal suspend fun HttpResponse.assertRejected(
     code: String,
     what: String,

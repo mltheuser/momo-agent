@@ -3,6 +3,7 @@ package codes.momo.agent.server.storage
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
@@ -47,6 +48,12 @@ internal class TemplateStore(dataDir: Path) {
         val target = file(name)
         templatesDir.createDirectories()
         replaceAtomically(target, body)
+    }
+
+    fun delete(name: String) {
+        if (!file(name).deleteIfExists()) {
+            throw UnknownTemplateException(name)
+        }
     }
 
     private fun file(name: String): Path {

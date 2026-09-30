@@ -1,10 +1,12 @@
 package codes.momo.agent.server
 
 import codes.momo.agent.server.storage.TemplateStore
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
@@ -30,6 +32,10 @@ internal fun Route.templateRoutes(store: TemplateStore) {
             val name = call.templateName()
             store.write(name, body)
             call.respond(TemplateResponse(name, body))
+        }
+        delete("/{name}") {
+            store.delete(call.templateName())
+            call.respond(HttpStatusCode.NoContent)
         }
     }
 }
