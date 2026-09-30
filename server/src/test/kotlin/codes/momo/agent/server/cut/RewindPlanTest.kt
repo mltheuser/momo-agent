@@ -1,6 +1,6 @@
 package codes.momo.agent.server.cut
 
-import ai.router.sdk.models.ChatUsage
+import ai.router.sdk.chat.ChatUsage
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
 import kotlinx.serialization.json.buildJsonObject

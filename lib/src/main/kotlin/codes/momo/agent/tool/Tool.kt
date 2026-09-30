@@ -1,6 +1,6 @@
 package codes.momo.agent.tool
 
-import ai.router.sdk.models.ToolDefinition
+import ai.router.sdk.chat.ToolDefinition
 import ai.router.sdk.schema.SchemaGenerator
 import codes.momo.agent.environment.ExecutionEnvironment
 import kotlinx.serialization.KSerializer

@@ -1,6 +1,6 @@
 package codes.momo.agent.internal
 
-import ai.router.sdk.models.AiRouterException
+import ai.router.sdk.AiRouterException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import java.io.IOException

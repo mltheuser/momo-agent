@@ -1,9 +1,9 @@
 package codes.momo.agent
 
-import ai.router.sdk.models.AiRouterException
-import ai.router.sdk.models.ChatMessage
-import ai.router.sdk.models.ChatUsage
-import ai.router.sdk.models.ReasoningEffort
+import ai.router.sdk.AiRouterException
+import ai.router.sdk.chat.ChatMessage
+import ai.router.sdk.chat.ChatUsage
+import ai.router.sdk.chat.ReasoningEffort
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject

@@ -1,9 +1,9 @@
 package codes.momo.agent
 
-import ai.router.sdk.models.ChatMessage
-import ai.router.sdk.models.ChatUsage
-import ai.router.sdk.models.ToolCall
-import ai.router.sdk.models.ToolCallFunction
+import ai.router.sdk.chat.ChatMessage
+import ai.router.sdk.chat.ChatUsage
+import ai.router.sdk.chat.ToolCall
+import ai.router.sdk.chat.ToolCallFunction
 import kotlinx.serialization.json.JsonObject
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test

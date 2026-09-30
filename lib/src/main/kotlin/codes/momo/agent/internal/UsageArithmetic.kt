@@ -1,6 +1,6 @@
 package codes.momo.agent.internal
 
-import ai.router.sdk.models.ChatUsage
+import ai.router.sdk.chat.ChatUsage
 
 internal val ZERO_USAGE: ChatUsage = ChatUsage(
     promptTokens = 0,

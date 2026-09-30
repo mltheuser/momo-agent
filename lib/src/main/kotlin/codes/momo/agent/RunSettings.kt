@@ -1,6 +1,6 @@
 package codes.momo.agent
 
-import ai.router.sdk.models.ReasoningEffort
+import ai.router.sdk.chat.ReasoningEffort
 
 public data class RunSettings(
     val model: String,

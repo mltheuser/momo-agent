@@ -1,8 +1,8 @@
 package codes.momo.agent.internal
 
-import ai.router.sdk.models.ChatMessage
-import ai.router.sdk.models.ContentPart
-import ai.router.sdk.models.ContentPartType
+import ai.router.sdk.chat.ChatMessage
+import ai.router.sdk.chat.ContentPart
+import ai.router.sdk.chat.ContentPartType
 import codes.momo.agent.AgentEvent
 
 internal fun systemMessage(instructions: String): ChatMessage = textMessage(ROLE_SYSTEM, instructions)

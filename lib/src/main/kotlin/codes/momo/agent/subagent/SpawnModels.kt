@@ -1,7 +1,7 @@
 package codes.momo.agent.subagent
 
 import ai.router.sdk.AiRouterClient
-import ai.router.sdk.models.ChatModel
+import ai.router.sdk.chat.ChatModel
 import codes.momo.agent.usableChatModels
 import kotlinx.coroutines.CancellationException
 

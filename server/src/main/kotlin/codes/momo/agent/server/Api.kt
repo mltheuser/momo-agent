@@ -1,7 +1,7 @@
 package codes.momo.agent.server
 
 import ai.router.sdk.AiRouterClient
-import ai.router.sdk.models.ReasoningEffort
+import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.RunSettings
 import codes.momo.agent.SubagentRevivalException
 import codes.momo.agent.environment.EnvironmentStartupException

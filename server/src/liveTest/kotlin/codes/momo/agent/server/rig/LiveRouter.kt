@@ -1,7 +1,7 @@
 package codes.momo.agent.server.rig
 
 import ai.router.sdk.AiRouterClient
-import ai.router.sdk.models.ChatFeature
+import ai.router.sdk.chat.ChatFeature
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
@@ -26,7 +26,7 @@ private val reachable: Result<Unit> by lazy {
     runCatching {
         val available = runBlocking {
             AiRouterClient(liveBaseUrl, probeHttpClient()).use { client ->
-                client.listChatModels().data.filter { it.has(ChatFeature.TOOLS) }.map { it.model }
+                client.chat.listModels().data.filter { it.has(ChatFeature.TOOLS) }.map { it.model }
             }
         }
         check(liveChatModel in available) {

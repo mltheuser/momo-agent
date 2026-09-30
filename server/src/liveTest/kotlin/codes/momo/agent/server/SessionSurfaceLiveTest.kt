@@ -1,9 +1,9 @@
 package codes.momo.agent.server
 
-import ai.router.sdk.models.ChatFeature
-import ai.router.sdk.models.ChatModel
-import ai.router.sdk.models.ModelList
-import ai.router.sdk.models.ReasoningEffort
+import ai.router.sdk.ModelList
+import ai.router.sdk.chat.ChatFeature
+import ai.router.sdk.chat.ChatModel
+import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.server.fixtures.harnessPath
 import codes.momo.agent.server.fixtures.localWorkspace

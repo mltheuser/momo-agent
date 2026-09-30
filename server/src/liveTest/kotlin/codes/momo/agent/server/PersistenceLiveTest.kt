@@ -1,6 +1,6 @@
 package codes.momo.agent.server
 
-import ai.router.sdk.models.ReasoningEffort
+import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
 import codes.momo.agent.server.fixtures.liveHarness

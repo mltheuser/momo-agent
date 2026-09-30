@@ -1,6 +1,6 @@
 package codes.momo.agent.internal
 
-import ai.router.sdk.models.ChatMessage
+import ai.router.sdk.chat.ChatMessage
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException

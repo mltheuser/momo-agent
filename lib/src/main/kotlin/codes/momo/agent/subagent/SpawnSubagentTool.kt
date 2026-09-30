@@ -1,6 +1,6 @@
 package codes.momo.agent.subagent
 
-import ai.router.sdk.models.ReasoningEffort
+import ai.router.sdk.chat.ReasoningEffort
 import ai.router.sdk.schema.Description
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.SPAWN_SUBAGENT_TOOL

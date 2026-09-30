@@ -1,6 +1,6 @@
 package codes.momo.agent.tool
 
-import ai.router.sdk.models.ToolDefinition
+import ai.router.sdk.chat.ToolDefinition
 import codes.momo.agent.environment.ExecutionEnvironment
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException

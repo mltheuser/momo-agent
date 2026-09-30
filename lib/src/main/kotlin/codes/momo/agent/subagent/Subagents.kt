@@ -1,7 +1,7 @@
 package codes.momo.agent.subagent
 
 import ai.router.sdk.AiRouterClient
-import ai.router.sdk.models.ReasoningEffort
+import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.Agent
 import codes.momo.agent.RunResult
 import codes.momo.agent.tool.ToolResult

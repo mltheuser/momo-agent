@@ -1,13 +1,13 @@
 package codes.momo.agent
 
 import ai.router.sdk.AiRouterClient
-import ai.router.sdk.models.ChatMessage
-import ai.router.sdk.models.ChatRequest
-import ai.router.sdk.models.ChatResponse
-import ai.router.sdk.models.ChatUsage
-import ai.router.sdk.models.ReasoningEffort
-import ai.router.sdk.models.ToolCall
-import ai.router.sdk.models.ToolDefinition
+import ai.router.sdk.chat.ChatMessage
+import ai.router.sdk.chat.ChatRequest
+import ai.router.sdk.chat.ChatResponse
+import ai.router.sdk.chat.ChatUsage
+import ai.router.sdk.chat.ReasoningEffort
+import ai.router.sdk.chat.ToolCall
+import ai.router.sdk.chat.ToolDefinition
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.SUBAGENT_TOOL_NAMES
@@ -275,7 +275,7 @@ public class Agent internal constructor(
                     AgentEvent.LlmCallRetried(id, at, cause.message ?: cause.toString(), attempt, backoff)
                 }
             },
-        ) { client.chat(request) }
+        ) { client.chat.send(request) }
         run.turnsUsed++
         run.usage += response.usage
         history += response.message
