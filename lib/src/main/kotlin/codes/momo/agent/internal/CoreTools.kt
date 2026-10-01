@@ -7,10 +7,10 @@ import codes.momo.agent.subagent.PromptSubagentTool
 import codes.momo.agent.subagent.SpawnSubagentTool
 import codes.momo.agent.subagent.Subagents
 import codes.momo.agent.tool.BashTool
-import codes.momo.agent.tool.PageContentsTool
 import codes.momo.agent.tool.ToolRegistry
 import codes.momo.agent.tool.ViewImageTool
-import codes.momo.agent.tool.WebSearchTool
+import codes.momo.agent.web.PageContentsTool
+import codes.momo.agent.web.WebSearchTool
 
 internal fun coreToolRegistry(
     workspacePath: String,
