@@ -1,6 +1,8 @@
 tools:
   - bash
   - view_image
+  - web_search
+  - page_contents
 subagents:
   self:
     path: .

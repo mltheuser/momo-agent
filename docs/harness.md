@@ -28,7 +28,6 @@ subagents:
 
 Unknown keys are rejected (kaml strict mode). Declaring `subagents` automatically adds the `spawn_subagent` and `prompt_subagent` tools.
 
-
 ## What a harness does not control
 
 - The model and reasoning effort: set per prompt.

@@ -13,6 +13,9 @@ cannot stage cheaply.
 
 ## Running live tests
 
+The suite depends on the router serving hard coded models per use case. A run spends credit at both
+providers.
+
 ```sh
 ./gradlew :server:liveTest
 ./gradlew :server:liveTest --tests '*RunControlLiveTest.inFlightGuardsThenStop*'

@@ -72,7 +72,7 @@ public class Agent internal constructor(
 
     init {
         val coreRegistry =
-            coreToolRegistry(environment.workspacePath, environment.privilege, subagents, harness.subagents)
+            coreToolRegistry(environment.workspacePath, environment.privilege, subagents, harness.subagents, client)
         harness.requireToolsKnown(coreRegistry.names)
 
         val offered = if (harness.subagents.isNotEmpty() && depth < RunBudgets.MAX_SUBAGENT_DEPTH) {
