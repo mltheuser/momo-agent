@@ -15,6 +15,11 @@ dependencies {
 
     implementation(libs.slf4j.api)
 
+    // only needed for MimeTypes detection
+    implementation(libs.tika.core) {
+        exclude(group = "org.commonmark")
+    }
+
     testImplementation(libs.kotlin.test)
 }
 

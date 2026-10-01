@@ -6,7 +6,7 @@ import java.awt.image.BufferedImage
 import java.nio.file.Path
 import javax.imageio.ImageIO
 
-internal fun writeWordImage(path: Path, word: String) {
+internal fun writeWordImage(path: Path, word: String, imageIoFormat: String = "png") {
     val image = BufferedImage(400, 160, BufferedImage.TYPE_INT_RGB)
     val graphics = image.createGraphics()
     graphics.color = Color.WHITE
@@ -15,5 +15,5 @@ internal fun writeWordImage(path: Path, word: String) {
     graphics.font = Font(Font.SANS_SERIF, Font.BOLD, 64)
     graphics.drawString(word, 30, 100)
     graphics.dispose()
-    check(ImageIO.write(image, "png", path.toFile())) { "no PNG writer available" }
+    check(ImageIO.write(image, imageIoFormat, path.toFile())) { "no $imageIoFormat writer available" }
 }

@@ -84,6 +84,5 @@ private val PAGE_CONTENTS_DESCRIPTION: String = """
 
     A file never changes once written: loading a page again saves a new file if the page changed. Files
     may disappear, e.g. on reboot; if a path is gone, load the page again. Pages may include image links
-    inline, e.g. `![alt](url)`; to look at one, download it with curl and open it with view_image
-    (convert SVG to PNG first).
+    inline, e.g. `![alt](url)`; to look at one, pass its absolute URL to view_image.
 """.trimIndent()

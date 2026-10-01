@@ -2,6 +2,7 @@ package codes.momo.agent.tool
 
 import ai.router.sdk.chat.ToolDefinition
 import codes.momo.agent.environment.ExecutionEnvironment
+import codes.momo.agent.image.maxBytesWhoseBase64FitsIn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
@@ -46,10 +47,12 @@ public class ToolRegistry internal constructor(tools: List<Tool<*>>) {
             null -> ToolResult.Error(unknownToolMessage(name))
             else -> dispatch(tool, arguments, environment, timeout)
         }
-        val bounded = result.bounded(tool?.maxResultChars ?: MAX_RESULT_CHARS)
+        val limit = tool?.maxResultChars ?: MAX_RESULT_CHARS
+        val sizeChecked = result.refusingImageOver(limit)
+        val bounded = sizeChecked.bounded(limit)
         return ToolExecution(
             result = bounded,
-            truncated = bounded.text != result.text,
+            truncated = bounded.text != sizeChecked.text,
             duration = start.elapsedNow(),
         )
     }
@@ -86,6 +89,15 @@ public class ToolRegistry internal constructor(tools: List<Tool<*>>) {
 
     private fun formatNames(): String =
         if (names.isEmpty()) "(none)" else names.sorted().joinToString(", ")
+
+    private fun ToolResult.refusingImageOver(limit: Int): ToolResult = when {
+        this is ToolResult.Image && base64Data.length > limit -> ToolResult.Error(
+            "the image is over the limit of ${maxBytesWhoseBase64FitsIn(limit)} bytes for this tool's results. " +
+                "Downscale or re-encode it to a smaller file and view that.",
+        )
+
+        else -> this
+    }
 
     private fun ToolResult.bounded(limit: Int): ToolResult = when (this) {
         is ToolResult.Success -> ToolResult.Success(text.boundedResultText(limit))
