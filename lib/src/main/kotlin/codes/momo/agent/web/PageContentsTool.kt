@@ -24,15 +24,15 @@ internal class PageContentsTool(private val client: AiRouterClient) : Tool<PageC
 
     override suspend fun execute(args: PageContentsArgs, environment: ExecutionEnvironment): ToolResult {
         val response = client.contents.send(ContentsRequest(CONTENTS_MODEL, args.urls))
-        val pages = response.results.map { load(it, environment) }
+        val pages = response.results.map { load(it) }
         return ToolResult.Success(webToolJson.encodeToString(Pages.serializer(), Pages(pages)))
     }
 
-    private suspend fun load(result: ContentsResult, environment: ExecutionEnvironment): Page {
+    private suspend fun load(result: ContentsResult): Page {
         result.error?.let { return Page(url = result.url, error = it) }
         val text = result.text.orEmpty()
         val content = text.toByteArray(Charsets.UTF_8)
-        return when (val file = savePage(result.url, content, environment)) {
+        return when (val file = savePage(result.url, content)) {
             is PageFile.Failed -> Page(url = result.url, error = "loaded, but could not save the page: ${file.problem}")
             is PageFile.Saved -> {
                 val outline = outline(text)

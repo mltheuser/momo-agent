@@ -5,8 +5,6 @@
 `ExecutionEnvironment` runs every command directly
 on the host, in the workspace folder, with the host's environment variables.
 
-- Every tool reaches the host through the environment, including tools that write files.
-
 - For isolation, run the whole stack inside a container you own. Give it a reaping pid 1 so background processes a run leaves behind do not stay zombies.
 
 ## Host requirements
