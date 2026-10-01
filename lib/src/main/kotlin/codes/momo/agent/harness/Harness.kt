@@ -13,8 +13,6 @@ public class Harness internal constructor(
     internal val folder: Path? = null,
 ) {
 
-    internal constructor(tools: List<String>, instructions: String) : this(tools, instructions, emptyMap())
-
     init {
         validateTools()
         validateSubagents()
