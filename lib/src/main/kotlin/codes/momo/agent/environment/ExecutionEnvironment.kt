@@ -34,10 +34,12 @@ public class ExecutionEnvironment internal constructor(
 
     internal val workspacePath: String = workspace.toAbsolutePath().normalize().toString()
 
+    /** @param stdin data for the command to read, e.g. `cat > file`; for data too large to pass as an argument. */
     internal suspend fun exec(
         command: List<String>,
         timeout: Duration,
-    ): ExecResult = runner.run(command, timeout)
+        stdin: ByteArray? = null,
+    ): ExecResult = runner.run(command, timeout, stdin)
 
     internal companion object {
 
@@ -56,9 +58,9 @@ private fun isOnSearchPath(binary: String, searchPath: String?): Boolean =
 
 internal fun interface CommandRunner {
 
-    suspend fun run(command: List<String>, timeout: Duration): ExecResult
+    suspend fun run(command: List<String>, timeout: Duration, stdin: ByteArray?): ExecResult
 }
 
-internal fun hostCommandRunner(workspace: Path): CommandRunner = CommandRunner { command, timeout ->
-    runProcess(command, workingDirectory = workspace, timeout = timeout)
+internal fun hostCommandRunner(workspace: Path): CommandRunner = CommandRunner { command, timeout, stdin ->
+    runProcess(command, workingDirectory = workspace, timeout = timeout, stdin = stdin)
 }

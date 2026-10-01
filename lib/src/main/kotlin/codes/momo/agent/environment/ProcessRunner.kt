@@ -12,6 +12,7 @@ import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 import java.nio.file.Path
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -20,6 +21,7 @@ internal suspend fun runProcess(
     command: List<String>,
     workingDirectory: Path? = null,
     timeout: Duration,
+    stdin: ByteArray? = null,
 ): ExecResult {
     require(command.isNotEmpty()) { "command must not be empty." }
     return withContext(Dispatchers.IO) {
@@ -29,12 +31,13 @@ internal suspend fun runProcess(
         try {
             val stdoutJob = async { process.inputStream.drain(process) }
             val stderrJob = async { process.errorStream.drain(process) }
-            closeStdin(process)
+            val stdinJob = async { process.outputStream.feed(stdin) }
 
             val exitedInTime = withTimeoutOrNull(timeout) { process.onExit().await() } != null
             if (!exitedInTime) {
                 withContext(NonCancellable) { killProcessTree(process) }
             }
+            stdinJob.await()
             val stdout = stdoutJob.await()
             val stderr = stderrJob.await()
             if (exitedInTime) {
@@ -122,8 +125,12 @@ private class Capture {
 
 private class CapturedStream(val text: String, val truncated: Boolean)
 
-private fun closeStdin(process: Process) {
-    process.outputStream.closeQuietly()
+private fun OutputStream.feed(bytes: ByteArray?) {
+    try {
+        use { stream -> bytes?.let(stream::write) }
+    } catch (_: IOException) {
+        // The child stopped reading, e.g. it exited; its exit code and stderr tell why.
+    }
 }
 
 private fun Closeable.closeQuietly() {
