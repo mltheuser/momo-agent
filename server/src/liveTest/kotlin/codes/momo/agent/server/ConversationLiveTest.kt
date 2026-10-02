@@ -2,6 +2,7 @@ package codes.momo.agent.server
 
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
+import codes.momo.agent.content.truncationMarker
 import codes.momo.agent.server.fixtures.liveHarness
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.rig.awaitRunEnd
@@ -68,7 +69,7 @@ class ConversationLiveTest {
         assertEquals(1, truncated.size, "exactly the flood command's result is cut to the model-facing cap")
         assertContains(
             truncated.single().resultText,
-            ToolRegistry.truncationMarker(ToolRegistry.MAX_RESULT_CHARS),
+            truncationMarker(ToolRegistry.MAX_RESULT_CHARS),
             message = "a truncated result ends in the marker naming the applied limit",
         )
         val info = http.sessionInfo(session.id)

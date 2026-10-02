@@ -8,6 +8,7 @@ import ai.router.sdk.chat.ChatUsage
 import ai.router.sdk.chat.ReasoningEffort
 import ai.router.sdk.chat.ToolCall
 import ai.router.sdk.chat.ToolDefinition
+import codes.momo.agent.content.ModelContent
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.SUBAGENT_TOOL_NAMES
@@ -31,7 +32,6 @@ import codes.momo.agent.internal.userMessage
 import codes.momo.agent.subagent.Subagents
 import codes.momo.agent.tool.TOOL_TIMEOUT
 import codes.momo.agent.tool.ToolRegistry
-import codes.momo.agent.tool.ToolResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.Job
@@ -300,15 +300,15 @@ public class Agent internal constructor(
         }
         val timeout = minOf(TOOL_TIMEOUT, run.remaining.coerceAtLeast(Duration.ZERO))
         val execution = registry.execute(call.function.name, call.function.arguments, environment, timeout)
-        val media = execution.result.media
-        history += toolResultMessage(call.id, execution.result.text, media)
+        val media = execution.content.asLoggedMedia
+        history += toolResultMessage(call.id, execution.content.asText, media)
         run.events += emitter.emit { id, at ->
             AgentEvent.ToolCallFinished(
                 sequenceId = id,
                 timestampMillis = at,
                 callId = call.id,
-                resultText = execution.result.text,
-                outcome = execution.result.outcome,
+                resultText = execution.content.asText,
+                outcome = execution.outcome,
                 duration = execution.duration,
                 truncated = execution.truncated,
                 media = media,
@@ -429,14 +429,7 @@ private fun AgentEventListener.subagentListener(name: String, sessionId: String)
     NoOpAgentEventListener
 }
 
-private val ToolResult.media: AgentEvent.ToolCallFinished.Media?
-    get() = (this as? ToolResult.Image)?.let { AgentEvent.ToolCallFinished.Media(it.mimeType, it.base64Data) }
-
-private val ToolResult.outcome: AgentEvent.ToolCallFinished.Outcome
-    get() = when (this) {
-        is ToolResult.Success, is ToolResult.Image -> AgentEvent.ToolCallFinished.Outcome.SUCCESS
-        is ToolResult.Error -> AgentEvent.ToolCallFinished.Outcome.ERROR
-        is ToolResult.TimedOut -> AgentEvent.ToolCallFinished.Outcome.TIMED_OUT
-    }
+private val ModelContent.asLoggedMedia: AgentEvent.ToolCallFinished.Media?
+    get() = (this as? ModelContent.Media)?.let { AgentEvent.ToolCallFinished.Media(it.mimeType, it.base64Data) }
 
 private const val FINISH_REASON_ERROR: String = "error"
