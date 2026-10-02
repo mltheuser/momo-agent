@@ -12,7 +12,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 internal data class PageContentsArgs(
-    @Description("Absolute http(s) URLs of the pages to load.")
+    @Description("Absolute http(s) URLs to extract content from.")
     val urls: List<String>,
 )
 
@@ -72,17 +72,6 @@ private data class Page(
 private const val CONTENTS_MODEL: String = "auto:cloud@exa"
 
 private val PAGE_CONTENTS_DESCRIPTION: String = """
-    Loads web pages through a content extraction service and saves each as a text file under $PAGE_DIR.
-    Prefer it over curl for reading web pages: it renders JavaScript, extracts PDFs and complex layouts,
-    and drops navigation clutter. Use curl for raw files, JSON APIs and exact bytes.
-
-    Returns JSON with one result per requested URL, in request order: the file's path, the page's title,
-    its size in bytes and lines, and an outline of the headings found in the text with their line
-    numbers (may be empty; capped, with an outline_note saying what was left out). Read the file with
-    bash (grep, sed -n, head, python) rather than printing it whole. A page that could not be loaded has
-    an error instead; the other pages are unaffected.
-
-    A file never changes once written: loading a page again saves a new file if the page changed. Files
-    may disappear, e.g. on reboot; if a path is gone, load the page again. Pages may include image links
-    inline, e.g. `![alt](url)`; to look at one, pass its absolute URL to view_image.
+    Extracts content from web pages as markdown and saves each result as a text file.
+    Prefer over curl: It renders JavaScript, handles complex layouts, and strips clutter.
 """.trimIndent()

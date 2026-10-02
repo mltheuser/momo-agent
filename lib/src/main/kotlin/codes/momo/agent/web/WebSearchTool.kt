@@ -5,17 +5,16 @@ import ai.router.sdk.schema.Description
 import ai.router.sdk.search.SearchRequest
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.tool.Tool
-import codes.momo.agent.tool.ToolRegistry
 import codes.momo.agent.tool.ToolResult
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
 internal data class WebSearchArgs(
-    @Description("What to search the web for.")
+    @Description("Natural-language search query. Long, semantically rich descriptions work well.")
     val query: String,
     @SerialName("max_results")
-    @Description("The most results to return; the search may return fewer. Omit for the search's default.")
+    @Description("Number of results to return. Use small values for agent loops.")
     val maxResults: Int? = null,
 )
 
@@ -41,7 +40,5 @@ private data class SearchResult(val url: String, val title: String, val snippet:
 private const val SEARCH_MODEL: String = "fast:cloud@exa"
 
 private val WEB_SEARCH_DESCRIPTION: String = """
-    Searches the web. Returns JSON: results ordered most relevant first, each with the page's url,
-    title (may be empty) and snippet, excerpts of the page that match the query, sized across the
-    whole result set. Results beyond ${ToolRegistry.MAX_RESULT_CHARS} characters are cut off at the end.
+    Searches the web. Returns results ordered by relevance.
 """.trimIndent()
