@@ -102,11 +102,7 @@ internal class Subagents(
         message: String,
     ): ToolResult = try {
         parent.awaitingChildRun { settings ->
-            val pinned = settings.copy(
-                model = child.modelId ?: settings.model,
-                reasoningEffort = child.reasoningEffort ?: settings.reasoningEffort,
-            )
-            agent.send(message, pinned)
+            agent.send(message, settings.pinnedBy(child.modelId, child.reasoningEffort))
         }.asToolResult(name)
     } catch (cancellation: CancellationException) {
         throw cancellation

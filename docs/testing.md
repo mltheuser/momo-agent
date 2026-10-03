@@ -13,8 +13,7 @@ cannot stage cheaply.
 
 ## Running live tests
 
-The suite depends on the router serving hard coded models per use case. A run spends credit at both
-providers.
+The suite prompts one hard-coded model at one hard-coded effort (constants in `rig`); the router must serve it. A run spends credit at the provider.
 
 ```sh
 ./gradlew :server:liveTest

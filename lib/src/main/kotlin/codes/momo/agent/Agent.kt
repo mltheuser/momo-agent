@@ -99,8 +99,8 @@ public class Agent internal constructor(
             emitter.emit { id, at -> AgentEvent.SessionRenamed(id, at, value) }
         }
 
-    public fun recordModelSelection(model: String, reasoningEffort: ReasoningEffort? = null) {
-        emitter.emit { id, at -> AgentEvent.ModelSelected(id, at, model, reasoningEffort) }
+    public fun recordModelSelection(settings: RunSettings) {
+        emitter.emit { id, at -> AgentEvent.ModelSelected(id, at, settings) }
     }
 
     private val history: MutableList<ChatMessage> = mutableListOf<ChatMessage>().apply {
@@ -204,7 +204,7 @@ public class Agent internal constructor(
         val attachments = resolvePromptAttachments(userMessage, environment)
         history += userMessage(userMessage, attachments)
         emitter.emit { id, at ->
-            AgentEvent.RunStarted(id, at, userMessage, settings.model, settings.reasoningEffort, attachments)
+            AgentEvent.RunStarted(id, at, userMessage, settings, attachments)
         }
     }
 

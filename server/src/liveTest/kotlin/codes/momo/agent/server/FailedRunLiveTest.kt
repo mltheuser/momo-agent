@@ -7,6 +7,7 @@ import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.rig.assertRejected
 import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.createSession
+import codes.momo.agent.server.rig.liveSettings
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.retryResponse
 import codes.momo.agent.server.rig.retryRun
@@ -36,7 +37,7 @@ class FailedRunLiveTest {
     )
     fun unknownModelFailsEveryRetryRecreatesTheCallCompletionEndsRetrying() = withLiveServer { http ->
         val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir)).id
-        http.prompt(id, "Reply with the single word: ready.", model = UNKNOWN_MODEL)
+        http.prompt(id, "Reply with the single word: ready.", liveSettings.copy(model = UNKNOWN_MODEL))
 
         val failed = http.awaitRunEnd(id)
         val failure = assertIs<AgentEvent.RunFinished>(failed.last())

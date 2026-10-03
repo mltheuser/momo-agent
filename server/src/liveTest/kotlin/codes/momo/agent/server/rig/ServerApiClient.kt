@@ -1,7 +1,7 @@
 package codes.momo.agent.server.rig
 
-import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.RunSettings
 import codes.momo.agent.server.ApiError
 import codes.momo.agent.server.CreateSessionRequest
 import codes.momo.agent.server.PromptRequest
@@ -83,32 +83,24 @@ internal suspend fun HttpClient.rawCreateSessionResponse(body: String): HttpResp
         setBody(TextContent(body, ContentType.Application.Json))
     }
 
-internal suspend fun HttpClient.prompt(sessionId: String, prompt: String): SessionInfo =
-    prompt(sessionId, prompt, liveChatModel)
-
 internal suspend fun HttpClient.prompt(
     sessionId: String,
     prompt: String,
-    model: String,
-    reasoningEffort: ReasoningEffort? = null,
+    settings: RunSettings = liveSettings,
 ): SessionInfo {
-    val response = promptResponse(sessionId, prompt, model, reasoningEffort)
+    val response = promptResponse(sessionId, prompt, settings)
     assertEquals(HttpStatusCode.Accepted, response.status, response.bodyAsText())
     return response.body()
 }
 
-internal suspend fun HttpClient.promptResponse(sessionId: String, prompt: String): HttpResponse =
-    promptResponse(sessionId, prompt, liveChatModel)
-
 internal suspend fun HttpClient.promptResponse(
     sessionId: String,
     prompt: String,
-    model: String,
-    reasoningEffort: ReasoningEffort? = null,
+    settings: RunSettings = liveSettings,
 ): HttpResponse =
     post("/v1/sessions/$sessionId/prompt") {
         contentType(ContentType.Application.Json)
-        setBody(PromptRequest(prompt, model, reasoningEffort))
+        setBody(PromptRequest(prompt, settings.model, settings.reasoningEffort))
     }
 
 internal suspend fun HttpClient.rawPromptResponse(sessionId: String, body: String): HttpResponse =
@@ -144,24 +136,16 @@ internal suspend fun HttpClient.renameResponse(sessionId: String, title: String)
         setBody(RenameRequest(title))
     }
 
-internal suspend fun HttpClient.selectModel(
-    sessionId: String,
-    model: String,
-    reasoningEffort: ReasoningEffort? = null,
-): SessionInfo {
-    val response = selectModelResponse(sessionId, model, reasoningEffort)
+internal suspend fun HttpClient.selectModel(sessionId: String, settings: RunSettings): SessionInfo {
+    val response = selectModelResponse(sessionId, settings)
     assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
     return response.body()
 }
 
-internal suspend fun HttpClient.selectModelResponse(
-    sessionId: String,
-    model: String,
-    reasoningEffort: ReasoningEffort? = null,
-): HttpResponse =
+internal suspend fun HttpClient.selectModelResponse(sessionId: String, settings: RunSettings): HttpResponse =
     post("/v1/sessions/$sessionId/select-model") {
         contentType(ContentType.Application.Json)
-        setBody(SelectModelRequest(model, reasoningEffort))
+        setBody(SelectModelRequest(settings.model, settings.reasoningEffort))
     }
 
 internal suspend fun HttpClient.rawSelectModelResponse(sessionId: String, body: String): HttpResponse =

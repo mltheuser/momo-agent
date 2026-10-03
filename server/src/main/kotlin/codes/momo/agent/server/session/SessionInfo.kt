@@ -1,7 +1,7 @@
 package codes.momo.agent.server.session
 
-import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.RunSettings
 import codes.momo.agent.server.storage.ifReadable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -26,7 +26,7 @@ internal data class SessionInfo(
 
     val lastRun: RunStats?,
 
-    val modelSelection: ModelSelection?,
+    val modelSelection: RunSettings?,
 )
 
 @Serializable
@@ -38,13 +38,6 @@ internal enum class SessionStatus {
     @SerialName("idle")
     IDLE,
 }
-
-@Serializable
-internal data class ModelSelection(
-    val model: String,
-
-    val reasoningEffort: ReasoningEffort? = null,
-)
 
 @Serializable
 internal data class RunStats(
@@ -80,20 +73,17 @@ internal suspend fun SessionRegistry.info(id: String): SessionInfo {
             createdAtMillis = started.timestampMillis,
             updatedAtMillis = events.sessionUpdatedAtMillis(),
             lastRun = events.lastRunStats(),
-            modelSelection = events.modelSelection() ?: spawnPinnedSelection(started),
+            modelSelection = events.modelSelection() ?: inheritedSelection(started),
         )
     }
 }
 
-private fun SessionRegistry.spawnPinnedSelection(started: AgentEvent.SessionStarted): ModelSelection? =
-    started.parent
-        ?.let { parentId -> storedSpawn(parentId, started.sessionId) }
-        ?.let { spawn -> spawn.modelId?.let { ModelSelection(it, spawn.reasoningEffort) } }
-
-private fun SessionRegistry.storedSpawn(parentId: String, childId: String): AgentEvent.SubagentSpawned? =
-    store.ifReadable { readEvents(parentId) }
-        ?.filterIsInstance<AgentEvent.SubagentSpawned>()
-        ?.lastOrNull { it.sessionId == childId }
+// A child that has chosen nothing itself runs with its parent's settings under its spawn pins.
+private fun SessionRegistry.inheritedSelection(started: AgentEvent.SessionStarted): RunSettings? {
+    val parentEvents = started.parent?.let { store.ifReadable { readEvents(it) } } ?: return null
+    val spawn = parentEvents.filterIsInstance<AgentEvent.SubagentSpawned>().last { it.sessionId == started.sessionId }
+    return parentEvents.modelSelection()?.pinnedBy(spawn.modelId, spawn.reasoningEffort)
+}
 
 internal fun normalizedWorkspace(path: String): String = Path.of(path).toAbsolutePath().normalize().toString()
 
@@ -107,11 +97,11 @@ internal fun List<AgentEvent>.sessionUpdatedAtMillis(): Long = last().timestampM
 internal fun List<AgentEvent>.sessionTitle(): String =
     filterIsInstance<AgentEvent.SessionRenamed>().lastOrNull()?.title ?: sessionStarted().title
 
-internal fun List<AgentEvent>.modelSelection(): ModelSelection? =
+internal fun List<AgentEvent>.modelSelection(): RunSettings? =
     asReversed().firstNotNullOfOrNull { event ->
         when (event) {
-            is AgentEvent.ModelSelected -> ModelSelection(event.model, event.reasoningEffort)
-            is AgentEvent.RunStarted -> event.model?.let { ModelSelection(it, event.reasoningEffort) }
+            is AgentEvent.ModelSelected -> event.settings
+            is AgentEvent.RunStarted -> event.settings
             else -> null
         }
     }

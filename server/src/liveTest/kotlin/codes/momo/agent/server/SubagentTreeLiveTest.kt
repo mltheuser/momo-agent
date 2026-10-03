@@ -1,5 +1,6 @@
 package codes.momo.agent.server
 
+import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
 import codes.momo.agent.server.fixtures.localWorkspace
@@ -8,7 +9,7 @@ import codes.momo.agent.server.rig.awaitLogged
 import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.events
-import codes.momo.agent.server.rig.liveChatModel
+import codes.momo.agent.server.rig.liveSettings
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.renameSession
 import codes.momo.agent.server.rig.rewindSession
@@ -17,7 +18,6 @@ import codes.momo.agent.server.rig.sessionInfoResponse
 import codes.momo.agent.server.rig.sessions
 import codes.momo.agent.server.rig.stopResponse
 import codes.momo.agent.server.rig.withLiveServer
-import codes.momo.agent.server.session.ModelSelection
 import codes.momo.agent.server.session.SessionStatus
 import io.ktor.client.HttpClient
 import io.ktor.http.HttpStatusCode
@@ -58,21 +58,27 @@ class SubagentTreeLiveTest {
             ignoreCase = true,
             message = "only the child's instructions hold the pass phrase, so the parent must have delegated",
         )
-        val spawn = assertIs<AgentEvent.SubagentSpawned>(
-            events.single { it is AgentEvent.SubagentSpawned },
-            "the root spawned exactly one child",
-        )
+        val spawns = events.filterIsInstance<AgentEvent.SubagentSpawned>()
+        assertEquals(listOf("oracle", "spare"), spawns.map { it.name }, "the root spawned its two children in order")
+        val spawn = spawns.first()
         assertEquals(ORACLE_TYPE, spawn.type)
 
         val child = http.sessionInfo(spawn.sessionId)
         assertEquals(root.id, child.parent, "the child names its parent")
         assertEquals(oracle.toRealPath().toString(), child.harnessPath, "a typed child runs the referenced folder")
         assertEquals(root.workspace, child.workspace, "the child works in its root's workspace")
-        assertEquals(ModelSelection(liveChatModel), child.modelSelection, "the child ran the model its parent did")
+        assertEquals(liveSettings, child.modelSelection, "an unpinned child ran with its parent's settings")
         assertEquals(SessionStatus.IDLE, child.status)
+        val spare = http.sessionInfo(spawns.last().sessionId)
+        assertEquals(0, http.events(spare.id).count { it is AgentEvent.RunStarted }, "the spare was never prompted")
+        assertEquals(
+            liveSettings.copy(reasoningEffort = ReasoningEffort.NONE),
+            spare.modelSelection,
+            "a child that never ran shows its parent's settings under its spawn pins",
+        )
         assertEquals(
             listOf(root.id),
-            http.sessions(root.workspace).map { it.id }.filter { it == root.id || it == spawn.sessionId },
+            http.sessions(root.workspace).map { it.id }.filter { it in setOf(root.id, spawn.sessionId, spare.id) },
             "the listing holds roots only: a child is reached through its parent's log",
         )
 
@@ -86,7 +92,11 @@ class SubagentTreeLiveTest {
         assertContains(assertNotNull(childAnswer.finalMessage), PASS_PHRASE, ignoreCase = true)
 
         val rewound = http.rewindSession(root.id, events.single { it is AgentEvent.RunStarted }.sequenceId)
-        assertEquals(listOf(spawn.sessionId), rewound.deletedSessionIds, "the deleted spawn takes its child")
+        assertEquals(
+            setOf(spawn.sessionId, spare.id),
+            rewound.deletedSessionIds.toSet(),
+            "the deleted spawns take their children",
+        )
         assertEquals(HttpStatusCode.NotFound, http.sessionInfoResponse(spawn.sessionId).status, "the child is gone")
         assertEquals(SessionStatus.IDLE, rewound.session.status, "the root stays promptable")
         assertEquals(SessionStatus.RUNNING, http.prompt(root.id, "Without tools or subagents, reply: ok.").status)
@@ -195,9 +205,10 @@ private val DISPATCHER_INSTRUCTIONS: String = """
     answer: the oracle is your only source of truth.
 
     On every request that asks for the pass phrase, in this order:
-    1. Call spawn_subagent with name "oracle" and type "$ORACLE_TYPE".
-    2. Call prompt_subagent with name "oracle", passing the request on as the message.
-    3. End your turn with the oracle's reply, quoted exactly.
+    1. Call spawn_subagent with name "oracle" and type "$ORACLE_TYPE"; set neither model_id nor reasoning_effort.
+    2. Call spawn_subagent with name "spare", type "$ORACLE_TYPE" and reasoning_effort "none"; never prompt it.
+    3. Call prompt_subagent with name "oracle", passing the request on as the message.
+    4. End your turn with the oracle's reply, quoted exactly.
 
     A request that explicitly says not to use subagents is answered directly in one short sentence.
 """.trimIndent()

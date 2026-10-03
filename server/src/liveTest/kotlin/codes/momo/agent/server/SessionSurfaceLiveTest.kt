@@ -5,6 +5,7 @@ import ai.router.sdk.chat.ChatFeature
 import ai.router.sdk.chat.ChatModel
 import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.RunSettings
 import codes.momo.agent.server.fixtures.harnessPath
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
@@ -18,6 +19,7 @@ import codes.momo.agent.server.rig.deleteTemplateResponse
 import codes.momo.agent.server.rig.events
 import codes.momo.agent.server.rig.eventsResponse
 import codes.momo.agent.server.rig.liveChatModel
+import codes.momo.agent.server.rig.liveSettings
 import codes.momo.agent.server.rig.promptResponse
 import codes.momo.agent.server.rig.putTemplate
 import codes.momo.agent.server.rig.putTemplateResponse
@@ -41,7 +43,6 @@ import codes.momo.agent.server.rig.templateNames
 import codes.momo.agent.server.rig.templateResponse
 import codes.momo.agent.server.rig.withChangeStream
 import codes.momo.agent.server.rig.withLiveServer
-import codes.momo.agent.server.session.ModelSelection
 import codes.momo.agent.server.session.SessionInfo
 import codes.momo.agent.server.session.SessionStatus
 import io.ktor.client.call.body
@@ -131,15 +132,22 @@ class SessionSurfaceLiveTest {
         val before = http.events(id)
 
         http.promptResponse(id, "   ").assertRejected("invalid_request", "a blank prompt")
-        http.promptResponse(id, "go", model = "   ").assertRejected("invalid_request", "a blank model")
-        http.rawPromptResponse(id, """{"prompt": "go"}""").assertRejected("invalid_request", "a missing model")
+        http.promptResponse(id, "go", liveSettings.copy(model = "   "))
+            .assertRejected("invalid_request", "a blank model")
+        http.rawPromptResponse(id, """{"prompt": "go", "reasoningEffort": "low"}""")
+            .assertRejected("invalid_request", "a missing model")
+        http.rawPromptResponse(id, """{"prompt": "go", "model": "m"}""")
+            .assertRejected("invalid_request", "a missing reasoning effort")
         http.rawPromptResponse(id, """{"prompt": "go", "model": "m", "reasoningEffort": "ultra"}""")
             .assertRejected("invalid_request", "an unknown reasoning effort")
 
         http.renameResponse(id, "   ").assertRejected("invalid_request", "a blank title")
-        http.selectModelResponse(id, "   ").assertRejected("invalid_request", "a blank model selection")
+        http.selectModelResponse(id, liveSettings.copy(model = "   "))
+            .assertRejected("invalid_request", "a blank model selection")
         http.rawSelectModelResponse(id, """{"reasoningEffort": "high"}""")
             .assertRejected("invalid_request", "a selection without a model")
+        http.rawSelectModelResponse(id, """{"model": "m"}""")
+            .assertRejected("invalid_request", "a selection without a reasoning effort")
 
         http.rewindResponse(
             id,
@@ -170,7 +178,7 @@ class SessionSurfaceLiveTest {
             "get" to http.sessionInfoResponse(unknown),
             "prompt" to http.promptResponse(unknown, "hello"),
             "rename" to http.renameResponse(unknown, "title"),
-            "select-model" to http.selectModelResponse(unknown, "m"),
+            "select-model" to http.selectModelResponse(unknown, liveSettings),
             "rewind" to http.rewindResponse(unknown, 0),
             "retry" to http.retryResponse(unknown),
             "stop" to http.stopResponse(unknown),
@@ -206,20 +214,17 @@ class SessionSurfaceLiveTest {
             val renamed = stream.signalled("a rename") { http.renameSession(id, "Chosen title") }
             assertEquals("Chosen title", renamed.title)
             assertEquals(SessionStatus.IDLE, renamed.status, "a rename starts no run")
-            val selected = stream.signalled(
-                "a selection"
-            ) { http.selectModel(id, "picked-model", ReasoningEffort.HIGH) }
-            assertEquals(ModelSelection("picked-model", ReasoningEffort.HIGH), selected.modelSelection)
+            val selected = stream.signalled("a selection") { http.selectModel(id, PICKED) }
+            assertEquals(PICKED, selected.modelSelection)
             assertEquals(SessionStatus.IDLE, selected.status, "a selection starts no run")
         }
         val appended = http.events(id).drop(1)
         assertEquals("Chosen title", assertIs<AgentEvent.SessionRenamed>(appended[0]).title)
-        val event = assertIs<AgentEvent.ModelSelected>(appended[1])
-        assertEquals("picked-model" to ReasoningEffort.HIGH, event.model to event.reasoningEffort)
+        assertEquals(PICKED, assertIs<AgentEvent.ModelSelected>(appended[1]).settings)
         assertEquals(listOf(1L, 2L), appended.map { it.sequenceId }, "appended gaplessly after session_started")
         val info = http.sessionInfo(id)
         assertEquals("Chosen title", info.title)
-        assertEquals(ModelSelection("picked-model", ReasoningEffort.HIGH), info.modelSelection)
+        assertEquals(PICKED, info.modelSelection)
         assertEquals("Chosen title", http.sessions(localWorkspace(tempDir, "metadata")).single().title, "listed too")
     }
 
@@ -304,3 +309,5 @@ class SessionSurfaceLiveTest {
         assertEquals("unknown_template", deletedAgain.body<ApiError>().code)
     }
 }
+
+private val PICKED = RunSettings("picked-model", ReasoningEffort.HIGH)

@@ -18,10 +18,6 @@ val aiRouterBaseUrl: String by extra(
     resolveLiveSetting("aiRouterBaseUrl", "AI_ROUTER_BASE_URL", "http://localhost:8787"),
 )
 
-val aiRouterChatModel: String by extra(
-    resolveLiveSetting("aiRouterChatModel", "AI_ROUTER_CHAT_MODEL", "claude-sonnet-5:cloud@anthropic"),
-)
-
 subprojects {
     group = "codes.momo"
     version = "0.1.0"

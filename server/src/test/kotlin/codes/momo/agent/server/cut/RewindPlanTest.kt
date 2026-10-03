@@ -1,8 +1,10 @@
 package codes.momo.agent.server.cut
 
 import ai.router.sdk.chat.ChatUsage
+import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
+import codes.momo.agent.RunSettings
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.DisplayName
@@ -16,7 +18,7 @@ class RewindPlanTest {
     private fun started(seq: Long, at: Long, id: String) =
         AgentEvent.SessionStarted(seq, at, sessionId = id, title = id, harnessPath = null, workspace = "/work")
 
-    private fun run(seq: Long, at: Long) = AgentEvent.RunStarted(seq, at, userMessage = "go")
+    private fun run(seq: Long, at: Long) = AgentEvent.RunStarted(seq, at, userMessage = "go", settings = SETTINGS)
 
     private fun finished(seq: Long, at: Long) = AgentEvent.RunFinished(
         sequenceId = seq,
@@ -217,3 +219,5 @@ class RewindPlanTest {
         assertEquals(listOf("root" to 2L, "mid" to 1L, "leaf" to 0L), plan.cuts)
     }
 }
+
+private val SETTINGS = RunSettings("m", ReasoningEffort.NONE)

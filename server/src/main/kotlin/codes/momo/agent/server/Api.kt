@@ -68,7 +68,7 @@ internal data class CreateSessionRequest(
 internal data class PromptRequest(
     val prompt: String,
     val model: String,
-    val reasoningEffort: ReasoningEffort? = null,
+    val reasoningEffort: ReasoningEffort,
 )
 
 @Serializable
@@ -77,8 +77,7 @@ internal data class RenameRequest(val title: String)
 @Serializable
 internal data class SelectModelRequest(
     val model: String,
-
-    val reasoningEffort: ReasoningEffort? = null,
+    val reasoningEffort: ReasoningEffort,
 )
 
 @Serializable
@@ -190,8 +189,8 @@ private fun Route.singleSessionRoutes(registry: SessionRegistry) {
     }
     post("/select-model") {
         val request = call.receive<SelectModelRequest>()
-        val model = request.model.requireNotBlank("model")
-        call.respond(registry.selectModel(call.sessionId(), model, request.reasoningEffort))
+        val settings = RunSettings(request.model.requireNotBlank("model"), request.reasoningEffort)
+        call.respond(registry.selectModel(call.sessionId(), settings))
     }
     post("/retry") {
         val id = call.sessionId()

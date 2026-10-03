@@ -25,7 +25,7 @@ internal data class SpawnSubagentArgs(
     @SerialName("reasoning_effort")
     @Description(
         "Reasoning effort for the subagent's runs; omit to use the same effort as your own run. " +
-            "'none' is a real setting for explicitly no reasoning — not the omitted default.",
+            "'none' turns reasoning off.",
     )
     val reasoningEffort: ReasoningEffort? = null,
 )

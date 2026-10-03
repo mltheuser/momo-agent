@@ -19,11 +19,8 @@ internal fun retryPlan(events: List<AgentEvent>): RetryPlan {
     }
     val failedCall = run.lastOrNull { it is AgentEvent.LlmCallStarted } ?: tail
     val lastMessage = events.last { it.sequenceId < failedCall.sequenceId && it.carriesConversation() }
-    return RetryPlan(lastMessage.sequenceId, started.settingsToRerunWith())
+    return RetryPlan(lastMessage.sequenceId, started.settings)
 }
-
-private fun AgentEvent.RunStarted.settingsToRerunWith(): RunSettings = model?.let { RunSettings(it, reasoningEffort) }
-    ?: throw SessionConflictException("Nothing to retry: the failed run records no model to rerun with.")
 
 private fun AgentEvent.carriesConversation(): Boolean = when (this) {
     is AgentEvent.SessionStarted, is AgentEvent.RunStarted,

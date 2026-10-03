@@ -1,6 +1,8 @@
 package codes.momo.agent.server.cut
 
+import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.RunSettings
 import codes.momo.agent.server.storage.InvalidRewindPointException
 import kotlinx.serialization.json.JsonObject
 import org.junit.jupiter.api.DisplayName
@@ -12,9 +14,9 @@ class CutPolicyTest {
 
     private val log = listOf(
         AgentEvent.SessionStarted(0, 0, sessionId = "s", title = "s", harnessPath = null, workspace = "/work"),
-        AgentEvent.RunStarted(1, 1, userMessage = "first"),
+        AgentEvent.RunStarted(1, 1, userMessage = "first", settings = SETTINGS),
         AgentEvent.SessionRenamed(2, 2, title = "renamed"),
-        AgentEvent.RunStarted(5, 5, userMessage = "second"),
+        AgentEvent.RunStarted(5, 5, userMessage = "second", settings = SETTINGS),
         AgentEvent.ToolCallStarted(6, 6, callId = "c", toolName = "bash", arguments = JsonObject(emptyMap())),
     )
 
@@ -35,3 +37,5 @@ class CutPolicyTest {
         }
     }
 }
+
+private val SETTINGS = RunSettings("m", ReasoningEffort.NONE)

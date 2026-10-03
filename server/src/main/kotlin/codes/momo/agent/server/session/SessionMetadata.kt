@@ -1,8 +1,8 @@
 package codes.momo.agent.server.session
 
-import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.Agent
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.RunSettings
 import codes.momo.agent.server.storage.EventLogFailedException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
@@ -15,14 +15,10 @@ internal suspend fun SessionRegistry.rename(id: String, title: String): SessionI
     storedEvent = { sequenceId, at -> AgentEvent.SessionRenamed(sequenceId, at, title) },
 )
 
-internal suspend fun SessionRegistry.selectModel(
-    id: String,
-    model: String,
-    reasoningEffort: ReasoningEffort?,
-): SessionInfo = recordMetadata(
+internal suspend fun SessionRegistry.selectModel(id: String, settings: RunSettings): SessionInfo = recordMetadata(
     id,
-    onAgent = { it.recordModelSelection(model, reasoningEffort) },
-    storedEvent = { sequenceId, at -> AgentEvent.ModelSelected(sequenceId, at, model, reasoningEffort) },
+    onAgent = { it.recordModelSelection(settings) },
+    storedEvent = { sequenceId, at -> AgentEvent.ModelSelected(sequenceId, at, settings) },
 )
 
 private suspend fun SessionRegistry.recordMetadata(

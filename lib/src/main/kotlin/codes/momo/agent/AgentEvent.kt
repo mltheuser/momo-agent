@@ -42,9 +42,7 @@ public sealed interface AgentEvent {
     public data class ModelSelected(
         override val sequenceId: Long,
         override val timestampMillis: Long,
-        val model: String,
-
-        val reasoningEffort: ReasoningEffort? = null,
+        val settings: RunSettings,
     ) : AgentEvent
 
     @Serializable
@@ -53,10 +51,7 @@ public sealed interface AgentEvent {
         override val sequenceId: Long,
         override val timestampMillis: Long,
         val userMessage: String,
-
-        val model: String? = null,
-
-        val reasoningEffort: ReasoningEffort? = null,
+        val settings: RunSettings,
 
         val attachments: List<Attachment> = emptyList(),
     ) : AgentEvent {

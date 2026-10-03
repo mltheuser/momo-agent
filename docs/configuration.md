@@ -24,5 +24,5 @@ Resolution order: Gradle property, then environment variable, then default.
 Blank values count as unset. Source: root `build.gradle.kts`.
 
 ```sh
-./gradlew :server:liveTest -PaiRouterBaseUrl=http://localhost:9999 -PaiRouterChatModel=some-model@provider
+./gradlew :server:liveTest -PaiRouterBaseUrl=http://localhost:9999
 ```

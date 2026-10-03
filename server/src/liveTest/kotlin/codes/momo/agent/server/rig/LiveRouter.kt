@@ -2,6 +2,8 @@ package codes.momo.agent.server.rig
 
 import ai.router.sdk.AiRouterClient
 import ai.router.sdk.chat.ChatFeature
+import ai.router.sdk.chat.ReasoningEffort
+import codes.momo.agent.RunSettings
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
@@ -15,8 +17,11 @@ import kotlin.time.Duration.Companion.seconds
 internal val liveBaseUrl: String
     get() = requiredSystemProperty("aiRouter.baseUrl")
 
+/** What every live prompt runs with unless a test says otherwise. */
+internal val liveSettings: RunSettings = RunSettings("claude-sonnet-5:cloud@anthropic", ReasoningEffort.LOW)
+
 internal val liveChatModel: String
-    get() = requiredSystemProperty("aiRouter.chatModel")
+    get() = liveSettings.model
 
 internal fun requireLiveAiRouter() {
     reachable.getOrElse { failure -> throw IllegalStateException(unreachableMessage(failure), failure) }
@@ -58,11 +63,9 @@ private fun unreachableMessage(failure: Throwable): String =
     "The live tests need a running ai-router at $liveBaseUrl serving '$liveChatModel', and it is " +
         "unusable: ${failure.message ?: failure.toString()}\n" +
         "Start one from an ai-router checkout with: set -a && source .env && set +a && ./bin/ai-router serve\n" +
-        "Point the tests elsewhere with -PaiRouterBaseUrl=... / -PaiRouterChatModel=... " +
-        "(or AI_ROUTER_BASE_URL / AI_ROUTER_CHAT_MODEL)."
+        "Point the tests elsewhere with -PaiRouterBaseUrl=... (or AI_ROUTER_BASE_URL)."
 
 private fun requiredSystemProperty(name: String): String =
     checkNotNull(System.getProperty(name)) {
-        "System property '$name' is not set — run via ./gradlew liveTest, " +
-            "or set -DaiRouter.baseUrl=... / -DaiRouter.chatModel=..."
+        "System property '$name' is not set — run via ./gradlew liveTest, or set -DaiRouter.baseUrl=..."
     }

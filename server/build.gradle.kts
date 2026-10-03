@@ -33,7 +33,6 @@ kotlin {
 }
 
 val aiRouterBaseUrl: String by rootProject.extra
-val aiRouterChatModel: String by rootProject.extra
 
 testing {
     suites {
@@ -68,7 +67,6 @@ testing {
                         layout.buildDirectory.file("install/server/bin/server").get().asFile.absolutePath,
                     )
                     systemProperty("aiRouter.baseUrl", aiRouterBaseUrl)
-                    systemProperty("aiRouter.chatModel", aiRouterChatModel)
 
                     outputs.cacheIf { false }
                 }

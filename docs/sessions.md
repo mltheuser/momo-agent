@@ -22,7 +22,7 @@ The server rings `GET /v1/sessions/changes` on change. A client refetches the fu
 
 A user opens a project, creates a session over the `coder` harness, and works:
 
-1. **Prompt** "Add a test for the parser". The run's model and reasoning effort travel with the prompt; the harness sets neither. The run appends events until the model answers without tool calls (`completed`), a budget ends it (`turns_exhausted`, `timeout`), or an LLM call fails terminally (`error`).
+1. **Prompt** "Add a test for the parser". The run's model and reasoning effort travel with the prompt, both required; the harness sets neither. The run appends events until the model answers without tool calls (`completed`), a budget ends it (`turns_exhausted`, `timeout`), or an LLM call fails terminally (`error`).
 2. **Stop** while the agent is still running `./gradlew test`. The running command is terminated, its call is answered with an error saying a user stopped the run, the run records `stopped`, and the log ends up settled.
 3. **Retry** after a run ended `error` (the router was down). The session goes back to exactly the state it was in before the failed LLM call was attempted. The call is made again with the same settings.
 4. **Rewind** to before "Add a test for the parser" because the approach was wrong. That prompt and every event after it are deleted from the log. The workspace is not rewound. Some session metadata events survive a rewind. A rewind cuts from a user message; naming any other event is rejected.
@@ -37,7 +37,7 @@ session's tree is in flight, is refused.
 An agent whose harness declares `subagents` can spawn children. A child is a
 full session: its own log, readable, renameable and promptable by ID.
 
-- The parent's log records each spawn as `subagent_spawned`.
+- The parent's log records each spawn as `subagent_spawned`, with the model and effort pinned on the child, if any. A child runs with the settings of the parent run that prompts it, each pin overriding its counterpart; until the child has settings of its own, that is also the selection it reports.
 - The child's `session_started` records the parent's session ID.
 - Rewind cascades. A deleted `subagent_spawned` on rewind deletes that child and its subtree. A deleted `prompt_subagent` call cuts the child's log back to before the run it drove.
 - Stop cascades down, not up: stopping the parent stops its children's runs; stopping a child ends only that run, and the parent sees the stop as a tool result error.

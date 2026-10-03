@@ -10,12 +10,11 @@ import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.deleteSession
 import codes.momo.agent.server.rig.events
 import codes.momo.agent.server.rig.eventsResponse
-import codes.momo.agent.server.rig.liveChatModel
+import codes.momo.agent.server.rig.liveSettings
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.sessionInfo
 import codes.momo.agent.server.rig.withChangeStream
 import codes.momo.agent.server.rig.withLiveServer
-import codes.momo.agent.server.session.ModelSelection
 import codes.momo.agent.server.session.SessionStatus
 import codes.momo.agent.tool.ToolRegistry
 import io.ktor.client.call.body
@@ -74,7 +73,7 @@ class ConversationLiveTest {
         )
         val info = http.sessionInfo(session.id)
         assertEquals(finished.turnsUsed, info.lastRun?.turnsUsed, "lastRun reports the completed run's consumption")
-        assertEquals(ModelSelection(liveChatModel), info.modelSelection, "the run's model is the shown selection")
+        assertEquals(liveSettings, info.modelSelection, "the run's settings are the shown selection")
 
         Path.of(workspace).resolve("secret.txt").toFile().delete()
         http.prompt(session.id, "Without using any tools, repeat the exact token you read earlier.")

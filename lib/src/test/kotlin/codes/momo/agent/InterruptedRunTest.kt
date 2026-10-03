@@ -2,6 +2,7 @@ package codes.momo.agent
 
 import ai.router.sdk.chat.ChatMessage
 import ai.router.sdk.chat.ChatUsage
+import ai.router.sdk.chat.ReasoningEffort
 import ai.router.sdk.chat.ToolCall
 import ai.router.sdk.chat.ToolCallFunction
 import kotlinx.serialization.json.JsonObject
@@ -35,7 +36,7 @@ class InterruptedRunTest {
     @DisplayName("A run a kill left open gets its cut-short calls answered, then a run_finished(interrupted)")
     fun anOpenRunIsSettled() {
         val openRun = listOf(
-            AgentEvent.RunStarted(3, 3, "go"),
+            AgentEvent.RunStarted(3, 3, "go", SETTINGS),
             turn(4, 10),
             AgentEvent.BudgetUpdated(5, 5, turnsUsed = 1, turnsRemaining = 9, elapsed = 3.seconds),
             turn(6, 5, "running", "queued"),
@@ -67,8 +68,10 @@ class InterruptedRunTest {
         val finished =
             AgentEvent.RunFinished(2, 2, RunResult.Status.COMPLETED, "ok", ChatUsage(0, 0, 0, 0, 0), 1, 1.seconds)
         assertFailsWith<IllegalArgumentException> {
-            repairInterruptedRun(listOf(AgentEvent.RunStarted(1, 1, "go"), finished), timestampMillis = 9)
+            repairInterruptedRun(listOf(AgentEvent.RunStarted(1, 1, "go", SETTINGS), finished), timestampMillis = 9)
         }
         assertFailsWith<IllegalArgumentException> { repairInterruptedRun(listOf(turn(4, 1)), timestampMillis = 9) }
     }
 }
+
+private val SETTINGS = RunSettings("m", ReasoningEffort.NONE)
