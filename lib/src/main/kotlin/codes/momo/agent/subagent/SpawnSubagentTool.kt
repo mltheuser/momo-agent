@@ -18,13 +18,13 @@ internal data class SpawnSubagentArgs(
     val type: String,
     @SerialName("model_id")
     @Description(
-        "Model id for the subagent's runs; omit to use the same model as your own run. " +
+        "Model id for the subagent's runs; omit to start with the model of your own run. " +
             "An unknown id's error lists the closest valid ids, so a best guess is a fine starting point.",
     )
     val modelId: String? = null,
     @SerialName("reasoning_effort")
     @Description(
-        "Reasoning effort for the subagent's runs; omit to use the same effort as your own run. " +
+        "Reasoning effort for the subagent's runs; omit to start with the effort of your own run. " +
             "'none' turns reasoning off.",
     )
     val reasoningEffort: ReasoningEffort? = null,
@@ -41,7 +41,7 @@ internal class SpawnSubagentTool(
 ) {
 
     override suspend fun execute(args: SpawnSubagentArgs, context: ToolContext): ToolResult =
-        subagents.spawn(args.name, args.type, args.modelId, args.reasoningEffort)
+        subagents.spawn(args.name, args.type, args.modelId, args.reasoningEffort, context.settings)
 }
 
 private fun spawnSubagentDescription(subagentTypes: Map<String, SubagentType>): String = buildString {
@@ -50,9 +50,9 @@ private fun spawnSubagentDescription(subagentTypes: Map<String, SubagentType>): 
         Creates a subagent: a fresh agent that works for you. It starts with no conversation
         and does nothing until you send it work with prompt_subagent. Delegate self-contained
         pieces of work to subagents to keep your own context focused. Each subagent needs a
-        unique name; prompt_subagent addresses it by that name. By default the subagent's runs
-        use the same model and reasoning effort as your own run; set model_id or
-        reasoning_effort to override either. An invalid model_id is rejected with the closest
+        unique name; prompt_subagent addresses it by that name. The subagent starts with the
+        settings of your own run; set model_id or reasoning_effort to override either. From then
+        on it keeps its own settings. An invalid model_id is rejected with the closest
         valid ids, so guessing one and reading the error is a fine way to find it. Pass
         one of the following as `type`:
         """.trimIndent(),

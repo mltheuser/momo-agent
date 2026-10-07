@@ -15,7 +15,7 @@ import java.io.IOException
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
-internal suspend fun SessionRegistry.create(harnessPath: String, workspace: String, title: String?): SessionInfo =
+internal suspend fun SessionRegistry.create(harnessPath: String, workspace: String, title: String?): SessionSummary =
     changes.announcing {
         withContext(Dispatchers.IO) {
             val harnessFolder = Path.of(harnessPath)
@@ -31,7 +31,7 @@ internal suspend fun SessionRegistry.create(harnessPath: String, workspace: Stri
                 throw EventLogFailedException(failure)
             }
             register(agent.sessionId)
-            info(agent.sessionId)
+            summary(agent.sessionId)
         }
     }
 

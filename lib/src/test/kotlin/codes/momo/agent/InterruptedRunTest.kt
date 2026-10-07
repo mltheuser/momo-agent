@@ -74,4 +74,4 @@ class InterruptedRunTest {
     }
 }
 
-private val SETTINGS = RunSettings("m", ReasoningEffort.NONE)
+private val SETTINGS = RunSettings("m", ReasoningEffort.NONE, emptyMap())

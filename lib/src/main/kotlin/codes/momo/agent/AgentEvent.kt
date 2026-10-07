@@ -3,7 +3,6 @@ package codes.momo.agent
 import ai.router.sdk.AiRouterException
 import ai.router.sdk.chat.ChatMessage
 import ai.router.sdk.chat.ChatUsage
-import ai.router.sdk.chat.ReasoningEffort
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -27,6 +26,7 @@ public sealed interface AgentEvent {
         val workspace: String,
         val parent: String? = null,
         val depth: Int = 0,
+        val settings: RunSettings?,
     ) : AgentEvent
 
     @Serializable
@@ -38,11 +38,11 @@ public sealed interface AgentEvent {
     ) : AgentEvent
 
     @Serializable
-    @SerialName("model_selected")
-    public data class ModelSelected(
+    @SerialName("selection_changed")
+    public data class SelectionChanged(
         override val sequenceId: Long,
         override val timestampMillis: Long,
-        val settings: RunSettings,
+        val patch: SelectionPatch,
     ) : AgentEvent
 
     @Serializable
@@ -178,10 +178,6 @@ public sealed interface AgentEvent {
 
         @SerialName("subagentType")
         val type: String? = null,
-
-        val modelId: String? = null,
-
-        val reasoningEffort: ReasoningEffort? = null,
     ) : AgentEvent
 
     @Serializable

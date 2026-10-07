@@ -5,7 +5,9 @@ import ai.router.sdk.chat.ChatFeature
 import ai.router.sdk.chat.ChatModel
 import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.AgentEvent
-import codes.momo.agent.RunSettings
+import codes.momo.agent.ChatSelection
+import codes.momo.agent.SelectionPatch
+import codes.momo.agent.SessionSelection
 import codes.momo.agent.server.fixtures.harnessPath
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
@@ -26,13 +28,13 @@ import codes.momo.agent.server.rig.putTemplateResponse
 import codes.momo.agent.server.rig.rawCreateSessionResponse
 import codes.momo.agent.server.rig.rawPromptResponse
 import codes.momo.agent.server.rig.rawRewindResponse
-import codes.momo.agent.server.rig.rawSelectModelResponse
+import codes.momo.agent.server.rig.rawSelectResponse
 import codes.momo.agent.server.rig.renameResponse
 import codes.momo.agent.server.rig.renameSession
 import codes.momo.agent.server.rig.retryResponse
 import codes.momo.agent.server.rig.rewindResponse
-import codes.momo.agent.server.rig.selectModel
-import codes.momo.agent.server.rig.selectModelResponse
+import codes.momo.agent.server.rig.select
+import codes.momo.agent.server.rig.selectResponse
 import codes.momo.agent.server.rig.sessionInfo
 import codes.momo.agent.server.rig.sessionInfoResponse
 import codes.momo.agent.server.rig.sessions
@@ -43,8 +45,8 @@ import codes.momo.agent.server.rig.templateNames
 import codes.momo.agent.server.rig.templateResponse
 import codes.momo.agent.server.rig.withChangeStream
 import codes.momo.agent.server.rig.withLiveServer
-import codes.momo.agent.server.session.SessionInfo
 import codes.momo.agent.server.session.SessionStatus
+import codes.momo.agent.server.session.SessionSummary
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
@@ -83,19 +85,25 @@ class SessionSurfaceLiveTest {
             assertNotEquals(first.id, second.id)
             assertTrue(first.id.isNotBlank())
             assertEquals("harness", first.title, "the title defaults to the harness folder's name")
-            assertEquals(Path.of(harness).toRealPath().toString(), first.harnessPath, "the canonical folder")
-            assertEquals(workspace, first.workspace)
             assertEquals(SessionStatus.IDLE, first.status)
-            assertNull(first.parent, "a root has no parent")
-            assertNull(first.lastRun, "no run happened yet")
-            assertNull(first.modelSelection, "nothing selected yet")
-            assertTrue(first.createdAtMillis > 0)
-            assertEquals(first, http.sessionInfo(first.id))
-            assertEquals(setOf(first, second), http.sessions(workspace).toSet(), "get and list agree")
+            val detail = http.sessionInfo(first.id)
+            assertEquals(Path.of(harness).toRealPath().toString(), detail.harnessPath, "the canonical folder")
+            assertEquals(workspace, detail.workspace)
+            assertNull(detail.parent, "a root has no parent")
+            assertNull(detail.lastRun, "no run happened yet")
+            assertEquals(SessionSelection.NONE, detail.selection, "nothing selected yet")
+            assertEquals(emptyList(), detail.toolsWithModel, "a bash-only harness has no tool taking a model")
+            assertTrue(detail.createdAtMillis > 0)
+            assertEquals(
+                first,
+                SessionSummary(detail.id, detail.title, detail.status, detail.updatedAtMillis),
+                "the detail starts with the summary's fields",
+            )
+            assertEquals(listOf(first, second), http.sessions(workspace), "the list holds the summaries, oldest first")
 
             val stopped = http.stopResponse(first.id)
             assertEquals(HttpStatusCode.OK, stopped.status, stopped.bodyAsText())
-            assertEquals(SessionStatus.IDLE, stopped.body<SessionInfo>().status, "a stop with no run is a no-op")
+            assertEquals(SessionStatus.IDLE, stopped.body<SessionSummary>().status, "a stop with no run is a no-op")
 
             stream.signalled("deleting") { http.deleteSession(first.id) }
             val lookup = http.sessionInfoResponse(first.id)
@@ -142,12 +150,21 @@ class SessionSurfaceLiveTest {
             .assertRejected("invalid_request", "an unknown reasoning effort")
 
         http.renameResponse(id, "   ").assertRejected("invalid_request", "a blank title")
-        http.selectModelResponse(id, liveSettings.copy(model = "   "))
+        http.selectResponse(id, SelectionPatch(chat = ChatSelection("   ", ReasoningEffort.HIGH)))
             .assertRejected("invalid_request", "a blank model selection")
-        http.rawSelectModelResponse(id, """{"reasoningEffort": "high"}""")
+        http.rawSelectResponse(id, """{"chat": {"reasoningEffort": "high"}}""")
             .assertRejected("invalid_request", "a selection without a model")
-        http.rawSelectModelResponse(id, """{"model": "m"}""")
+        http.rawSelectResponse(id, """{"chat": {"model": "m"}}""")
             .assertRejected("invalid_request", "a selection without a reasoning effort")
+        http.selectResponse(id, SelectionPatch()).assertRejected("invalid_request", "an empty selection")
+        http.selectResponse(id, SelectionPatch(toolModels = mapOf("bash" to "m")))
+            .assertRejected("invalid_request", "a model for a tool that takes none", names = "bash")
+        http.selectResponse(id, SelectionPatch(toolModels = mapOf("web_search" to " ")))
+            .assertRejected("invalid_request", "a blank tool model")
+        http.rawPromptResponse(id, """{"prompt": "go", "model": "m", "reasoningEffort": "low"}""")
+            .assertRejected("invalid_request", "a prompt without tool models")
+        http.promptResponse(id, "go", liveSettings.copy(toolModels = mapOf("bash" to "m")))
+            .assertRejected("invalid_request", "a prompt naming a model for a tool that takes none", names = "bash")
 
         http.rewindResponse(
             id,
@@ -178,7 +195,7 @@ class SessionSurfaceLiveTest {
             "get" to http.sessionInfoResponse(unknown),
             "prompt" to http.promptResponse(unknown, "hello"),
             "rename" to http.renameResponse(unknown, "title"),
-            "select-model" to http.selectModelResponse(unknown, liveSettings),
+            "select" to http.selectResponse(unknown, SelectionPatch(chat = PICKED)),
             "rewind" to http.rewindResponse(unknown, 0),
             "retry" to http.retryResponse(unknown),
             "stop" to http.stopResponse(unknown),
@@ -206,25 +223,24 @@ class SessionSurfaceLiveTest {
     }
 
     @Test
-    @DisplayName("Rename and select-model append to the stored log between runs, each ringing the change stream")
-    fun renameAndSelectModelBetweenRuns() = withLiveServer { http ->
+    @DisplayName("Rename and select append to the stored log between runs, each ringing the change stream")
+    fun renameAndSelectBetweenRuns() = withLiveServer { http ->
         val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "metadata")).id
 
         http.withChangeStream { stream ->
             val renamed = stream.signalled("a rename") { http.renameSession(id, "Chosen title") }
             assertEquals("Chosen title", renamed.title)
             assertEquals(SessionStatus.IDLE, renamed.status, "a rename starts no run")
-            val selected = stream.signalled("a selection") { http.selectModel(id, PICKED) }
-            assertEquals(PICKED, selected.modelSelection)
+            val selected = stream.signalled("a selection") { http.select(id, SelectionPatch(chat = PICKED)) }
             assertEquals(SessionStatus.IDLE, selected.status, "a selection starts no run")
         }
         val appended = http.events(id).drop(1)
         assertEquals("Chosen title", assertIs<AgentEvent.SessionRenamed>(appended[0]).title)
-        assertEquals(PICKED, assertIs<AgentEvent.ModelSelected>(appended[1]).settings)
+        assertEquals(SelectionPatch(chat = PICKED), assertIs<AgentEvent.SelectionChanged>(appended[1]).patch)
         assertEquals(listOf(1L, 2L), appended.map { it.sequenceId }, "appended gaplessly after session_started")
         val info = http.sessionInfo(id)
         assertEquals("Chosen title", info.title)
-        assertEquals(PICKED, info.modelSelection)
+        assertEquals(SessionSelection(PICKED, emptyMap()), info.selection)
         assertEquals("Chosen title", http.sessions(localWorkspace(tempDir, "metadata")).single().title, "listed too")
     }
 
@@ -245,7 +261,7 @@ class SessionSurfaceLiveTest {
             http.deleteSession(corrupt.id)
         }
         assertEquals(HttpStatusCode.NotFound, http.sessionInfoResponse(corrupt.id).status)
-        assertEquals(healthy, http.sessionInfo(healthy.id), "the healthy neighbour is untouched")
+        assertEquals(healthy.id, http.sessionInfo(healthy.id).id, "the healthy neighbour is untouched")
     }
 
     @Test
@@ -310,4 +326,4 @@ class SessionSurfaceLiveTest {
     }
 }
 
-private val PICKED = RunSettings("picked-model", ReasoningEffort.HIGH)
+private val PICKED = ChatSelection("picked-model", ReasoningEffort.HIGH)

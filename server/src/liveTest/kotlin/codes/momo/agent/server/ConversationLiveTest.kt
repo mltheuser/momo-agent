@@ -73,7 +73,7 @@ class ConversationLiveTest {
         )
         val info = http.sessionInfo(session.id)
         assertEquals(finished.turnsUsed, info.lastRun?.turnsUsed, "lastRun reports the completed run's consumption")
-        assertEquals(liveSettings, info.modelSelection, "the run's settings are the shown selection")
+        assertEquals(liveSettings, info.selection.runSettings(), "the run's settings are the shown selection")
 
         Path.of(workspace).resolve("secret.txt").toFile().delete()
         http.prompt(session.id, "Without using any tools, repeat the exact token you read earlier.")

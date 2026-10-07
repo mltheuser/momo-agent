@@ -4,6 +4,7 @@ import ai.router.sdk.AiRouterClient
 import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.Agent
 import codes.momo.agent.RunResult
+import codes.momo.agent.RunSettings
 import codes.momo.agent.tool.ToolResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
@@ -12,8 +13,6 @@ import kotlinx.coroutines.sync.withLock
 internal class SpawnedChild(
     val sessionId: String,
     val type: String?,
-    val modelId: String?,
-    val reasoningEffort: ReasoningEffort?,
 )
 
 internal class Subagents(
@@ -34,13 +33,14 @@ internal class Subagents(
         type: String,
         modelId: String?,
         reasoningEffort: ReasoningEffort?,
+        spawningRunSettings: RunSettings,
     ): ToolResult {
         val rejection = mutex.withLock { rejectSpawn(name, type, modelId) }
             ?: modelId?.let { client.spawnModelRejection(it) }?.let { ToolResult.Error(it) }
         return rejection ?: mutex.withLock {
             rejectSpawn(name, type, modelId) ?: run {
-                val child = parent.spawnChild(name, type, modelId, reasoningEffort)
-                children[name] = SpawnedChild(child.sessionId, type, modelId, reasoningEffort)
+                val child = parent.spawnChild(name, type, spawningRunSettings.pinnedBy(modelId, reasoningEffort))
+                children[name] = SpawnedChild(child.sessionId, type)
                 loaded[name] = child
                 ToolResult.Success("spawned subagent '$name'")
             }
@@ -72,7 +72,7 @@ internal class Subagents(
 
             message.isBlank() -> ToolResult.Error("the message to a subagent must not be blank.")
 
-            else -> promptChild(agent, child, name, message)
+            else -> promptChild(agent, name, message)
         }
     }
 
@@ -95,19 +95,15 @@ internal class Subagents(
         return agent
     }
 
-    private suspend fun promptChild(
-        agent: Agent,
-        child: SpawnedChild,
-        name: String,
-        message: String,
-    ): ToolResult = try {
-        parent.awaitingChildRun { settings ->
-            agent.send(message, settings.pinnedBy(child.modelId, child.reasoningEffort))
-        }.asToolResult(name)
-    } catch (cancellation: CancellationException) {
-        throw cancellation
-    } catch (_: IllegalStateException) {
-        ToolResult.Error("subagent '$name' is still working on an earlier prompt — try again once it finishes.")
+    private suspend fun promptChild(agent: Agent, name: String, message: String): ToolResult {
+        val settings = agent.runSettings()
+        return try {
+            parent.awaitingChildRun { agent.send(message, settings) }.asToolResult(name)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: IllegalStateException) {
+            ToolResult.Error("subagent '$name' is still working on an earlier prompt — try again once it finishes.")
+        }
     }
 
     private fun formatNames(): String =

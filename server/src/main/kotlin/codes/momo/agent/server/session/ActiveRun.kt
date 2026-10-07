@@ -79,9 +79,8 @@ internal class TreeMemberListener(
     }
 }
 
-internal fun SessionRegistry.loadRun(tree: SessionTree): ActiveRun {
+internal fun SessionRegistry.loadRun(tree: SessionTree, harness: Harness): ActiveRun {
     val started = store.readSessionStarted(tree.id)
-    val harness = Harness.load(Path.of(started.harnessFolder))
     val environment = ExecutionEnvironment(Path.of(started.workspace))
     val logs = ConcurrentHashMap<String, EventLogWriter>()
     val log = store.writer(tree.id).also { logs[tree.id] = it }

@@ -26,7 +26,7 @@ internal class WebSearchTool(spec: ToolSpec, private val client: AiRouterClient)
 ) {
 
     override suspend fun execute(args: WebSearchArgs, context: ToolContext): ToolResult {
-        val response = client.search.send(SearchRequest(SEARCH_MODEL, args.query, args.maxResults))
+        val response = client.search.send(SearchRequest(context.modelFor(spec), args.query, args.maxResults))
         val results = response.results.map { SearchResult(it.url, it.title, it.snippet) }
         return ToolResult.Success(webToolJson.encodeToString(SearchResults.serializer(), SearchResults(results)))
     }
@@ -37,8 +37,6 @@ private data class SearchResults(val results: List<SearchResult>)
 
 @Serializable
 private data class SearchResult(val url: String, val title: String, val snippet: String)
-
-private const val SEARCH_MODEL: String = "fast:cloud@exa"
 
 private val WEB_SEARCH_DESCRIPTION: String = """
     Searches the web. Returns results ordered by relevance.

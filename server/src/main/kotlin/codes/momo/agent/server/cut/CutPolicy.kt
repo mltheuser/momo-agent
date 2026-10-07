@@ -7,7 +7,7 @@ import kotlinx.serialization.serializer
 
 private val PRESERVED_EVENTS: List<PreservedEvent> = listOf(
     preservedEvent<AgentEvent.SessionRenamed>(),
-    preservedEvent<AgentEvent.ModelSelected>(),
+    preservedEvent<AgentEvent.SelectionChanged>(),
 )
 
 private class PreservedEvent(val storedType: String, val matches: (AgentEvent) -> Boolean)

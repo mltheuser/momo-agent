@@ -16,7 +16,15 @@ import kotlin.time.Duration
 class RewindPlanTest {
 
     private fun started(seq: Long, at: Long, id: String) =
-        AgentEvent.SessionStarted(seq, at, sessionId = id, title = id, harnessPath = null, workspace = "/work")
+        AgentEvent.SessionStarted(
+            seq,
+            at,
+            sessionId = id,
+            title = id,
+            harnessPath = null,
+            workspace = "/work",
+            settings = null
+        )
 
     private fun run(seq: Long, at: Long) = AgentEvent.RunStarted(seq, at, userMessage = "go", settings = SETTINGS)
 
@@ -31,7 +39,7 @@ class RewindPlanTest {
     )
 
     private fun spawned(seq: Long, at: Long, name: String, sessionId: String) =
-        AgentEvent.SubagentSpawned(seq, at, name, sessionId, type = "self", modelId = null)
+        AgentEvent.SubagentSpawned(seq, at, name, sessionId, type = "self")
 
     private fun promptCall(seq: Long, at: Long, callId: String, name: String) = AgentEvent.ToolCallStarted(
         sequenceId = seq,
@@ -220,4 +228,4 @@ class RewindPlanTest {
     }
 }
 
-private val SETTINGS = RunSettings("m", ReasoningEffort.NONE)
+private val SETTINGS = RunSettings("m", ReasoningEffort.NONE, emptyMap())

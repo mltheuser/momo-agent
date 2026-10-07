@@ -2,8 +2,9 @@ package codes.momo.agent.server
 
 import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.ChatSelection
 import codes.momo.agent.RunResult
-import codes.momo.agent.RunSettings
+import codes.momo.agent.SelectionPatch
 import codes.momo.agent.server.fixtures.liveHarness
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.rig.LiveServerProcess
@@ -13,7 +14,7 @@ import codes.momo.agent.server.rig.events
 import codes.momo.agent.server.rig.liveHttpClient
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.renameSession
-import codes.momo.agent.server.rig.selectModel
+import codes.momo.agent.server.rig.select
 import codes.momo.agent.server.rig.sessionInfo
 import codes.momo.agent.server.rig.sessions
 import codes.momo.agent.server.session.SessionStatus
@@ -76,9 +77,13 @@ private suspend fun HttpClient.readTheTokenAndDecorate(
     assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
     assertContains(assertNotNull(finished.finalMessage), TOKEN, ignoreCase = true)
     renameSession(id, KEPT_TITLE)
-    selectModel(id, PICKED)
+    select(id, SelectionPatch(chat = PICKED))
 
-    return FirstProcessOutcome(id, assertIs<AgentEvent.ModelSelected>(events(id).last()).sequenceId, finished.turnsUsed)
+    return FirstProcessOutcome(
+        id,
+        assertIs<AgentEvent.SelectionChanged>(events(id).last()).sequenceId,
+        finished.turnsUsed
+    )
 }
 
 private suspend fun HttpClient.recallTheToken(before: FirstProcessOutcome, workspace: String) {
@@ -91,7 +96,7 @@ private suspend fun HttpClient.recallTheToken(before: FirstProcessOutcome, works
     assertEquals(SessionStatus.IDLE, reloaded.status)
     assertEquals(before.turnsUsed, reloaded.lastRun?.turnsUsed)
     assertEquals(KEPT_TITLE, reloaded.title, "the title is derived from the stored log")
-    assertEquals(PICKED, reloaded.modelSelection, "the selection is derived from the stored log")
+    assertEquals(PICKED, reloaded.selection.chat, "the selection is derived from the stored log")
 
     prompt(before.id, "Remind me of the exact token you read — you already have it in this conversation.")
     val log = awaitRunEnd(before.id)
@@ -119,4 +124,4 @@ private const val TOKEN: String = "plugh-2860"
 
 private const val KEPT_TITLE: String = "Kept title"
 
-private val PICKED = RunSettings("picked-model", ReasoningEffort.HIGH)
+private val PICKED = ChatSelection("picked-model", ReasoningEffort.HIGH)

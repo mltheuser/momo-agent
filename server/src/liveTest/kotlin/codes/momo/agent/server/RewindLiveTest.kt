@@ -11,6 +11,7 @@ import codes.momo.agent.server.rig.events
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.rewindResponse
 import codes.momo.agent.server.rig.rewindSession
+import codes.momo.agent.server.rig.sessionInfo
 import codes.momo.agent.server.rig.withLiveServer
 import codes.momo.agent.server.session.SessionStatus
 import org.junit.jupiter.api.DisplayName
@@ -79,7 +80,7 @@ class RewindLiveTest {
         val rewound = http.rewindSession(id, runStart)
 
         assertEquals(SessionStatus.IDLE, rewound.session.status, "the next run loads the cut log")
-        assertNull(rewound.session.lastRun, "a log with no run has no consumption to report")
+        assertNull(http.sessionInfo(id).lastRun, "a log with no run has no consumption to report")
         assertEquals(listOf<AgentEvent>(started), http.events(id), "only the session_started is left")
 
         http.prompt(id, "List every passphrase I have asked you to remember in this conversation, verbatim.")

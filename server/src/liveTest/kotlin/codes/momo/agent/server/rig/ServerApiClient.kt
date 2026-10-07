@@ -2,6 +2,7 @@ package codes.momo.agent.server.rig
 
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunSettings
+import codes.momo.agent.SelectionPatch
 import codes.momo.agent.server.ApiError
 import codes.momo.agent.server.CreateSessionRequest
 import codes.momo.agent.server.PromptRequest
@@ -9,10 +10,10 @@ import codes.momo.agent.server.PutTemplateRequest
 import codes.momo.agent.server.RenameRequest
 import codes.momo.agent.server.RewindRequest
 import codes.momo.agent.server.RewindResponse
-import codes.momo.agent.server.SelectModelRequest
 import codes.momo.agent.server.TemplateResponse
 import codes.momo.agent.server.session.SessionInfo
 import codes.momo.agent.server.session.SessionStatus
+import codes.momo.agent.server.session.SessionSummary
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
@@ -66,7 +67,7 @@ internal suspend fun HttpClient.createSession(
     harnessPath: String,
     workspace: String,
     title: String? = null,
-): SessionInfo {
+): SessionSummary {
     val response = createSessionResponse(CreateSessionRequest(harnessPath, workspace, title))
     assertEquals(HttpStatusCode.Created, response.status, response.bodyAsText())
     return response.body()
@@ -87,7 +88,7 @@ internal suspend fun HttpClient.prompt(
     sessionId: String,
     prompt: String,
     settings: RunSettings = liveSettings,
-): SessionInfo {
+): SessionSummary {
     val response = promptResponse(sessionId, prompt, settings)
     assertEquals(HttpStatusCode.Accepted, response.status, response.bodyAsText())
     return response.body()
@@ -100,7 +101,7 @@ internal suspend fun HttpClient.promptResponse(
 ): HttpResponse =
     post("/v1/sessions/$sessionId/prompt") {
         contentType(ContentType.Application.Json)
-        setBody(PromptRequest(prompt, settings.model, settings.reasoningEffort))
+        setBody(PromptRequest(prompt, settings.model, settings.reasoningEffort, settings.toolModels))
     }
 
 internal suspend fun HttpClient.rawPromptResponse(sessionId: String, body: String): HttpResponse =
@@ -116,7 +117,7 @@ internal suspend fun HttpClient.sessionInfoResponse(sessionId: String, workspace
         if (workspace != null) parameter("workspace", workspace)
     }
 
-internal suspend fun HttpClient.sessions(workspace: String): List<SessionInfo> =
+internal suspend fun HttpClient.sessions(workspace: String): List<SessionSummary> =
     sessionsResponse(workspace).body()
 
 internal suspend fun HttpClient.sessionsResponse(workspace: String?): HttpResponse =
@@ -124,7 +125,7 @@ internal suspend fun HttpClient.sessionsResponse(workspace: String?): HttpRespon
         if (workspace != null) parameter("workspace", workspace)
     }
 
-internal suspend fun HttpClient.renameSession(sessionId: String, title: String): SessionInfo {
+internal suspend fun HttpClient.renameSession(sessionId: String, title: String): SessionSummary {
     val response = renameResponse(sessionId, title)
     assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
     return response.body()
@@ -136,20 +137,20 @@ internal suspend fun HttpClient.renameResponse(sessionId: String, title: String)
         setBody(RenameRequest(title))
     }
 
-internal suspend fun HttpClient.selectModel(sessionId: String, settings: RunSettings): SessionInfo {
-    val response = selectModelResponse(sessionId, settings)
+internal suspend fun HttpClient.select(sessionId: String, patch: SelectionPatch): SessionSummary {
+    val response = selectResponse(sessionId, patch)
     assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
     return response.body()
 }
 
-internal suspend fun HttpClient.selectModelResponse(sessionId: String, settings: RunSettings): HttpResponse =
-    post("/v1/sessions/$sessionId/select-model") {
+internal suspend fun HttpClient.selectResponse(sessionId: String, patch: SelectionPatch): HttpResponse =
+    post("/v1/sessions/$sessionId/select") {
         contentType(ContentType.Application.Json)
-        setBody(SelectModelRequest(settings.model, settings.reasoningEffort))
+        setBody(patch)
     }
 
-internal suspend fun HttpClient.rawSelectModelResponse(sessionId: String, body: String): HttpResponse =
-    post("/v1/sessions/$sessionId/select-model") {
+internal suspend fun HttpClient.rawSelectResponse(sessionId: String, body: String): HttpResponse =
+    post("/v1/sessions/$sessionId/select") {
         setBody(TextContent(body, ContentType.Application.Json))
     }
 
@@ -179,7 +180,7 @@ internal suspend fun HttpClient.deleteSession(sessionId: String) {
 
 internal suspend fun HttpClient.deleteResponse(sessionId: String): HttpResponse = delete("/v1/sessions/$sessionId")
 
-internal suspend fun HttpClient.retryRun(sessionId: String): SessionInfo {
+internal suspend fun HttpClient.retryRun(sessionId: String): SessionSummary {
     val response = retryResponse(sessionId)
     assertEquals(HttpStatusCode.Accepted, response.status, response.bodyAsText())
     return response.body()
@@ -192,6 +193,8 @@ internal suspend fun HttpClient.eventsResponse(sessionId: String): HttpResponse 
 internal suspend fun HttpClient.events(sessionId: String): List<AgentEvent> = eventsResponse(sessionId).body()
 
 internal suspend fun HttpClient.chatModelsResponse(): HttpResponse = get("/v1/chat/models")
+
+internal suspend fun HttpClient.toolModelsResponse(tool: String): HttpResponse = get("/v1/tools/$tool/models")
 
 internal suspend fun HttpClient.templateNames(): List<String> = get("/v1/templates").body()
 

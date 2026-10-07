@@ -2,9 +2,12 @@ package codes.momo.agent.internal
 
 import ai.router.sdk.chat.ChatMessage
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.RunSettings
+import codes.momo.agent.SessionSelection
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.HarnessValidationException
 import codes.momo.agent.harness.SUBAGENT_TOOL_NAMES
+import codes.momo.agent.selection
 import codes.momo.agent.subagent.SpawnedChild
 import java.util.UUID
 
@@ -22,10 +25,13 @@ internal sealed interface SessionState {
 
     val spawned: Map<String, SpawnedChild>
 
+    val selection: SessionSelection
+
     class Fresh(
         override val title: String,
         val parent: String? = null,
         override val depth: Int = 0,
+        val settings: RunSettings? = null,
     ) : SessionState {
 
         override val id: String = UUID.randomUUID().toString()
@@ -38,8 +44,13 @@ internal sealed interface SessionState {
 
         override val spawned: Map<String, SpawnedChild>
             get() = emptyMap()
+
+        // Emitting the session_started that carries [settings] selects them.
+        override val selection: SessionSelection
+            get() = SessionSelection.NONE
     }
 
+    @Suppress("LongParameterList") // One field per fact the log restores.
     class Restored(
         override val id: String,
         override val title: String,
@@ -47,6 +58,7 @@ internal sealed interface SessionState {
         override val nextSequenceId: Long,
         override val conversation: List<ChatMessage>,
         override val spawned: Map<String, SpawnedChild>,
+        override val selection: SessionSelection,
     ) : SessionState
 }
 
@@ -63,7 +75,8 @@ internal fun restoredSession(events: List<AgentEvent>, harness: Harness): Sessio
         conversation = conversationFrom(events),
 
         spawned = events.filterIsInstance<AgentEvent.SubagentSpawned>()
-            .associate { it.name to SpawnedChild(it.sessionId, it.type, it.modelId, it.reasoningEffort) },
+            .associate { it.name to SpawnedChild(it.sessionId, it.type) },
+        selection = events.selection(),
     )
 }
 

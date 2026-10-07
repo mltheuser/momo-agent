@@ -1,7 +1,9 @@
 package codes.momo.agent.harness
 
+import codes.momo.agent.RunSettings
 import codes.momo.agent.tool.ToolCatalog
 import java.nio.file.Path
+import java.util.Collections
 import java.util.IdentityHashMap
 
 public class Harness internal constructor(
@@ -67,17 +69,25 @@ public class Harness internal constructor(
 
     /** The tools taking a model anywhere in this harness's tree (it and every reachable subagent), in catalog order. */
     public fun toolsWithModel(): List<String> {
-        val visited = IdentityHashMap<Harness, Unit>()
+        val visited: MutableSet<Harness> = Collections.newSetFromMap(IdentityHashMap())
         val pending = ArrayDeque(listOf(this))
         val used = mutableSetOf<String>()
         while (pending.isNotEmpty()) {
             val harness = pending.removeFirst()
-            if (visited.put(harness, Unit) == null) {
+            if (visited.add(harness)) {
                 used += harness.tools
                 pending += harness.subagents.values.map { it.harness }
             }
         }
         return ToolCatalog.listable.filter { it.modelSource != null && it.name in used }.map { it.name }
+    }
+
+    /** Throws unless [settings] name a model for every tool in [toolsWithModel]; more entries are fine. */
+    public fun requireToolModels(settings: RunSettings) {
+        val missing = toolsWithModel().filterNot { it in settings.toolModels }
+        if (missing.isNotEmpty()) {
+            throw MissingToolModelException(missing)
+        }
     }
 
     public companion object {

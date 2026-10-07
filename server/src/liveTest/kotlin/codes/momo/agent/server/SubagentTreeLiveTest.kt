@@ -2,7 +2,9 @@ package codes.momo.agent.server
 
 import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.ChatSelection
 import codes.momo.agent.RunResult
+import codes.momo.agent.SelectionPatch
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
 import codes.momo.agent.server.rig.awaitLogged
@@ -13,11 +15,13 @@ import codes.momo.agent.server.rig.liveSettings
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.renameSession
 import codes.momo.agent.server.rig.rewindSession
+import codes.momo.agent.server.rig.select
 import codes.momo.agent.server.rig.sessionInfo
 import codes.momo.agent.server.rig.sessionInfoResponse
 import codes.momo.agent.server.rig.sessions
 import codes.momo.agent.server.rig.stopResponse
 import codes.momo.agent.server.rig.withLiveServer
+import codes.momo.agent.server.session.ParentSession
 import codes.momo.agent.server.session.SessionStatus
 import io.ktor.client.HttpClient
 import io.ktor.http.HttpStatusCode
@@ -63,22 +67,25 @@ class SubagentTreeLiveTest {
         val spawn = spawns.first()
         assertEquals(ORACLE_TYPE, spawn.type)
 
+        val workspace = http.sessionInfo(root.id).workspace
         val child = http.sessionInfo(spawn.sessionId)
-        assertEquals(root.id, child.parent, "the child names its parent")
+        assertEquals(ParentSession(root.id, root.title), child.parent, "the child names its parent")
         assertEquals(oracle.toRealPath().toString(), child.harnessPath, "a typed child runs the referenced folder")
-        assertEquals(root.workspace, child.workspace, "the child works in its root's workspace")
-        assertEquals(liveSettings, child.modelSelection, "an unpinned child ran with its parent's settings")
+        assertEquals(workspace, child.workspace, "the child works in its root's workspace")
+        val childLog = http.events(spawn.sessionId)
+        assertEquals(liveSettings, assertIs<AgentEvent.SessionStarted>(childLog.first()).settings, "the spawn copy")
+        assertEquals(liveSettings, childLog.filterIsInstance<AgentEvent.RunStarted>().single().settings)
+        assertEquals(liveSettings, child.selection.runSettings(), "an unpinned child ran with its parent's settings")
         assertEquals(SessionStatus.IDLE, child.status)
         val spare = http.sessionInfo(spawns.last().sessionId)
-        assertEquals(0, http.events(spare.id).count { it is AgentEvent.RunStarted }, "the spare was never prompted")
-        assertEquals(
-            liveSettings.copy(reasoningEffort = ReasoningEffort.NONE),
-            spare.modelSelection,
-            "a child that never ran shows its parent's settings under its spawn pins",
-        )
+        val spareLog = http.events(spare.id)
+        assertEquals(0, spareLog.count { it is AgentEvent.RunStarted }, "the spare was never prompted")
+        val pinned = liveSettings.copy(reasoningEffort = ReasoningEffort.NONE)
+        assertEquals(pinned, assertIs<AgentEvent.SessionStarted>(spareLog.first()).settings, "pinned at spawn")
+        assertEquals(pinned, spare.selection.runSettings(), "a child that never ran shows its spawn-time settings")
         assertEquals(
             listOf(root.id),
-            http.sessions(root.workspace).map { it.id }.filter { it in setOf(root.id, spawn.sessionId, spare.id) },
+            http.sessions(workspace).map { it.id }.filter { it in setOf(root.id, spawn.sessionId, spare.id) },
             "the listing holds roots only: a child is reached through its parent's log",
         )
 
@@ -104,7 +111,10 @@ class SubagentTreeLiveTest {
     }
 
     @Test
-    @DisplayName("Stopping the parent stops the child's run too: both end stopped and idle, and the worker carries on")
+    @DisplayName(
+        "Stopping the parent stops the child's run too: both end stopped and idle, and the worker carries on " +
+            "under the selection picked in its own session",
+    )
     fun stoppingTheParentCascadesAsAStop() = withLiveServer { http ->
         val (rootId, childId) = http.workerInFlight(tempDir)
 
@@ -123,7 +133,18 @@ class SubagentTreeLiveTest {
         assertEquals(SessionStatus.IDLE, http.sessionInfo(rootId).status)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(childId).status)
 
+        val picked = ChatSelection(liveSettings.model, ReasoningEffort.NONE)
+        http.select(childId, SelectionPatch(chat = picked))
         http.continueThroughTheWorker(rootId, childId)
+        val runs = http.events(childId).filterIsInstance<AgentEvent.RunStarted>()
+        assertEquals(liveSettings.reasoningEffort, runs.first().settings.reasoningEffort, "spawned with the parent's")
+        assertEquals(
+            liveSettings.copy(reasoningEffort = ReasoningEffort.NONE),
+            runs.last().settings,
+            "the parent's prompt ran the worker under the worker's own pick, not the parent's settings",
+        )
+        val rootRun = http.events(rootId).filterIsInstance<AgentEvent.RunStarted>().last()
+        assertEquals(liveSettings, rootRun.settings, "the parent itself kept its own")
     }
 
     @Test

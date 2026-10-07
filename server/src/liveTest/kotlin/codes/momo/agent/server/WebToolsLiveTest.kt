@@ -6,6 +6,7 @@ import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
 import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.createSession
+import codes.momo.agent.server.rig.liveSettings
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.withLiveServer
 import kotlinx.serialization.json.Json
@@ -31,7 +32,10 @@ class WebToolsLiveTest {
     lateinit var tempDir: Path
 
     @Test
-    @DisplayName("web_search finds the RFC, page_contents saves it to a file with its outline, bash reads the file")
+    @DisplayName(
+        "web_search finds the RFC on the picked search model, page_contents saves it to a file with its outline, " +
+            "bash reads the file"
+    )
     fun searchLoadAndRead() = withLiveServer { http ->
         // The file name hashes the page, so a file left by an earlier run would be kept, not written.
         File(PAGE_DIR).listFiles { file -> file.name.startsWith(PAGE_FILE_PREFIX) }?.forEach { it.delete() }
@@ -43,11 +47,17 @@ class WebToolsLiveTest {
         ).toString()
         val id = http.createSession(harness, localWorkspace(tempDir)).id
 
-        http.prompt(id, PROMPT)
+        val settings = liveSettings.copy(toolModels = liveSettings.toolModels + ("web_search" to SEARCH_MODEL))
+        http.prompt(id, PROMPT, settings)
 
         val events = http.awaitRunEnd(id)
         val finished = assertIs<AgentEvent.RunFinished>(events.last())
         assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
+        assertEquals(
+            SEARCH_MODEL,
+            events.filterIsInstance<AgentEvent.RunStarted>().single().settings.toolModels["web_search"],
+            "the run records the non-default search model it ran with",
+        )
         assertContains(
             events.resultsOf("web_search").joinToString("\n"),
             "rfc9110",
@@ -94,6 +104,8 @@ private fun List<AgentEvent>.resultsOf(toolName: String): List<String> {
 }
 
 private fun JsonObject.string(key: String): String? = get(key)?.jsonPrimitive?.content
+
+private const val SEARCH_MODEL: String = "instant:cloud@exa"
 
 private const val PAGE_DIR: String = "/tmp/momo-web"
 

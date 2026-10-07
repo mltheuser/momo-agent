@@ -24,7 +24,7 @@ internal class PageContentsTool(spec: ToolSpec, private val client: AiRouterClie
 ) {
 
     override suspend fun execute(args: PageContentsArgs, context: ToolContext): ToolResult {
-        val response = client.contents.send(ContentsRequest(CONTENTS_MODEL, args.urls))
+        val response = client.contents.send(ContentsRequest(context.modelFor(spec), args.urls))
         val pages = response.results.map { load(it) }
         return ToolResult.Success(webToolJson.encodeToString(Pages.serializer(), Pages(pages)))
     }
@@ -69,8 +69,6 @@ private data class Page(
     @SerialName("outline_note") val outlineNote: String? = null,
     val error: String? = null,
 )
-
-private const val CONTENTS_MODEL: String = "auto:cloud@exa"
 
 private val PAGE_CONTENTS_DESCRIPTION: String = """
     Extracts content from web pages as markdown and saves each result as a text file.

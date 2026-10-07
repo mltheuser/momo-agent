@@ -5,7 +5,6 @@ import ai.router.sdk.chat.ChatMessage
 import ai.router.sdk.chat.ChatRequest
 import ai.router.sdk.chat.ChatResponse
 import ai.router.sdk.chat.ChatUsage
-import ai.router.sdk.chat.ReasoningEffort
 import ai.router.sdk.chat.ToolCall
 import ai.router.sdk.chat.ToolDefinition
 import codes.momo.agent.content.ModelContent
@@ -91,7 +90,7 @@ public class Agent internal constructor(
     public val isRunning: Boolean
         get() = running.get()
 
-    private val emitter = AgentEventEmitter(eventListener, session.nextSequenceId)
+    private val emitter = AgentEventEmitter(eventListener, session.nextSequenceId, session.selection)
 
     public val sessionId: String = session.id
 
@@ -101,8 +100,12 @@ public class Agent internal constructor(
             emitter.emit { id, at -> AgentEvent.SessionRenamed(id, at, value) }
         }
 
-    public fun recordModelSelection(settings: RunSettings) {
-        emitter.emit { id, at -> AgentEvent.ModelSelected(id, at, settings) }
+    public fun recordSelection(patch: SelectionPatch) {
+        emitter.emit { id, at -> AgentEvent.SelectionChanged(id, at, patch) }
+    }
+
+    internal fun runSettings(): RunSettings = checkNotNull(emitter.selection.runSettings()) {
+        "session $sessionId has no chat model selected; only a root can lack one."
     }
 
     private val history: MutableList<ChatMessage> = mutableListOf<ChatMessage>().apply {
@@ -125,6 +128,7 @@ public class Agent internal constructor(
                     workspace = environment.workspacePath,
                     parent = session.parent,
                     depth = depth,
+                    settings = session.settings,
                 )
             }
         }
@@ -322,16 +326,13 @@ public class Agent internal constructor(
     internal fun spawnChild(
         name: String,
         type: String,
-        modelId: String?,
-        reasoningEffort: ReasoningEffort?,
+        settings: RunSettings,
     ): Agent {
         val childHarness = harness.subagents.getValue(type).harness
-        val session = SessionState.Fresh(title = name, parent = sessionId, depth = depth + 1)
+        val session = SessionState.Fresh(title = name, parent = sessionId, depth = depth + 1, settings = settings)
 
         val listener = eventListener.subagentListener(name, session.id)
-        emitter.emit { id, at ->
-            AgentEvent.SubagentSpawned(id, at, name, session.id, type, modelId, reasoningEffort)
-        }
+        emitter.emit { id, at -> AgentEvent.SubagentSpawned(id, at, name, session.id, type) }
         return Agent(
             harness = childHarness,
             client = client,
@@ -366,11 +367,11 @@ public class Agent internal constructor(
         )
     }
 
-    internal suspend fun <T> awaitingChildRun(block: suspend (RunSettings) -> T): T {
+    internal suspend fun <T> awaitingChildRun(block: suspend () -> T): T {
         val active = checkNotNull(currentRun) { "a child can only be awaited from within a run." }
         val blockedSince = TimeSource.Monotonic.markNow()
         try {
-            return block(active.settings)
+            return block()
         } finally {
             active.blocked += blockedSince.elapsedNow()
         }
