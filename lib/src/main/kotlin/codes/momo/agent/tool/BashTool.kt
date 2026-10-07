@@ -2,7 +2,6 @@ package codes.momo.agent.tool
 
 import ai.router.sdk.schema.Description
 import codes.momo.agent.environment.ExecResult
-import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.environment.Privilege
 import kotlinx.serialization.Serializable
 
@@ -12,14 +11,14 @@ internal data class BashArgs(
     val command: String,
 )
 
-internal class BashTool(workspacePath: String, privilege: Privilege) : Tool<BashArgs>(
-    name = "bash",
+internal class BashTool(spec: ToolSpec, workspacePath: String, privilege: Privilege) : Tool<BashArgs>(
+    spec = spec,
     description = bashDescription(workspacePath, privilege),
     argsSerializer = BashArgs.serializer(),
 ) {
 
-    override suspend fun execute(args: BashArgs, environment: ExecutionEnvironment): ToolResult {
-        val result = environment.exec(listOf("bash", "-c", args.command), timeout = TOOL_TIMEOUT)
+    override suspend fun execute(args: BashArgs, context: ToolContext): ToolResult {
+        val result = context.environment.exec(listOf("bash", "-c", args.command), timeout = TOOL_TIMEOUT)
         return when (result) {
             is ExecResult.Completed ->
                 ToolResult.Success("exit code: ${result.exitCode}\n" + result.formatStreams())

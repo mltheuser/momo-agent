@@ -3,9 +3,10 @@ package codes.momo.agent.web
 import ai.router.sdk.AiRouterClient
 import ai.router.sdk.schema.Description
 import ai.router.sdk.search.SearchRequest
-import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.tool.Tool
+import codes.momo.agent.tool.ToolContext
 import codes.momo.agent.tool.ToolResult
+import codes.momo.agent.tool.ToolSpec
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -18,13 +19,13 @@ internal data class WebSearchArgs(
     val maxResults: Int? = null,
 )
 
-internal class WebSearchTool(private val client: AiRouterClient) : Tool<WebSearchArgs>(
-    name = "web_search",
+internal class WebSearchTool(spec: ToolSpec, private val client: AiRouterClient) : Tool<WebSearchArgs>(
+    spec = spec,
     description = WEB_SEARCH_DESCRIPTION,
     argsSerializer = WebSearchArgs.serializer(),
 ) {
 
-    override suspend fun execute(args: WebSearchArgs, environment: ExecutionEnvironment): ToolResult {
+    override suspend fun execute(args: WebSearchArgs, context: ToolContext): ToolResult {
         val response = client.search.send(SearchRequest(SEARCH_MODEL, args.query, args.maxResults))
         val results = response.results.map { SearchResult(it.url, it.title, it.snippet) }
         return ToolResult.Success(webToolJson.encodeToString(SearchResults.serializer(), SearchResults(results)))

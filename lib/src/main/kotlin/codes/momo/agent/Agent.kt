@@ -31,6 +31,8 @@ import codes.momo.agent.internal.unansweredToolCalls
 import codes.momo.agent.internal.userMessage
 import codes.momo.agent.subagent.Subagents
 import codes.momo.agent.tool.TOOL_TIMEOUT
+import codes.momo.agent.tool.ToolContext
+import codes.momo.agent.tool.ToolDependencies
 import codes.momo.agent.tool.ToolRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
@@ -71,9 +73,9 @@ public class Agent internal constructor(
     private val toolDefinitions: List<ToolDefinition>
 
     init {
-        val coreRegistry =
-            coreToolRegistry(environment.workspacePath, environment.privilege, subagents, harness.subagents, client)
-        harness.requireToolsKnown(coreRegistry.names)
+        val coreRegistry = coreToolRegistry(
+            ToolDependencies(environment.workspacePath, environment.privilege, client, subagents, harness.subagents),
+        )
 
         val offered = if (harness.subagents.isNotEmpty() && depth < RunBudgets.MAX_SUBAGENT_DEPTH) {
             harness.tools + SUBAGENT_TOOL_NAMES
@@ -299,7 +301,8 @@ public class Agent internal constructor(
             AgentEvent.ToolCallStarted(id, at, call.id, call.function.name, call.function.arguments)
         }
         val timeout = minOf(TOOL_TIMEOUT, run.remaining.coerceAtLeast(Duration.ZERO))
-        val execution = registry.execute(call.function.name, call.function.arguments, environment, timeout)
+        val context = ToolContext(environment, run.settings)
+        val execution = registry.execute(call.function.name, call.function.arguments, context, timeout)
         val media = execution.content.asLoggedMedia
         history += toolResultMessage(call.id, execution.content.asText, media)
         run.events += emitter.emit { id, at ->

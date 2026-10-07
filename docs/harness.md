@@ -28,6 +28,8 @@ subagents:
 
 Unknown keys are rejected (kaml strict mode). Declaring `subagents` automatically adds the `spawn_subagent` and `prompt_subagent` tools.
 
+`tools` names any of `bash`, `view_image`, `web_search`, `page_contents`. Loading a harness loads its whole subagent tree and checks every harness in it; one broken harness rejects the load.
+
 ## What a harness does not control
 
 - The model and reasoning effort: set per prompt.

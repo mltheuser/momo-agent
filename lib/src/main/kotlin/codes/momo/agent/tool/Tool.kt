@@ -2,42 +2,39 @@ package codes.momo.agent.tool
 
 import ai.router.sdk.chat.ToolDefinition
 import ai.router.sdk.schema.SchemaGenerator
-import codes.momo.agent.environment.ExecutionEnvironment
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
 internal abstract class Tool<A : Any>(
 
-    val name: String,
+    val spec: ToolSpec,
     description: String,
     private val argsSerializer: KSerializer<A>,
 ) {
 
-    init {
-        require(name.isNotBlank()) { "Tool name must not be blank." }
-        require(name.none { it.isWhitespace() }) { "Tool name must not contain whitespace: '$name'." }
-    }
+    val name: String
+        get() = spec.name
 
     open val timeoutExempt: Boolean = false
 
     open val maxResultChars: Int = ToolRegistry.MAX_RESULT_CHARS
 
     val definition: ToolDefinition = ToolDefinition(
-        name = name,
+        name = spec.name,
         description = description,
         parameters = SchemaGenerator.generate(argsSerializer.descriptor),
     )
 
     fun bind(
         arguments: JsonObject,
-        environment: ExecutionEnvironment,
+        context: ToolContext,
     ): suspend () -> ToolResult {
         val decoded = toolArgumentsJson.decodeFromJsonElement(argsSerializer, arguments)
-        return { execute(decoded, environment) }
+        return { execute(decoded, context) }
     }
 
-    abstract suspend fun execute(args: A, environment: ExecutionEnvironment): ToolResult
+    abstract suspend fun execute(args: A, context: ToolContext): ToolResult
 }
 
 private val toolArgumentsJson: Json = Json { ignoreUnknownKeys = true }

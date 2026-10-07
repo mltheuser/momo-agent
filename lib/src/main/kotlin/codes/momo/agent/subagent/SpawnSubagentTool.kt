@@ -2,11 +2,11 @@ package codes.momo.agent.subagent
 
 import ai.router.sdk.chat.ReasoningEffort
 import ai.router.sdk.schema.Description
-import codes.momo.agent.environment.ExecutionEnvironment
-import codes.momo.agent.harness.SPAWN_SUBAGENT_TOOL
 import codes.momo.agent.harness.SubagentType
 import codes.momo.agent.tool.Tool
+import codes.momo.agent.tool.ToolContext
 import codes.momo.agent.tool.ToolResult
+import codes.momo.agent.tool.ToolSpec
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -31,15 +31,16 @@ internal data class SpawnSubagentArgs(
 )
 
 internal class SpawnSubagentTool(
+    spec: ToolSpec,
     private val subagents: Subagents,
     subagentTypes: Map<String, SubagentType>,
 ) : Tool<SpawnSubagentArgs>(
-    name = SPAWN_SUBAGENT_TOOL,
+    spec = spec,
     description = spawnSubagentDescription(subagentTypes),
     argsSerializer = SpawnSubagentArgs.serializer(),
 ) {
 
-    override suspend fun execute(args: SpawnSubagentArgs, environment: ExecutionEnvironment): ToolResult =
+    override suspend fun execute(args: SpawnSubagentArgs, context: ToolContext): ToolResult =
         subagents.spawn(args.name, args.type, args.modelId, args.reasoningEffort)
 }
 

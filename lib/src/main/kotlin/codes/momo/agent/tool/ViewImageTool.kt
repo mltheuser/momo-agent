@@ -2,7 +2,6 @@ package codes.momo.agent.tool
 
 import ai.router.sdk.schema.Description
 import codes.momo.agent.content.ModelContent
-import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.image.LoadedImage
 import codes.momo.agent.image.loadImage
 import kotlinx.serialization.Serializable
@@ -13,24 +12,19 @@ internal data class ViewImageArgs(
     val source: String,
 )
 
-internal class ViewImageTool : Tool<ViewImageArgs>(
-    name = NAME,
+internal class ViewImageTool(spec: ToolSpec) : Tool<ViewImageArgs>(
+    spec = spec,
     description = VIEW_IMAGE_DESCRIPTION,
     argsSerializer = ViewImageArgs.serializer(),
 ) {
 
     override val maxResultChars: Int = MAX_RESULT_CHARS
 
-    override suspend fun execute(args: ViewImageArgs, environment: ExecutionEnvironment): ToolResult =
-        when (val loaded = loadImage(args.source, environment.workspacePath, maxResultChars)) {
+    override suspend fun execute(args: ViewImageArgs, context: ToolContext): ToolResult =
+        when (val loaded = loadImage(args.source, context.environment.workspacePath, maxResultChars)) {
             is LoadedImage.Failed -> ToolResult.Error("cannot view '${args.source}': ${loaded.problem}.")
             is LoadedImage.Loaded -> ToolResult.Success(loaded.image)
         }
-
-    companion object {
-
-        const val NAME: String = "view_image"
-    }
 }
 
 private const val MAX_IMAGE_BYTES: Int = 5 * 1024 * 1024

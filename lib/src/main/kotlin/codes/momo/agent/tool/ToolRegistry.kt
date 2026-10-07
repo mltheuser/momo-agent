@@ -3,7 +3,6 @@ package codes.momo.agent.tool
 import ai.router.sdk.chat.ToolDefinition
 import codes.momo.agent.AgentEvent.ToolCallFinished.Outcome
 import codes.momo.agent.content.ModelContent
-import codes.momo.agent.environment.ExecutionEnvironment
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
@@ -39,14 +38,14 @@ public class ToolRegistry internal constructor(tools: List<Tool<*>>) {
     internal suspend fun execute(
         name: String,
         arguments: JsonObject,
-        environment: ExecutionEnvironment,
+        context: ToolContext,
         timeout: Duration = TOOL_TIMEOUT,
     ): ToolExecution {
         val start = TimeSource.Monotonic.markNow()
         val tool = toolsByName[name]
         val result = when (tool) {
             null -> ToolResult.Error(unknownToolMessage(name))
-            else -> dispatch(tool, arguments, environment, timeout)
+            else -> dispatch(tool, arguments, context, timeout)
         }
         val maxChars = tool?.maxResultChars ?: MAX_RESULT_CHARS
         return ToolExecution(
@@ -60,11 +59,11 @@ public class ToolRegistry internal constructor(tools: List<Tool<*>>) {
     private suspend fun dispatch(
         tool: Tool<*>,
         arguments: JsonObject,
-        environment: ExecutionEnvironment,
+        context: ToolContext,
         timeout: Duration,
     ): ToolResult {
         val invocation = try {
-            tool.bind(arguments, environment)
+            tool.bind(arguments, context)
         } catch (@Suppress("TooGenericExceptionCaught") exception: Exception) {
             return invalidArgumentsError(tool, exception)
         }

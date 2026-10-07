@@ -4,9 +4,10 @@ import ai.router.sdk.AiRouterClient
 import ai.router.sdk.contents.ContentsRequest
 import ai.router.sdk.contents.ContentsResult
 import ai.router.sdk.schema.Description
-import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.tool.Tool
+import codes.momo.agent.tool.ToolContext
 import codes.momo.agent.tool.ToolResult
+import codes.momo.agent.tool.ToolSpec
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -16,13 +17,13 @@ internal data class PageContentsArgs(
     val urls: List<String>,
 )
 
-internal class PageContentsTool(private val client: AiRouterClient) : Tool<PageContentsArgs>(
-    name = "page_contents",
+internal class PageContentsTool(spec: ToolSpec, private val client: AiRouterClient) : Tool<PageContentsArgs>(
+    spec = spec,
     description = PAGE_CONTENTS_DESCRIPTION,
     argsSerializer = PageContentsArgs.serializer(),
 ) {
 
-    override suspend fun execute(args: PageContentsArgs, environment: ExecutionEnvironment): ToolResult {
+    override suspend fun execute(args: PageContentsArgs, context: ToolContext): ToolResult {
         val response = client.contents.send(ContentsRequest(CONTENTS_MODEL, args.urls))
         val pages = response.results.map { load(it) }
         return ToolResult.Success(webToolJson.encodeToString(Pages.serializer(), Pages(pages)))

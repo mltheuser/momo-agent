@@ -1,6 +1,8 @@
 package codes.momo.agent.harness
 
+import codes.momo.agent.tool.ToolCatalog
 import java.nio.file.Path
+import java.util.IdentityHashMap
 
 public class Harness internal constructor(
 
@@ -40,6 +42,13 @@ public class Harness internal constructor(
                     "not listed in 'tools' but offered to a harness that declares a 'subagents' map.",
             )
         }
+        val unknown = tools.filter { ToolCatalog.listed(it) == null }
+        if (unknown.isNotEmpty()) {
+            fail(
+                "'tools' names unknown tools: ${unknown.joinToString(", ")}. " +
+                    "Available tools: ${ToolCatalog.listable.joinToString(", ") { it.name }}.",
+            )
+        }
     }
 
     private fun validateSubagents() {
@@ -56,18 +65,20 @@ public class Harness internal constructor(
         }
     }
 
-    internal fun requireToolsKnown(knownTools: Set<String>) {
-        val unknown = tools.filterNot { it in knownTools }
-        if (unknown.isNotEmpty()) {
-            fail(
-                "Harness uses unknown tools: ${unknown.joinToString(", ")}. " +
-                    "Available tools: ${formatKnownTools(knownTools)}.",
-            )
+    /** The tools taking a model anywhere in this harness's tree (it and every reachable subagent), in catalog order. */
+    public fun toolsWithModel(): List<String> {
+        val visited = IdentityHashMap<Harness, Unit>()
+        val pending = ArrayDeque(listOf(this))
+        val used = mutableSetOf<String>()
+        while (pending.isNotEmpty()) {
+            val harness = pending.removeFirst()
+            if (visited.put(harness, Unit) == null) {
+                used += harness.tools
+                pending += harness.subagents.values.map { it.harness }
+            }
         }
+        return ToolCatalog.listable.filter { it.modelSource != null && it.name in used }.map { it.name }
     }
-
-    private fun formatKnownTools(knownTools: Set<String>): String =
-        if (knownTools.isEmpty()) "(none)" else knownTools.sorted().joinToString(", ")
 
     public companion object {
 

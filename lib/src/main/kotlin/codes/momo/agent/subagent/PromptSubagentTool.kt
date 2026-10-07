@@ -1,10 +1,10 @@
 package codes.momo.agent.subagent
 
 import ai.router.sdk.schema.Description
-import codes.momo.agent.environment.ExecutionEnvironment
-import codes.momo.agent.harness.PROMPT_SUBAGENT_TOOL
 import codes.momo.agent.tool.Tool
+import codes.momo.agent.tool.ToolContext
 import codes.momo.agent.tool.ToolResult
+import codes.momo.agent.tool.ToolSpec
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -16,16 +16,17 @@ internal data class PromptSubagentArgs(
 )
 
 internal class PromptSubagentTool(
+    spec: ToolSpec,
     private val subagents: Subagents,
 ) : Tool<PromptSubagentArgs>(
-    name = PROMPT_SUBAGENT_TOOL,
+    spec = spec,
     description = PROMPT_SUBAGENT_DESCRIPTION,
     argsSerializer = PromptSubagentArgs.serializer(),
 ) {
 
     override val timeoutExempt: Boolean = true
 
-    override suspend fun execute(args: PromptSubagentArgs, environment: ExecutionEnvironment): ToolResult =
+    override suspend fun execute(args: PromptSubagentArgs, context: ToolContext): ToolResult =
         subagents.prompt(args.name, args.message)
 }
 
