@@ -105,7 +105,7 @@ private fun List<AgentEvent>.resultsOf(toolName: String): List<String> {
 
 private fun JsonObject.string(key: String): String? = get(key)?.jsonPrimitive?.content
 
-private const val SEARCH_MODEL: String = "instant:cloud@exa"
+private const val SEARCH_MODEL: String = "auto:cloud@exa"
 
 private const val PAGE_DIR: String = "/tmp/momo-web"
 

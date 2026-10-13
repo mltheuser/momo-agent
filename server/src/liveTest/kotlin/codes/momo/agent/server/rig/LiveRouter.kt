@@ -19,7 +19,7 @@ internal val liveBaseUrl: String
 
 /** What every live prompt runs with unless a test says otherwise; its tool models cover every harness's tools. */
 internal val liveSettings: RunSettings = RunSettings(
-    "claude-sonnet-5:cloud@anthropic",
+    "claude-sonnet-5-5:cloud@anthropic",
     ReasoningEffort.LOW,
     mapOf("web_search" to "fast:cloud@exa", "page_contents" to "auto:cloud@exa"),
 )

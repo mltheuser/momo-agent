@@ -57,7 +57,7 @@ class ToolModelsLiveTest {
             .assertRejected("missing_tool_model", "a prompt without a page_contents model", names = "page_contents")
         assertEquals(before, http.events(id), "a refused prompt leaves the log as it was")
 
-        http.select(id, SelectionPatch(toolModels = mapOf("web_search" to SEARCH_INSTANT)))
+        http.select(id, SelectionPatch(toolModels = mapOf("web_search" to SEARCH_FAST)))
         http.select(id, SelectionPatch(toolModels = mapOf("page_contents" to CONTENTS_AUTO)))
         assertEquals(
             SessionSelection(chat = null, toolModels = TOOL_MODELS),
@@ -80,7 +80,7 @@ class ToolModelsLiveTest {
         val response = http.toolModelsResponse("web_search")
         assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
         assertContains(response.bodyAsText(), "\"provider_type\"", message = "the router's own snake_case shape")
-        assertContains(response.body<ModelList<SearchModel>>().data.map { it.model }, SEARCH_INSTANT)
+        assertContains(response.body<ModelList<SearchModel>>().data.map { it.model }, SEARCH_FAST)
         assertEquals(HttpStatusCode.OK, http.toolModelsResponse("page_contents").status)
 
         listOf("bash", "no_such_tool").forEach { tool ->
@@ -99,10 +99,8 @@ class ToolModelsLiveTest {
     }
 }
 
-private val TOOL_MODELS: Map<String, String> = mapOf("web_search" to SEARCH_INSTANT, "page_contents" to CONTENTS_AUTO)
+private val TOOL_MODELS: Map<String, String> = mapOf("web_search" to SEARCH_FAST, "page_contents" to CONTENTS_AUTO)
 
 private const val SEARCH_FAST: String = "fast:cloud@exa"
-
-private const val SEARCH_INSTANT: String = "instant:cloud@exa"
 
 private const val CONTENTS_AUTO: String = "auto:cloud@exa"

@@ -38,11 +38,11 @@ class SelectionTest {
     fun picksMergeOverTheSpawnCopy() {
         val log = listOf(
             started(RunSettings("m", ReasoningEffort.LOW, mapOf(SEARCH to FAST, CONTENTS to AUTO))),
-            picked(1, SelectionPatch(toolModels = mapOf(SEARCH to INSTANT))),
+            picked(1, SelectionPatch(toolModels = mapOf(SEARCH to DEEP))),
             picked(2, SelectionPatch(chat = ChatSelection("n", ReasoningEffort.HIGH))),
         )
         assertEquals(
-            RunSettings("n", ReasoningEffort.HIGH, mapOf(SEARCH to INSTANT, CONTENTS to AUTO)),
+            RunSettings("n", ReasoningEffort.HIGH, mapOf(SEARCH to DEEP, CONTENTS to AUTO)),
             log.selection().runSettings(),
         )
     }
@@ -67,14 +67,14 @@ class SelectionTest {
         val log = listOf(
             started(null),
             ran(1, RunSettings("m", ReasoningEffort.LOW, mapOf(SEARCH to FAST))),
-            picked(9, SelectionPatch(toolModels = mapOf(SEARCH to INSTANT))),
+            picked(9, SelectionPatch(toolModels = mapOf(SEARCH to DEEP))),
         )
-        assertEquals(mapOf(SEARCH to INSTANT), log.selection().toolModels)
+        assertEquals(mapOf(SEARCH to DEEP), log.selection().toolModels)
     }
 }
 
 private const val SEARCH = "web_search"
 private const val CONTENTS = "page_contents"
 private const val FAST = "fast:cloud@exa"
-private const val INSTANT = "instant:cloud@exa"
+private const val DEEP = "deep:cloud@exa"
 private const val AUTO = "auto:cloud@exa"
