@@ -80,7 +80,7 @@ class SubagentTreeLiveTest {
         val spare = http.sessionInfo(spawns.last().sessionId)
         val spareLog = http.events(spare.id)
         assertEquals(0, spareLog.count { it is AgentEvent.RunStarted }, "the spare was never prompted")
-        val pinned = liveSettings.copy(reasoningEffort = ReasoningEffort.NONE)
+        val pinned = liveSettings.copy(reasoningEffort = ReasoningEffort.MEDIUM)
         assertEquals(pinned, assertIs<AgentEvent.SessionStarted>(spareLog.first()).settings, "pinned at spawn")
         assertEquals(pinned, spare.selection.runSettings(), "a child that never ran shows its spawn-time settings")
         assertEquals(
@@ -133,13 +133,13 @@ class SubagentTreeLiveTest {
         assertEquals(SessionStatus.IDLE, http.sessionInfo(rootId).status)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(childId).status)
 
-        val picked = ChatSelection(liveSettings.model, ReasoningEffort.NONE)
+        val picked = ChatSelection(liveSettings.model, ReasoningEffort.MEDIUM)
         http.select(childId, SelectionPatch(chat = picked))
         http.continueThroughTheWorker(rootId, childId)
         val runs = http.events(childId).filterIsInstance<AgentEvent.RunStarted>()
         assertEquals(liveSettings.reasoningEffort, runs.first().settings.reasoningEffort, "spawned with the parent's")
         assertEquals(
-            liveSettings.copy(reasoningEffort = ReasoningEffort.NONE),
+            liveSettings.copy(reasoningEffort = ReasoningEffort.MEDIUM),
             runs.last().settings,
             "the parent's prompt ran the worker under the worker's own pick, not the parent's settings",
         )
@@ -227,7 +227,7 @@ private val DISPATCHER_INSTRUCTIONS: String = """
 
     On every request that asks for the pass phrase, in this order:
     1. Call spawn_subagent with name "oracle" and type "$ORACLE_TYPE"; set neither model_id nor reasoning_effort.
-    2. Call spawn_subagent with name "spare", type "$ORACLE_TYPE" and reasoning_effort "none"; never prompt it.
+    2. Call spawn_subagent with name "spare", type "$ORACLE_TYPE" and reasoning_effort "medium"; never prompt it.
     3. Call prompt_subagent with name "oracle", passing the request on as the message.
     4. End your turn with the oracle's reply, quoted exactly.
 
