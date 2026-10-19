@@ -3,6 +3,10 @@
 Rules for editing this repo's code. Orientation and reference are in
 [README.md](README.md) and `docs/`.
 
+- No backwards compatibility: design as if no session log or other stored data
+  existed yet. Breaking existing sessions is fine; never add migrations, shims
+  or fallbacks for old formats.
+
 ## Layout
 
 Two Gradle modules: `lib/` (library, `codes.momo.agent`) and `server/`
