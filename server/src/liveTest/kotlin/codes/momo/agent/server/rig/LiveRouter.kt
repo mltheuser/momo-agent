@@ -4,13 +4,8 @@ import ai.router.sdk.AiRouterClient
 import ai.router.sdk.chat.ChatFeature
 import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.RunSettings
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
+import kotlinx.coroutines.withTimeout
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -34,30 +29,15 @@ internal fun requireLiveAiRouter() {
 private val reachable: Result<Unit> by lazy {
     runCatching {
         val available = runBlocking {
-            AiRouterClient(liveBaseUrl, probeHttpClient()).use { client ->
-                client.chat.listModels().data.filter { it.has(ChatFeature.TOOLS) }.map { it.model }
+            AiRouterClient(liveBaseUrl).use { client ->
+                withTimeout(PROBE_TIMEOUT) { client.chat.listModels() }.data
+                    .filter { it.has(ChatFeature.TOOLS) }.map { it.model }
             }
         }
         check(liveChatModel in available) {
             "it serves no chat model '$liveChatModel' that can call tools — it offers " +
                 available.sorted().joinToString(", ")
         }
-    }
-}
-
-private fun probeHttpClient(): HttpClient = HttpClient(CIO) {
-    install(ContentNegotiation) {
-        json(
-            Json {
-                ignoreUnknownKeys = true
-                encodeDefaults = false
-                isLenient = true
-            },
-        )
-    }
-    install(HttpTimeout) {
-        requestTimeoutMillis = PROBE_TIMEOUT.inWholeMilliseconds
-        connectTimeoutMillis = PROBE_TIMEOUT.inWholeMilliseconds
     }
 }
 
