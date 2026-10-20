@@ -1,12 +1,12 @@
 package codes.momo.agent.tool
 
+import ai.router.sdk.chat.ToolCall
 import ai.router.sdk.chat.ToolDefinition
 import codes.momo.agent.AgentEvent.ToolCallFinished.Outcome
 import codes.momo.agent.content.ModelContent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.json.JsonObject
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
@@ -36,16 +36,15 @@ public class ToolRegistry internal constructor(tools: List<Tool<*>>) {
         }
 
     internal suspend fun execute(
-        name: String,
-        arguments: JsonObject,
+        call: ToolCall,
         context: ToolContext,
         timeout: Duration = TOOL_TIMEOUT,
     ): ToolExecution {
         val start = TimeSource.Monotonic.markNow()
-        val tool = toolsByName[name]
+        val tool = toolsByName[call.function.name]
         val result = when (tool) {
-            null -> ToolResult.Error(unknownToolMessage(name))
-            else -> dispatch(tool, arguments, context, timeout)
+            null -> ToolResult.Error(unknownToolMessage(call.function.name))
+            else -> dispatch(tool, call, context, timeout)
         }
         val maxChars = tool?.maxResultChars ?: MAX_RESULT_CHARS
         return ToolExecution(
@@ -58,12 +57,12 @@ public class ToolRegistry internal constructor(tools: List<Tool<*>>) {
 
     private suspend fun dispatch(
         tool: Tool<*>,
-        arguments: JsonObject,
+        call: ToolCall,
         context: ToolContext,
         timeout: Duration,
     ): ToolResult {
         val invocation = try {
-            tool.bind(arguments, context)
+            tool.bind(call, context)
         } catch (@Suppress("TooGenericExceptionCaught") exception: Exception) {
             return invalidArgumentsError(tool, exception)
         }

@@ -1,10 +1,9 @@
 package codes.momo.agent.tool
 
+import ai.router.sdk.chat.ToolCall
 import ai.router.sdk.chat.ToolDefinition
 import ai.router.sdk.schema.SchemaGenerator
 import kotlinx.serialization.KSerializer
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 
 internal abstract class Tool<A : Any>(
 
@@ -23,18 +22,16 @@ internal abstract class Tool<A : Any>(
     val definition: ToolDefinition = ToolDefinition(
         name = spec.name,
         description = description,
-        parameters = SchemaGenerator.generate(argsSerializer.descriptor),
+        parameters = SchemaGenerator.generate(argsSerializer),
     )
 
     fun bind(
-        arguments: JsonObject,
+        call: ToolCall,
         context: ToolContext,
     ): suspend () -> ToolResult {
-        val decoded = toolArgumentsJson.decodeFromJsonElement(argsSerializer, arguments)
+        val decoded = call.decode(argsSerializer)
         return { execute(decoded, context) }
     }
 
     abstract suspend fun execute(args: A, context: ToolContext): ToolResult
 }
-
-private val toolArgumentsJson: Json = Json { ignoreUnknownKeys = true }

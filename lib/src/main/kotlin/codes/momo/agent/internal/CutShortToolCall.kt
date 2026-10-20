@@ -15,7 +15,7 @@ internal fun List<AgentEvent>.unansweredToolCalls(): List<CutShortToolCall> {
     val since = subList(lastTurn + 1, size)
     val started = since.filterIsInstance<AgentEvent.ToolCallStarted>().mapTo(mutableSetOf()) { it.callId }
     val answered = since.filterIsInstance<AgentEvent.ToolCallFinished>().mapTo(mutableSetOf()) { it.callId }
-    return (this[lastTurn] as AgentEvent.LlmCallFinished).message.toolCalls.orEmpty()
+    return (this[lastTurn] as AgentEvent.LlmCallFinished).message.toolCalls
         .filterNot { it.id in answered }
         .map { CutShortToolCall(it.id, it.function.name, it.id in started) }
 }

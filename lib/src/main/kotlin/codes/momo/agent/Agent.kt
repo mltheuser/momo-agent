@@ -2,9 +2,10 @@ package codes.momo.agent
 
 import ai.router.sdk.AiRouterClient
 import ai.router.sdk.chat.ChatMessage
-import ai.router.sdk.chat.ChatRequest
 import ai.router.sdk.chat.ChatResponse
+import ai.router.sdk.chat.ChatSettings
 import ai.router.sdk.chat.ChatUsage
+import ai.router.sdk.chat.FinishReason
 import ai.router.sdk.chat.ToolCall
 import ai.router.sdk.chat.ToolDefinition
 import codes.momo.agent.content.ModelContent
@@ -15,12 +16,10 @@ import codes.momo.agent.internal.AgentEventEmitter
 import codes.momo.agent.internal.RETRY_BACKOFFS
 import codes.momo.agent.internal.RunBudgets
 import codes.momo.agent.internal.SessionState
-import codes.momo.agent.internal.ZERO_USAGE
 import codes.momo.agent.internal.awaitsModel
 import codes.momo.agent.internal.coreToolRegistry
 import codes.momo.agent.internal.cutShortByRunEnd
 import codes.momo.agent.internal.cutShortToolResult
-import codes.momo.agent.internal.plus
 import codes.momo.agent.internal.resolvePromptAttachments
 import codes.momo.agent.internal.restoredSession
 import codes.momo.agent.internal.retryTransientFailures
@@ -240,7 +239,7 @@ public class Agent internal constructor(
             if (outcome != null) {
                 return run.decide(outcome)
             }
-            for (call in response.message.toolCalls.orEmpty()) {
+            for (call in response.message.toolCalls) {
                 coroutineContext.ensureActive()
                 executeCall(run, call)
             }
@@ -248,15 +247,15 @@ public class Agent internal constructor(
     }
 
     private fun turnOutcome(run: RunState, response: ChatResponse): RunResult.Status? {
-        val toolCalls = response.message.toolCalls.orEmpty()
+        val toolCalls = response.message.toolCalls
         return when {
-            response.finishReason == FINISH_REASON_ERROR -> {
+            response.finishReason == FinishReason.ERROR -> {
                 run.failure = IllegalStateException("the LLM reported a failed response (finish_reason 'error').")
                 RunResult.Status.ERROR
             }
 
             toolCalls.isEmpty() -> {
-                run.finalMessage = response.textContent
+                run.finalMessage = response.message.text
                 RunResult.Status.COMPLETED
             }
 
@@ -267,12 +266,6 @@ public class Agent internal constructor(
     }
 
     private suspend fun takeTurn(run: RunState): ChatResponse {
-        val request = ChatRequest(
-            model = run.settings.model,
-            messages = history.toList(),
-            reasoningEffort = run.settings.reasoningEffort,
-            tools = toolDefinitions,
-        )
         emitter.emit { id, at -> AgentEvent.LlmCallStarted(id, at, turn = run.turnsUsed + 1) }
         val response = retryTransientFailures(
             backoffs = RETRY_BACKOFFS,
@@ -281,7 +274,7 @@ public class Agent internal constructor(
                     AgentEvent.LlmCallRetried(id, at, cause.message ?: cause.toString(), attempt, backoff)
                 }
             },
-        ) { client.chat.send(request) }
+        ) { client.chat.send(run.chatSettings, history.toList()) }
         run.turnsUsed++
         run.usage += response.usage
         history += response.message
@@ -306,7 +299,7 @@ public class Agent internal constructor(
         }
         val timeout = minOf(TOOL_TIMEOUT, run.remaining.coerceAtLeast(Duration.ZERO))
         val context = ToolContext(environment, run.settings)
-        val execution = registry.execute(call.function.name, call.function.arguments, context, timeout)
+        val execution = registry.execute(call, context, timeout)
         val media = execution.content.asLoggedMedia
         history += toolResultMessage(call.id, execution.content.asText, media)
         run.events += emitter.emit { id, at ->
@@ -379,6 +372,8 @@ public class Agent internal constructor(
 
     private inner class RunState(val settings: RunSettings, val loop: CompletableJob) {
 
+        val chatSettings = ChatSettings(settings.model, settings.reasoningEffort, tools = toolDefinitions)
+
         val start = TimeSource.Monotonic.markNow()
 
         val ended: CompletableJob = Job()
@@ -386,7 +381,7 @@ public class Agent internal constructor(
         var decided: RunResult.Status? = null
 
         var turnsUsed: Int = 0
-        var usage: ChatUsage = ZERO_USAGE
+        var usage: ChatUsage = ChatUsage.ZERO
         var finalMessage: String? = null
         var failure: Exception? = null
 
@@ -435,5 +430,3 @@ private fun AgentEventListener.subagentListener(name: String, sessionId: String)
 
 private val ModelContent.asLoggedMedia: AgentEvent.ToolCallFinished.Media?
     get() = (this as? ModelContent.Media)?.let { AgentEvent.ToolCallFinished.Media(it.mimeType, it.base64Data) }
-
-private const val FINISH_REASON_ERROR: String = "error"

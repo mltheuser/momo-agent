@@ -1,7 +1,9 @@
 package codes.momo.agent
 
 import ai.router.sdk.chat.ChatMessage
+import ai.router.sdk.chat.ChatRole
 import ai.router.sdk.chat.ChatUsage
+import ai.router.sdk.chat.FinishReason
 import ai.router.sdk.chat.ReasoningEffort
 import ai.router.sdk.chat.ToolCall
 import ai.router.sdk.chat.ToolCallFunction
@@ -21,12 +23,12 @@ class InterruptedRunTest {
         sequenceId = seq,
         timestampMillis = seq,
         message = ChatMessage(
-            role = "assistant",
+            role = ChatRole.ASSISTANT,
             content = emptyList(),
             toolCalls = callIds.map { ToolCall(id = it, function = ToolCallFunction("bash", JsonObject(emptyMap()))) },
         ),
         usage = ChatUsage(tokens, 0, tokens, 0, 0),
-        finishReason = "tool_calls",
+        finishReason = FinishReason.TOOL_CALLS,
     )
 
     private fun started(seq: Long, callId: String) =

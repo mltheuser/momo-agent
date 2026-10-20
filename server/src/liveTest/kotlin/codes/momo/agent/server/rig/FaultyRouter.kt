@@ -6,9 +6,10 @@ import ai.router.sdk.chat.ChatFeature
 import ai.router.sdk.chat.ChatMessage
 import ai.router.sdk.chat.ChatModel
 import ai.router.sdk.chat.ChatResponse
+import ai.router.sdk.chat.ChatRole
 import ai.router.sdk.chat.ChatUsage
 import ai.router.sdk.chat.ContentPart
-import ai.router.sdk.chat.ContentPartType
+import ai.router.sdk.chat.FinishReason
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
@@ -130,17 +131,11 @@ internal class FaultyRouter private constructor() : AutoCloseable {
         private val FAILED_COMPLETION = ChatResponse(
             model = liveChatModel,
             message = ChatMessage(
-                role = "assistant",
-                content = listOf(ContentPart(ContentPartType.TEXT, text = "provider-side failure")),
+                role = ChatRole.ASSISTANT,
+                content = listOf(ContentPart.Text("provider-side failure")),
             ),
-            finishReason = "error",
-            usage = ChatUsage(
-                promptTokens = 0,
-                completionTokens = 0,
-                totalTokens = 0,
-                reasoningTokens = 0,
-                cacheReadTokens = 0,
-            ),
+            finishReason = FinishReason.ERROR,
+            usage = ChatUsage.ZERO,
         )
     }
 }

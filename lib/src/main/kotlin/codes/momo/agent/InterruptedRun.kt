@@ -1,9 +1,8 @@
 package codes.momo.agent
 
-import codes.momo.agent.internal.ZERO_USAGE
+import ai.router.sdk.chat.ChatUsage
 import codes.momo.agent.internal.cutShortByRunEnd
 import codes.momo.agent.internal.cutShortToolResult
-import codes.momo.agent.internal.plus
 import codes.momo.agent.internal.unansweredToolCalls
 import kotlin.time.Duration
 
@@ -20,7 +19,7 @@ public fun repairInterruptedRun(openRun: List<AgentEvent>, timestampMillis: Long
         timestampMillis = timestampMillis,
         status = RunResult.Status.INTERRUPTED,
         finalMessage = null,
-        usage = turns.fold(ZERO_USAGE) { sum, turn -> sum + turn.usage },
+        usage = turns.fold(ChatUsage.ZERO) { sum, turn -> sum + turn.usage },
         turnsUsed = turns.size,
         elapsed = openRun.filterIsInstance<AgentEvent.BudgetUpdated>().lastOrNull()?.elapsed ?: Duration.ZERO,
     )

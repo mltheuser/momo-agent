@@ -82,7 +82,7 @@ internal fun restoredSession(events: List<AgentEvent>, harness: Harness): Sessio
 
 private fun requireToolCallsSupported(events: List<AgentEvent>, harness: Harness) {
     val nameByCallId = events.filterIsInstance<AgentEvent.LlmCallFinished>()
-        .flatMap { it.message.toolCalls.orEmpty() }
+        .flatMap { it.message.toolCalls }
         .associate { it.id to it.function.name }
     val honored = events.mapNotNullTo(sortedSetOf()) { event ->
         when (event) {
