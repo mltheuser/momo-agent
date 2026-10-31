@@ -247,21 +247,23 @@ public class Agent internal constructor(
     }
 
     private fun turnOutcome(run: RunState, response: ChatResponse): RunResult.Status? {
+        val finishReason = response.finishReason
         val toolCalls = response.message.toolCalls
         return when {
-            response.finishReason == FinishReason.ERROR -> {
-                run.failure = IllegalStateException("the LLM reported a failed response (finish_reason 'error').")
-                RunResult.Status.ERROR
-            }
-
-            toolCalls.isEmpty() -> {
+            finishReason == FinishReason.STOP && toolCalls.isEmpty() -> {
                 run.finalMessage = response.message.text
                 RunResult.Status.COMPLETED
             }
 
-            run.turnsUsed >= RunBudgets.MAX_TURNS -> RunResult.Status.TURNS_EXHAUSTED
+            finishReason == FinishReason.TOOL_CALLS && toolCalls.isNotEmpty() ->
+                if (run.turnsUsed >= RunBudgets.MAX_TURNS) RunResult.Status.TURNS_EXHAUSTED else null
 
-            else -> null
+            else -> {
+                run.failure = IllegalStateException(
+                    "the LLM's response did not end gracefully: finish_reason '$finishReason'",
+                )
+                RunResult.Status.ERROR
+            }
         }
     }
 

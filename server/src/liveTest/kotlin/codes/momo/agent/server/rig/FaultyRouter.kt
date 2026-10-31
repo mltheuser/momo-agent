@@ -10,6 +10,7 @@ import ai.router.sdk.chat.ChatRole
 import ai.router.sdk.chat.ChatUsage
 import ai.router.sdk.chat.ContentPart
 import ai.router.sdk.chat.FinishReason
+import ai.router.sdk.chat.ToolCall
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
@@ -49,9 +50,26 @@ internal class FaultyRouter private constructor() : AutoCloseable {
 
         data object Malformed : Reply
 
-        data object FinishReasonError : Reply
+        data class Completion(val response: ChatResponse) : Reply
 
         data object Forward : Reply
+
+        companion object {
+
+            fun ended(finishReason: FinishReason, text: String = ""): Reply =
+                completion(ChatMessage(ChatRole.ASSISTANT, textContent(text)), finishReason)
+
+            fun toolCalls(vararg calls: ToolCall): Reply = completion(
+                ChatMessage(ChatRole.ASSISTANT, emptyList(), toolCalls = calls.toList()),
+                FinishReason.TOOL_CALLS,
+            )
+
+            private fun completion(message: ChatMessage, finishReason: FinishReason): Reply =
+                Completion(ChatResponse(liveChatModel, message, finishReason, ChatUsage.ZERO))
+
+            private fun textContent(text: String): List<ContentPart> =
+                if (text.isEmpty()) emptyList() else listOf(ContentPart.Text(text))
+        }
     }
 
     val baseUrl: String get() = "http://127.0.0.1:${runBlocking { server.engine.resolvedConnectors().single().port }}"
@@ -85,8 +103,8 @@ internal class FaultyRouter private constructor() : AutoCloseable {
                         HttpStatusCode.fromValue(reply.code),
                     )
                     Reply.Malformed -> call.respondText("this is not json", ContentType.Application.Json)
-                    Reply.FinishReasonError -> call.respondText(
-                        wire.encodeToString(ChatResponse.serializer(), FAILED_COMPLETION),
+                    is Reply.Completion -> call.respondText(
+                        wire.encodeToString(ChatResponse.serializer(), reply.response),
                         ContentType.Application.Json,
                     )
                     Reply.Forward -> {
@@ -126,16 +144,6 @@ internal class FaultyRouter private constructor() : AutoCloseable {
                     features = listOf(ChatFeature.TOOLS),
                 ),
             ),
-        )
-
-        private val FAILED_COMPLETION = ChatResponse(
-            model = liveChatModel,
-            message = ChatMessage(
-                role = ChatRole.ASSISTANT,
-                content = listOf(ContentPart.Text("provider-side failure")),
-            ),
-            finishReason = FinishReason.ERROR,
-            usage = ChatUsage.ZERO,
         )
     }
 }

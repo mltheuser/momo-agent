@@ -1,14 +1,19 @@
 package codes.momo.agent.server
 
+import ai.router.sdk.chat.FinishReason
+import ai.router.sdk.chat.ToolCall
+import ai.router.sdk.chat.ToolCallFunction
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
 import codes.momo.agent.server.fixtures.harnessPath
 import codes.momo.agent.server.fixtures.localWorkspace
+import codes.momo.agent.server.fixtures.writeHarness
 import codes.momo.agent.server.rig.FaultyRouter
 import codes.momo.agent.server.rig.FaultyRouter.Reply
 import codes.momo.agent.server.rig.LiveServerProcess
 import codes.momo.agent.server.rig.awaitRunEnd
 import codes.momo.agent.server.rig.createSession
+import codes.momo.agent.server.rig.events
 import codes.momo.agent.server.rig.liveHttpClient
 import codes.momo.agent.server.rig.prompt
 import codes.momo.agent.server.rig.retryRun
@@ -16,6 +21,8 @@ import codes.momo.agent.server.rig.sessionInfo
 import codes.momo.agent.server.session.SessionStatus
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.DisplayName
@@ -85,19 +92,20 @@ class RouterFailureLiveTest {
 
     @Test
     @DisplayName(
-        "A completion reporting finish_reason 'error' ends the run in error; a retry remakes the call, leaving no trace"
+        "A response the provider refused ends the run in error; " +
+            "a retry remakes the call, leaving no trace"
     )
-    fun finishReasonErrorFailsTheRunAndARetryLeavesNoTrace() = withFaultyServer { http ->
-        val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "finish-reason")).id
-        router.script(Reply.FinishReasonError)
+    fun refusedResponseFailsTheRunAndARetryLeavesNoTrace() = withFaultyServer { http ->
+        val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "refused")).id
+        router.script(Reply.ended(FinishReason.CONTENT_FILTER))
 
         http.prompt(id, "Reply with exactly this token and nothing else: $TOKEN")
 
         val events = http.awaitRunEnd(id)
         val finished = assertIs<AgentEvent.RunFinished>(events.last())
         assertEquals(RunResult.Status.ERROR, finished.status)
-        assertContains(assertNotNull(finished.error).message, "finish_reason 'error'")
-        assertNull(finished.finalMessage, "a provider-side failure's text must not read as the model's answer")
+        assertContains(assertNotNull(finished.error).message, "finish_reason 'content_filter'")
+        assertNull(finished.finalMessage, "a refused response must not read as the model's answer")
         assertTrue(events.none { it is AgentEvent.LlmCallRetried }, "a 200 is never retried")
         assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status, "the session stays idle")
 
@@ -113,6 +121,38 @@ class RouterFailureLiveTest {
         assertEquals(1, retried.count { it is AgentEvent.RunFinished }, "the failed run_finished is gone")
         assertEquals(1, retried.count { it is AgentEvent.LlmCallStarted }, "the call sits where the failed one was")
         assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status)
+    }
+
+    @Test
+    @DisplayName(
+        "A subagent whose response is cut off fails its run, and the parent's prompt_subagent call fails with it " +
+            "instead of returning an empty answer"
+    )
+    fun cutOffSubagentFailsThePromptCall() = withFaultyServer { http ->
+        writeHarness(tempDir.resolve("worker"))
+        val manager = writeHarness(tempDir.resolve("manager"), subagents = mapOf("worker" to "../worker"))
+        val rootId = http.createSession(manager.toString(), localWorkspace(tempDir, "cut-off")).id
+        router.script(
+            Reply.toolCalls(toolCall("spawn", "spawn_subagent", "name" to "w", "type" to "worker")),
+            Reply.toolCalls(toolCall("prompt", "prompt_subagent", "name" to "w", "message" to "Do the work.")),
+            Reply.ended(FinishReason.LENGTH),
+            Reply.ended(FinishReason.STOP, "The worker failed."),
+        )
+
+        http.prompt(rootId, "Delegate the work.")
+
+        val rootEvents = http.awaitRunEnd(rootId)
+        val childId = rootEvents.filterIsInstance<AgentEvent.SubagentSpawned>().single().sessionId
+        val child = assertIs<AgentEvent.RunFinished>(http.events(childId).last())
+        assertEquals(RunResult.Status.ERROR, child.status, "a cut-off response is not a completed run")
+        assertContains(assertNotNull(child.error).message, "finish_reason 'length'")
+        assertNull(child.finalMessage)
+        val promptCall = rootEvents.filterIsInstance<AgentEvent.ToolCallFinished>().single { it.callId == "prompt" }
+        assertEquals(AgentEvent.ToolCallFinished.Outcome.ERROR, promptCall.outcome, "the parent sees the failure")
+        assertContains(promptCall.resultText, "finish_reason 'length'", message = "the parent model learns why")
+        val root = assertIs<AgentEvent.RunFinished>(rootEvents.last())
+        assertEquals(RunResult.Status.COMPLETED, root.status, "the parent carries on: ${root.error}")
+        assertEquals(SessionStatus.IDLE, http.sessionInfo(childId).status)
     }
 
     @Test
@@ -135,6 +175,11 @@ class RouterFailureLiveTest {
         http.awaitRunEnd(id)
         assertEquals(SessionStatus.IDLE, http.sessionInfo(id).status)
     }
+}
+
+private fun toolCall(id: String, tool: String, vararg arguments: Pair<String, String>): ToolCall {
+    val json = JsonObject(arguments.associate { (key, value) -> key to JsonPrimitive(value) })
+    return ToolCall(id, ToolCallFunction(tool, json))
 }
 
 private const val TOKEN: String = "plugh-7731"
