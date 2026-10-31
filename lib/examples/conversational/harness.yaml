@@ -1,0 +1,7 @@
+tools:
+  - bash
+  - view_image
+subagents:
+  self:
+    path: ../coder
+    description: A general coding agent, for delegating self-contained subtasks.
