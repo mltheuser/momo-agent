@@ -149,7 +149,11 @@ class RouterFailureLiveTest {
         assertNull(child.finalMessage)
         val promptCall = rootEvents.filterIsInstance<AgentEvent.ToolCallFinished>().single { it.callId == "prompt" }
         assertEquals(AgentEvent.ToolCallFinished.Outcome.ERROR, promptCall.outcome, "the parent sees the failure")
-        assertContains(promptCall.resultText, "finish_reason 'length'", message = "the parent model learns why")
+        assertContains(
+            promptCall.resultText,
+            "run ended as ERROR — Model response ended with finish_reason 'length'. ",
+            message = "the parent model learns why, in the words the child's log records",
+        )
         val root = assertIs<AgentEvent.RunFinished>(rootEvents.last())
         assertEquals(RunResult.Status.COMPLETED, root.status, "the parent carries on: ${root.error}")
         assertEquals(SessionStatus.IDLE, http.sessionInfo(childId).status)

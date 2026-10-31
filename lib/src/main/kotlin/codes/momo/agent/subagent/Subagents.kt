@@ -3,6 +3,7 @@ package codes.momo.agent.subagent
 import ai.router.sdk.AiRouterClient
 import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.Agent
+import codes.momo.agent.AgentEvent
 import codes.momo.agent.RunResult
 import codes.momo.agent.RunSettings
 import codes.momo.agent.tool.ToolResult
@@ -133,8 +134,8 @@ private fun RunResult.asToolResult(name: String): ToolResult = when (status) {
     )
 
     RunResult.Status.ERROR -> ToolResult.Error(
-        "subagent '$name' run ended as ERROR — ${error ?: "its LLM call failed"}. The subagent received this " +
-            "prompt and keeps whatever progress it made; prompting it again continues where it left off.",
+        "subagent '$name' run ended as ERROR — ${failureMessage()}. The subagent received this prompt and " +
+            "keeps whatever progress it made; prompting it again continues where it left off.",
     )
 
     RunResult.Status.INTERRUPTED -> ToolResult.Error(
@@ -142,3 +143,6 @@ private fun RunResult.asToolResult(name: String): ToolResult = when (status) {
             "keeps whatever progress it made; prompting it again continues where it left off.",
     )
 }
+
+private fun RunResult.failureMessage(): String =
+    error?.let { AgentEvent.RunFinished.Error.from(it).message } ?: "its LLM call failed"

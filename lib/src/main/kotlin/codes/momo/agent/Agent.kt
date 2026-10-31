@@ -259,9 +259,7 @@ public class Agent internal constructor(
                 if (run.turnsUsed >= RunBudgets.MAX_TURNS) RunResult.Status.TURNS_EXHAUSTED else null
 
             else -> {
-                run.failure = IllegalStateException(
-                    "the LLM's response did not end gracefully: finish_reason '$finishReason'",
-                )
+                run.failure = IllegalStateException("Model response ended with finish_reason '$finishReason'")
                 RunResult.Status.ERROR
             }
         }
