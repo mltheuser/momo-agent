@@ -23,7 +23,9 @@ internal class ViewImageTool(spec: ToolSpec) : Tool<ViewImageArgs>(
     override suspend fun execute(args: ViewImageArgs, context: ToolContext): ToolResult =
         when (val loaded = loadImage(args.source, context.environment.workspacePath, maxResultChars)) {
             is LoadedImage.Failed -> ToolResult.Error("cannot view '${args.source}': ${loaded.problem}.")
-            is LoadedImage.Loaded -> ToolResult.Success(loaded.image)
+            is LoadedImage.Loaded -> ToolResult.Provisional(loaded.image) { reason ->
+                ToolResult.Error("cannot view '${args.source}': the model call carrying the image failed: $reason")
+            }
         }
 }
 

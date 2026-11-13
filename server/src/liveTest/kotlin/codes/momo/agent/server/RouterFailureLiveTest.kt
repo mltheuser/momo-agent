@@ -8,6 +8,7 @@ import codes.momo.agent.RunResult
 import codes.momo.agent.server.fixtures.harnessPath
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
+import codes.momo.agent.server.fixtures.writeWordImage
 import codes.momo.agent.server.rig.FaultyRouter
 import codes.momo.agent.server.rig.FaultyRouter.Reply
 import codes.momo.agent.server.rig.LiveServerProcess
@@ -160,6 +161,33 @@ class RouterFailureLiveTest {
     }
 
     @Test
+    @DisplayName("An image the model call took stays its view's result when that call's response fails the run")
+    fun aViewedImageTheModelCallTookSurvivesAFailedResponse() = withFaultyServer { http ->
+        val id = http.createSessionViewing("taken")
+        router.script(
+            Reply.toolCalls(toolCall("view", "view_image", "source" to VIEWED_IMAGE)),
+            Reply.ended(FinishReason.LENGTH),
+        )
+
+        http.prompt(id, "Look at $VIEWED_IMAGE and reply with the word it shows.")
+
+        assertEquals(RunResult.Status.ERROR, assertIs<AgentEvent.RunFinished>(http.awaitRunEnd(id).last()).status)
+        http.retryRun(id)
+        val retried = http.awaitRunEnd(id)
+        val recovered = assertIs<AgentEvent.RunFinished>(retried.last())
+        assertEquals(RunResult.Status.COMPLETED, recovered.status, "error: ${recovered.error}")
+        assertNotNull(retried.filterIsInstance<AgentEvent.ToolCallFinished>().single().media, "the image is kept")
+        assertContains(assertNotNull(recovered.finalMessage), VIEWED_WORD, ignoreCase = true)
+    }
+
+    private suspend fun HttpClient.createSessionViewing(workspaceName: String): String {
+        val workspace = localWorkspace(tempDir, workspaceName)
+        writeWordImage(Path.of(workspace).resolve(VIEWED_IMAGE), VIEWED_WORD)
+        val harness = writeHarness(tempDir.resolve("eyes"), tools = listOf("view_image"))
+        return createSession(harness.toString(), workspace).id
+    }
+
+    @Test
     @DisplayName("A body that is not JSON ends the run in error with the failure recorded and no call left dangling")
     fun malformedBodyFailsTheRun() = withFaultyServer { http ->
         val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "malformed")).id
@@ -187,3 +215,7 @@ private fun toolCall(id: String, tool: String, vararg arguments: Pair<String, St
 }
 
 private const val TOKEN: String = "plugh-7731"
+
+private const val VIEWED_IMAGE: String = "word.png"
+
+private const val VIEWED_WORD: String = "XYZZY"

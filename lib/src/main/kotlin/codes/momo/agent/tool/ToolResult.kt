@@ -10,11 +10,22 @@ internal sealed interface ToolResult {
 
     val content: ModelContent
 
-    data class Success(override val content: ModelContent) : ToolResult {
-
-        constructor(text: String) : this(ModelContent.Text(text))
+    data class Success(val text: String) : ToolResult {
 
         override val outcome: Outcome get() = Outcome.SUCCESS
+
+        override val content: ModelContent get() = ModelContent.Text(text)
+    }
+
+    /**
+     * Not committed to the session log until the next chat request with it in the message history succeeds;
+     * if that request fails, [otherwise] is committed in its place.
+     */
+    class Provisional(val media: ModelContent.Media, val otherwise: (reason: String) -> Error) : ToolResult {
+
+        override val outcome: Outcome get() = Outcome.SUCCESS
+
+        override val content: ModelContent get() = media
     }
 
     data class Error(val message: String) : ToolResult {

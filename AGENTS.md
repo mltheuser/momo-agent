@@ -28,6 +28,7 @@ hold the internals.
 | abort | Delete, shutdown or a kill cancelling a run. Records no outcome itself. |
 | interrupted | The outcome recorded for an aborted run when its log is next read. |
 | settled | A log whose last run has its `run_finished` and whose last turn has every `tool_call_finished`. The server settles a tree before every read. |
+| provisional | A tool result the model has yet to take: logged once the LLM call carrying it answers, as an error if that call fails. |
 | stop | The user's run-scoped command. Records a `stopped` outcome. |
 | rewind | Cutting the stored log back to before a user message. |
 | retry | Cutting a failed run back to before its failed LLM call and making that call again under the run's own settings; no trace of the failure remains. |
