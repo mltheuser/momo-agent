@@ -7,10 +7,10 @@ import codes.momo.agent.server.ApiError
 import codes.momo.agent.server.CreateSessionRequest
 import codes.momo.agent.server.PromptRequest
 import codes.momo.agent.server.PutTemplateRequest
-import codes.momo.agent.server.RenameRequest
 import codes.momo.agent.server.RewindRequest
 import codes.momo.agent.server.RewindResponse
 import codes.momo.agent.server.TemplateResponse
+import codes.momo.agent.server.TitleRequest
 import codes.momo.agent.server.session.SessionInfo
 import codes.momo.agent.server.session.SessionStatus
 import codes.momo.agent.server.session.SessionSummary
@@ -134,7 +134,7 @@ internal suspend fun HttpClient.renameSession(sessionId: String, title: String):
 internal suspend fun HttpClient.renameResponse(sessionId: String, title: String): HttpResponse =
     post("/v1/sessions/$sessionId/rename") {
         contentType(ContentType.Application.Json)
-        setBody(RenameRequest(title))
+        setBody(TitleRequest(title))
     }
 
 internal suspend fun HttpClient.select(sessionId: String, patch: SelectionPatch): SessionSummary {
@@ -251,6 +251,17 @@ internal suspend inline fun <reified T : AgentEvent> HttpClient.awaitLogged(sess
     return logged ?: failWait(sessionId, "the log never showed a ${T::class.simpleName}")
 }
 
+/** Polls [read] until it answers non-null. */
+internal suspend fun <T : Any> awaited(what: String, read: suspend () -> T?): T =
+    withTimeoutOrNull(LIVE_WAIT) {
+        var value = read()
+        while (value == null) {
+            delay(POLL_INTERVAL)
+            value = read()
+        }
+        value
+    } ?: fail("$what did not happen within $LIVE_WAIT")
+
 internal class ChangeStream(val received: () -> Int) {
 
     suspend fun <T> signalled(what: String, mutation: suspend () -> T): T {
@@ -277,7 +288,7 @@ internal suspend fun <T> HttpClient.withChangeStream(block: suspend (ChangeStrea
     val received = CopyOnWriteArrayList<String>()
     return coroutineScope {
         val subscription = launch {
-            sse("/v1/sessions/changes") {
+            sse("/v1/changes") {
                 incoming
                     .filter { it.event != null }
                     .collect { frame ->

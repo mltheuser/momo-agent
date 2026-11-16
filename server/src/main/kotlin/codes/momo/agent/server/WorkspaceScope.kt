@@ -13,7 +13,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.nio.file.Path
 
-/** The scope a request names, spelled as a session records its workspace: the folder's real path. */
+/** The scope a request names, spelled as a session or script records its workspace: the folder's real path. */
 internal fun ApplicationCall.workspaceParameter(): String? {
     val raw = request.queryParameters[WORKSPACE_PARAMETER]?.requireNotBlank("workspace") ?: return null
     val named = Path.of(raw)
@@ -29,7 +29,7 @@ internal fun ApplicationCall.workspaceParameter(): String? {
 
 internal fun ApplicationCall.requiredWorkspace(): String =
     workspaceParameter() ?: throw BadRequestException(
-        "A session listing is scoped to one workspace: name it with a ?$WORKSPACE_PARAMETER=<absolute path>.",
+        "This request is scoped to one workspace: name it with a ?$WORKSPACE_PARAMETER=<absolute path>.",
     )
 
 internal fun Route.scopeToWorkspace(registry: SessionRegistry) {
@@ -37,7 +37,7 @@ internal fun Route.scopeToWorkspace(registry: SessionRegistry) {
         createRouteScopedPlugin("WorkspaceScopeGuard") {
             onCall { call ->
                 val workspace = call.workspaceParameter() ?: return@onCall
-                registry.requireInWorkspace(call.sessionId(), workspace)
+                registry.requireInWorkspace(call.idParameter(), workspace)
             }
         },
     )

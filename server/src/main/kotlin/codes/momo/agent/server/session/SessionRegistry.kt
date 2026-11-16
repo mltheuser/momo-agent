@@ -1,6 +1,7 @@
 package codes.momo.agent.server.session
 
 import ai.router.sdk.AiRouterClient
+import codes.momo.agent.server.change.ChangeSignal
 import codes.momo.agent.server.storage.SessionStore
 import codes.momo.agent.server.storage.UnknownSessionException
 import codes.momo.agent.server.storage.subtreeIds
@@ -10,11 +11,9 @@ import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
-internal class SessionRegistry(dataDir: Path, val client: AiRouterClient) {
+internal class SessionRegistry(dataDir: Path, val client: AiRouterClient, val changes: ChangeSignal) {
 
     val store: SessionStore = SessionStore(dataDir)
-
-    val changes: ChangeSignal = ChangeSignal()
 
     private val entries = ConcurrentHashMap<String, SessionEntry>()
 

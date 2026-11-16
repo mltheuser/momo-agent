@@ -31,3 +31,4 @@ hold the internals.
 | stop | The user's run-scoped command. Records a `stopped` outcome. |
 | rewind | Cutting the stored log back to before a user message. |
 | retry | Cutting a failed run back to before its failed LLM call and making that call again under the run's own settings; no trace of the failure remains. |
+| script | A stored Python program the server runs as a child process; it interacts with the agent server via its HTTP API. |

@@ -1,8 +1,11 @@
 package codes.momo.agent.server
 
+import codes.momo.agent.server.storage.InvalidTemplateNameException
 import codes.momo.agent.server.storage.TemplateStore
+import codes.momo.agent.server.storage.UnknownTemplateException
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.plugins.statuspages.StatusPagesConfig
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -17,6 +20,15 @@ internal data class PutTemplateRequest(val body: String)
 
 @Serializable
 internal data class TemplateResponse(val name: String, val body: String)
+
+internal fun StatusPagesConfig.templateFailures() {
+    exception<UnknownTemplateException> { call, failure ->
+        call.respondError(HttpStatusCode.NotFound, "unknown_template", failure)
+    }
+    exception<InvalidTemplateNameException> { call, failure ->
+        call.respondError(HttpStatusCode.BadRequest, "invalid_request", failure)
+    }
+}
 
 internal fun Route.templateRoutes(store: TemplateStore) {
     route("/v1/templates") {

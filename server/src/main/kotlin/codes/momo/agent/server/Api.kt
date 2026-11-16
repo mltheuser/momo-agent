@@ -8,6 +8,8 @@ import codes.momo.agent.SubagentRevivalException
 import codes.momo.agent.environment.EnvironmentStartupException
 import codes.momo.agent.harness.HarnessValidationException
 import codes.momo.agent.harness.MissingToolModelException
+import codes.momo.agent.server.change.ChangeSignal
+import codes.momo.agent.server.script.ScriptRegistry
 import codes.momo.agent.server.session.SessionRegistry
 import codes.momo.agent.server.session.SessionSummary
 import codes.momo.agent.server.session.create
@@ -25,11 +27,9 @@ import codes.momo.agent.server.session.summary
 import codes.momo.agent.server.storage.CorruptSessionException
 import codes.momo.agent.server.storage.EventLogFailedException
 import codes.momo.agent.server.storage.InvalidRewindPointException
-import codes.momo.agent.server.storage.InvalidTemplateNameException
 import codes.momo.agent.server.storage.SessionConflictException
 import codes.momo.agent.server.storage.TemplateStore
 import codes.momo.agent.server.storage.UnknownSessionException
-import codes.momo.agent.server.storage.UnknownTemplateException
 import codes.momo.agent.tool.ToolCatalog
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
@@ -75,7 +75,7 @@ internal data class PromptRequest(
 )
 
 @Serializable
-internal data class RenameRequest(val title: String)
+internal data class TitleRequest(val title: String)
 
 @Serializable
 internal data class RewindRequest(val firstDeletedSequenceId: Long)
@@ -86,7 +86,13 @@ internal data class RewindResponse(val session: SessionSummary, val deletedSessi
 @Serializable
 internal data class ApiError(val code: String, val message: String)
 
-internal fun Application.agentServer(registry: SessionRegistry, client: AiRouterClient, templates: TemplateStore) {
+internal fun Application.agentServer(
+    registry: SessionRegistry,
+    scripts: ScriptRegistry,
+    changes: ChangeSignal,
+    client: AiRouterClient,
+    templates: TemplateStore,
+) {
     install(ContentNegotiation) {
         json()
     }
@@ -113,12 +119,8 @@ internal fun Application.agentServer(registry: SessionRegistry, client: AiRouter
         exception<ContentConvertException> { call, failure ->
             call.respondError(HttpStatusCode.BadRequest, "invalid_request", failure.rootMessage)
         }
-        exception<UnknownTemplateException> { call, failure ->
-            call.respondError(HttpStatusCode.NotFound, "unknown_template", failure)
-        }
-        exception<InvalidTemplateNameException> { call, failure ->
-            call.respondError(HttpStatusCode.BadRequest, "invalid_request", failure)
-        }
+        scriptFailures()
+        templateFailures()
         exception<SessionConflictException> { call, failure ->
             call.respondError(HttpStatusCode.Conflict, "conflict", failure)
         }
@@ -136,7 +138,9 @@ internal fun Application.agentServer(registry: SessionRegistry, client: AiRouter
         }
     }
     routing {
+        changeStreamRoute(changes)
         sessionRoutes(registry)
+        scriptRoutes(scripts)
         modelRoutes(client)
         templateRoutes(templates)
     }
@@ -144,7 +148,6 @@ internal fun Application.agentServer(registry: SessionRegistry, client: AiRouter
 
 private fun Route.sessionRoutes(registry: SessionRegistry) {
     route("/v1/sessions") {
-        changeStreamRoute(registry)
         post {
             val request = call.receive<CreateSessionRequest>()
             val info = registry.create(request.harnessPath, request.workspace, request.title)
@@ -162,7 +165,7 @@ private fun Route.sessionRoutes(registry: SessionRegistry) {
 private fun Route.singleSessionRoutes(registry: SessionRegistry) {
     scopeToWorkspace(registry)
     get {
-        call.respond(registry.info(call.sessionId()))
+        call.respond(registry.info(call.idParameter()))
     }
     post("/prompt") {
         val request = call.receive<PromptRequest>()
@@ -172,48 +175,46 @@ private fun Route.singleSessionRoutes(registry: SessionRegistry) {
             request.reasoningEffort,
             request.toolModels.requireValidToolModels(),
         )
-        val id = call.sessionId()
+        val id = call.idParameter()
         registry.startRun(id, prompt, settings)
         call.respond(HttpStatusCode.Accepted, registry.summary(id))
     }
     post("/rename") {
-        val title = call.receive<RenameRequest>().title.requireNotBlank("title")
-        call.respond(registry.rename(call.sessionId(), title))
+        val title = call.receive<TitleRequest>().title.requireNotBlank("title")
+        call.respond(registry.rename(call.idParameter(), title))
     }
     post("/select") {
         val patch = call.receive<SelectionPatch>().requireValid()
-        call.respond(registry.select(call.sessionId(), patch))
+        call.respond(registry.select(call.idParameter(), patch))
     }
     post("/retry") {
-        val id = call.sessionId()
+        val id = call.idParameter()
         registry.retryRun(id)
         call.respond(HttpStatusCode.Accepted, registry.summary(id))
     }
     post("/rewind") {
         val request = call.receive<RewindRequest>()
-        val id = call.sessionId()
+        val id = call.idParameter()
         val deletedSessionIds = registry.rewind(id, request.firstDeletedSequenceId)
         call.respond(RewindResponse(registry.summary(id), deletedSessionIds))
     }
     get("/events") {
-        call.respondText(registry.events(call.sessionId()), ContentType.Application.Json)
+        call.respondText(registry.events(call.idParameter()), ContentType.Application.Json)
     }
     post("/stop") {
-        registry.stopRun(call.sessionId())
-        call.respond(registry.summary(call.sessionId()))
+        registry.stopRun(call.idParameter())
+        call.respond(registry.summary(call.idParameter()))
     }
     delete {
-        registry.delete(call.sessionId())
+        registry.delete(call.idParameter())
         call.respond(HttpStatusCode.NoContent)
     }
 }
 
-private fun Route.changeStreamRoute(registry: SessionRegistry) {
-    route("/changes") {
-        sse {
-            heartbeat()
-            registry.changes.flow.onSubscription { emit(Unit) }.collect { send(event = CHANGE_EVENT) }
-        }
+private fun Route.changeStreamRoute(changes: ChangeSignal) {
+    sse("/v1/changes") {
+        heartbeat()
+        changes.flow.onSubscription { emit(Unit) }.collect { send(event = CHANGE_EVENT) }
     }
 }
 
@@ -242,9 +243,9 @@ private fun SelectionPatch.requireValid(): SelectionPatch {
     return this
 }
 
-internal fun ApplicationCall.sessionId(): String = checkNotNull(parameters["id"]) { "route without {id}" }
+internal fun ApplicationCall.idParameter(): String = checkNotNull(parameters["id"]) { "route without {id}" }
 
-private suspend fun ApplicationCall.respondError(status: HttpStatusCode, code: String, failure: Throwable) {
+internal suspend fun ApplicationCall.respondError(status: HttpStatusCode, code: String, failure: Throwable) {
     respondError(status, code, failure.message ?: failure.javaClass.simpleName)
 }
 
