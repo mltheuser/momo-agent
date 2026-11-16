@@ -32,7 +32,7 @@ public class ExecutionEnvironment internal constructor(
 
     public val privilege: Privilege = probe.detect()
 
-    internal val workspacePath: String = workspace.toAbsolutePath().normalize().toString()
+    internal val workspacePath: String = workspace.toRealPath().toString()
 
     internal suspend fun exec(
         command: List<String>,

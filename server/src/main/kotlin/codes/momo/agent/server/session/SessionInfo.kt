@@ -86,11 +86,10 @@ internal data class RunStats(
 )
 
 internal suspend fun SessionRegistry.list(workspace: String): List<SessionSummary> = withContext(Dispatchers.IO) {
-    val scope = normalizedWorkspace(workspace)
     ids.mapNotNull { id ->
         store.ifReadable {
             readSessionStarted(id)
-                .takeIf { it.parent == null && normalizedWorkspace(it.workspace) == scope }
+                .takeIf { it.parent == null && it.workspace == workspace }
                 ?.let { started -> started.timestampMillis to summary(id) }
         }
     }.sortedBy { (createdAtMillis, _) -> createdAtMillis }.map { (_, summary) -> summary }
@@ -128,8 +127,6 @@ private suspend fun summaryOf(id: String, tree: SessionTree, events: List<AgentE
         status = if (tree.root.run?.isRunning(tree.path) == true) SessionStatus.RUNNING else SessionStatus.IDLE,
         updatedAtMillis = events.sessionUpdatedAtMillis(),
     )
-
-internal fun normalizedWorkspace(path: String): String = Path.of(path).toAbsolutePath().normalize().toString()
 
 internal fun List<AgentEvent>.sessionStarted(): AgentEvent.SessionStarted = first() as AgentEvent.SessionStarted
 

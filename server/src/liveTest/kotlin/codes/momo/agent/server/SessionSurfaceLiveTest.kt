@@ -55,6 +55,7 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
+import kotlin.io.path.createSymbolicLinkPointingTo
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.readText
@@ -88,7 +89,7 @@ class SessionSurfaceLiveTest {
             assertEquals(SessionStatus.IDLE, first.status)
             val detail = http.sessionInfo(first.id)
             assertEquals(Path.of(harness).toRealPath().toString(), detail.harnessPath, "the canonical folder")
-            assertEquals(workspace, detail.workspace)
+            assertEquals(Path.of(workspace).toRealPath().toString(), detail.workspace, "the real path")
             assertNull(detail.parent, "a root has no parent")
             assertNull(detail.lastRun, "no run happened yet")
             assertEquals(SessionSelection.NONE, detail.selection, "nothing selected yet")
@@ -216,7 +217,8 @@ class SessionSurfaceLiveTest {
         assertEquals("unknown_session", foreign.body<ApiError>().code, "a foreign session must look nonexistent")
         assertEquals(HttpStatusCode.OK, http.sessionInfoResponse(inA, projectA).status, "own scope")
 
-        listOf("$projectA/", "$projectA/.", "$projectA/../scoped-a")
+        val linkToA = tempDir.resolve("link-to-a").createSymbolicLinkPointingTo(Path.of(projectA)).toString()
+        listOf("$projectA/", "$projectA/.", "$projectA/../scoped-a", linkToA)
             .forEach { spelling ->
                 assertEquals(listOf(inA), http.sessions(spelling).map { it.id }, "spelling: $spelling")
             }

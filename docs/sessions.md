@@ -12,6 +12,10 @@ loads the agent from the log, runs it, and drops it again.
 A session's `status` is `running` while this server executes a run on it and
 `idle` otherwise.
 
+A session belongs to one workspace folder and records its real path. Every
+spelling of that folder (through a symlink, in another letter case on a
+case-insensitive volume) names the same scope.
+
 Every graceful end of a run leaves the log settled. Killing the server mid-run is the one
 way to leave a log unsettled. Before serving any read of a session the server
 settles it on disc.
