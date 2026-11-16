@@ -17,7 +17,7 @@ public object ToolCatalog {
     /** The tools a harness lists in `tools`, in display order. The subagent tools come with `subagents` instead. */
     public val listable: List<ToolSpec> = listOf(
         ToolSpec("bash", modelSource = null) { BashTool(it, workspacePath, privilege) },
-        ToolSpec("view_image", modelSource = null) { ViewImageTool(it) },
+        ToolSpec("view_image", modelSource = null) { ViewImageTool(it, client) },
         ToolSpec("web_search", ToolModelSource.Search) { WebSearchTool(it, client) },
         ToolSpec("page_contents", ToolModelSource.Contents) { PageContentsTool(it, client) },
     )

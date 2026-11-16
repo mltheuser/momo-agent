@@ -1,5 +1,7 @@
 package codes.momo.agent.tool
 
+import ai.router.sdk.AiRouterClient
+import ai.router.sdk.AiRouterException
 import ai.router.sdk.schema.Description
 import codes.momo.agent.content.ModelContent
 import codes.momo.agent.image.LoadedImage
@@ -12,7 +14,7 @@ internal data class ViewImageArgs(
     val source: String,
 )
 
-internal class ViewImageTool(spec: ToolSpec) : Tool<ViewImageArgs>(
+internal class ViewImageTool(spec: ToolSpec, private val client: AiRouterClient) : Tool<ViewImageArgs>(
     spec = spec,
     description = VIEW_IMAGE_DESCRIPTION,
     argsSerializer = ViewImageArgs.serializer(),
@@ -23,8 +25,24 @@ internal class ViewImageTool(spec: ToolSpec) : Tool<ViewImageArgs>(
     override suspend fun execute(args: ViewImageArgs, context: ToolContext): ToolResult =
         when (val loaded = loadImage(args.source, context.environment.workspacePath, maxResultChars)) {
             is LoadedImage.Failed -> ToolResult.Error("cannot view '${args.source}': ${loaded.problem}.")
-            is LoadedImage.Loaded -> ToolResult.Success(loaded.image)
+            is LoadedImage.Loaded -> when (val rejection = rejectionOf(loaded.image, context)) {
+                null -> ToolResult.Success(loaded.image)
+                else -> ToolResult.Error("cannot view '${args.source}': showing it to the model failed: $rejection")
+            }
         }
+
+    /** An image the model refuses must not become the result: every later request would carry it and fail too. */
+    private suspend fun rejectionOf(image: ModelContent.Media, context: ToolContext): String? {
+        val reachesTheModel = image.fitsIn(maxResultChars)
+        if (!reachesTheModel) return null
+        val answeringInOneToken = context.chatSettings.copy(maxTokens = 1)
+        return try {
+            client.chat.send(answeringInOneToken, context.conversationAnsweredWith(image))
+            null
+        } catch (rejection: AiRouterException) {
+            rejection.apiError.message
+        }
+    }
 }
 
 private const val MAX_IMAGE_BYTES: Int = 5 * 1024 * 1024

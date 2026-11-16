@@ -8,6 +8,7 @@ import codes.momo.agent.RunResult
 import codes.momo.agent.server.fixtures.harnessPath
 import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
+import codes.momo.agent.server.fixtures.writeWordImage
 import codes.momo.agent.server.rig.FaultyRouter
 import codes.momo.agent.server.rig.FaultyRouter.Reply
 import codes.momo.agent.server.rig.LiveServerProcess
@@ -29,8 +30,10 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.io.TempDir
+import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
+import javax.imageio.ImageIO
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.deleteRecursively
 import kotlin.test.assertContains
@@ -160,6 +163,44 @@ class RouterFailureLiveTest {
     }
 
     @Test
+    @DisplayName(
+        "Of three images viewed in one turn, the one the provider refuses fails with that refusal " +
+            "and the other two reach the model"
+    )
+    fun aRefusedImageFailsAloneAmongTheViewsOfItsTurn() = withFaultyServer { http ->
+        val workspace = Path.of(localWorkspace(tempDir, "views"))
+        writeWordImage(workspace.resolve("a.png"), FIRST_WORD)
+        writeImageWiderThanTheProviderTakes(workspace.resolve("wide.png"))
+        writeWordImage(workspace.resolve("b.png"), SECOND_WORD)
+        val harness = writeHarness(tempDir.resolve("eyes"), tools = listOf("view_image"))
+        val id = http.createSession(harness.toString(), workspace.toString()).id
+        router.script(
+            Reply.toolCalls(
+                toolCall("a", "view_image", "source" to "a.png"),
+                toolCall("wide", "view_image", "source" to "wide.png"),
+                toolCall("b", "view_image", "source" to "b.png"),
+            ),
+        )
+
+        http.prompt(id, "Look at a.png, wide.png and b.png, then reply with every word you saw.")
+
+        val events = http.awaitRunEnd(id)
+        val finished = assertIs<AgentEvent.RunFinished>(events.last())
+        assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
+        val results = events.filterIsInstance<AgentEvent.ToolCallFinished>().associateBy { it.callId }
+        val refused = results.getValue("wide")
+        assertEquals(AgentEvent.ToolCallFinished.Outcome.ERROR, refused.outcome)
+        assertNull(refused.media, "a refused image never enters the conversation")
+        assertContains(refused.resultText, "cannot view 'wide.png'", message = "the error names the image")
+        assertContains(refused.resultText, "status 400", message = "and carries the provider's refusal")
+        val answer = assertNotNull(finished.finalMessage)
+        listOf("a" to FIRST_WORD, "b" to SECOND_WORD).forEach { (callId, word) ->
+            assertNotNull(results.getValue(callId).media, "$callId.png is not blamed for wide.png")
+            assertContains(answer, word, ignoreCase = true, message = "$callId.png reached the model")
+        }
+    }
+
+    @Test
     @DisplayName("A body that is not JSON ends the run in error with the failure recorded and no call left dangling")
     fun malformedBodyFailsTheRun() = withFaultyServer { http ->
         val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "malformed")).id
@@ -187,3 +228,11 @@ private fun toolCall(id: String, tool: String, vararg arguments: Pair<String, St
 }
 
 private const val TOKEN: String = "plugh-7731"
+
+private const val FIRST_WORD: String = "QUUXLE"
+
+private const val SECOND_WORD: String = "XYZZY"
+
+private fun writeImageWiderThanTheProviderTakes(path: Path) {
+    check(ImageIO.write(BufferedImage(9000, 10, BufferedImage.TYPE_INT_RGB), "png", path.toFile()))
+}

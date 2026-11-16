@@ -8,7 +8,6 @@ import ai.router.sdk.chat.ChatUsage
 import ai.router.sdk.chat.FinishReason
 import ai.router.sdk.chat.ToolCall
 import ai.router.sdk.chat.ToolDefinition
-import codes.momo.agent.content.ModelContent
 import codes.momo.agent.environment.ExecutionEnvironment
 import codes.momo.agent.harness.Harness
 import codes.momo.agent.harness.SUBAGENT_TOOL_NAMES
@@ -16,6 +15,7 @@ import codes.momo.agent.internal.AgentEventEmitter
 import codes.momo.agent.internal.RETRY_BACKOFFS
 import codes.momo.agent.internal.RunBudgets
 import codes.momo.agent.internal.SessionState
+import codes.momo.agent.internal.asLoggedMedia
 import codes.momo.agent.internal.awaitsModel
 import codes.momo.agent.internal.coreToolRegistry
 import codes.momo.agent.internal.cutShortByRunEnd
@@ -298,10 +298,9 @@ public class Agent internal constructor(
             AgentEvent.ToolCallStarted(id, at, call.id, call.function.name, call.function.arguments)
         }
         val timeout = minOf(TOOL_TIMEOUT, run.remaining.coerceAtLeast(Duration.ZERO))
-        val context = ToolContext(environment, run.settings)
+        val context = ToolContext(environment, run.settings, run.chatSettings, history.toList(), call)
         val execution = registry.execute(call, context, timeout)
-        val media = execution.content.asLoggedMedia
-        history += toolResultMessage(call.id, execution.content.asText, media)
+        history += toolResultMessage(call.id, execution.content)
         run.events += emitter.emit { id, at ->
             AgentEvent.ToolCallFinished(
                 sequenceId = id,
@@ -311,7 +310,7 @@ public class Agent internal constructor(
                 outcome = execution.outcome,
                 duration = execution.duration,
                 truncated = execution.truncated,
-                media = media,
+                media = execution.content.asLoggedMedia,
             )
         }
     }
@@ -427,6 +426,3 @@ private fun AgentEventListener.subagentListener(name: String, sessionId: String)
 } catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
     NoOpAgentEventListener
 }
-
-private val ModelContent.asLoggedMedia: AgentEvent.ToolCallFinished.Media?
-    get() = (this as? ModelContent.Media)?.let { AgentEvent.ToolCallFinished.Media(it.mimeType, it.base64Data) }

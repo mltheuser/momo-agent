@@ -4,6 +4,7 @@ import ai.router.sdk.chat.ChatMessage
 import ai.router.sdk.chat.ChatRole
 import ai.router.sdk.chat.ContentPart
 import codes.momo.agent.AgentEvent
+import codes.momo.agent.content.ModelContent
 
 internal fun systemMessage(instructions: String): ChatMessage = textMessage(ChatRole.SYSTEM, instructions)
 
@@ -46,6 +47,12 @@ internal fun toolResultMessage(
         },
         toolCallId = callId,
     )
+
+internal fun toolResultMessage(callId: String, content: ModelContent): ChatMessage =
+    toolResultMessage(callId, content.asText, content.asLoggedMedia)
+
+internal val ModelContent.asLoggedMedia: AgentEvent.ToolCallFinished.Media?
+    get() = (this as? ModelContent.Media)?.let { AgentEvent.ToolCallFinished.Media(it.mimeType, it.base64Data) }
 
 internal val ChatMessage.awaitsModel: Boolean
     get() = role == ChatRole.USER || role == ChatRole.TOOL
