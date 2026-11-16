@@ -32,23 +32,6 @@ A user opens a project, creates a session over the `coder` harness, and works:
 A prompt while a run is in flight, or a rewind or retry while any run in the
 session's tree is in flight, is refused.
 
-## Provisional tool results
-
-A tool result the LLM call could reject, such as a viewed image, is
-provisional. Every call is logged as started when it starts; the two kinds of
-result differ in when they are logged:
-
-- An ordinary result is logged as soon as its call ends.
-- A provisional result is held in memory and sent with the next LLM call. It
-  is logged once that call succeeds. If the call fails, for whatever reason,
-  the tool's error message is logged in its place and the LLM call is made
-  again.
-
-The log therefore never holds a tool result no LLM call has accepted, and the
-session stays promptable. Within a turn the provisional results are the last
-ones logged, whatever the order of the calls. A run that ends while a result
-is held leaves that call open, to be answered like any call cut short.
-
 ## Parent and subagent sessions
 
 An agent whose harness declares `subagents` can spawn children. A child is a

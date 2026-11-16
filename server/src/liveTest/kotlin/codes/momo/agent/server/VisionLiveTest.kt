@@ -13,9 +13,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
-import java.awt.image.BufferedImage
 import java.nio.file.Path
-import javax.imageio.ImageIO
 import kotlin.io.path.writeBytes
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -81,13 +79,12 @@ class VisionLiveTest {
 
     @Test
     @DisplayName(
-        "view_image answers a web page with an error, an image over its limit with a truncated note and an image " +
-            "the provider refuses with that refusal, and the run goes on",
+        "view_image answers a web page with an error and an image over its limit with a truncated note, " +
+            "and the run goes on",
     )
-    fun pageOversizedAndRefusedImage() = withLiveServer { http ->
+    fun pageAndOversizedImage() = withLiveServer { http ->
         val workspace = localWorkspace(tempDir)
         Path.of(workspace).resolve("big.png").writeBytes(PNG_SIGNATURE + ByteArray(BYTES_OVER_THE_IMAGE_LIMIT))
-        writeImageWiderThanProvidersTake(Path.of(workspace).resolve("wide.png"))
         val harness = writeHarness(
             tempDir.resolve("harness"),
             tools = listOf("view_image"),
@@ -97,8 +94,8 @@ class VisionLiveTest {
 
         http.prompt(
             id,
-            "Call view_image on $HOSTED_PAGE, then on the file big.png, then on the file wide.png. None of them " +
-                "shows you an image; that is expected, do not retry any. Then reply with one short sentence.",
+            "Call view_image on $HOSTED_PAGE, then call view_image on the file big.png. Neither shows you an " +
+                "image; that is expected, do not retry either. Then reply with one short sentence.",
         )
 
         val events = http.awaitRunEnd(id)
@@ -120,11 +117,6 @@ class VisionLiveTest {
         assertTrue(bigResult.truncated, "the oversized image is recorded as truncated")
         assertNull(bigResult.media, "the oversized image never reaches the model")
         assertContains(bigResult.resultText, "larger than the limit", message = "the note in its place says why")
-
-        val wideResult = assertNotNull(results["wide.png"], "view_image was called on wide.png: ${results.keys}")
-        assertEquals(AgentEvent.ToolCallFinished.Outcome.ERROR, wideResult.outcome, "the provider refused the image")
-        assertNull(wideResult.media, "a refused image never enters the log, so the session stays promptable")
-        assertContains(wideResult.resultText, "cannot view 'wide.png'", message = "the error names the image")
     }
 }
 
@@ -142,10 +134,6 @@ private const val EYES_INSTRUCTIONS: String =
 private val PNG_SIGNATURE: ByteArray = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
 
 private const val BYTES_OVER_THE_IMAGE_LIMIT: Int = 6 * 1024 * 1024
-
-private fun writeImageWiderThanProvidersTake(path: Path) {
-    check(ImageIO.write(BufferedImage(9000, 10, BufferedImage.TYPE_INT_RGB), "png", path.toFile()))
-}
 
 private const val PROMPT_WORD: String = "QUUXLE"
 private const val FILE_WORD: String = "XYZZY"

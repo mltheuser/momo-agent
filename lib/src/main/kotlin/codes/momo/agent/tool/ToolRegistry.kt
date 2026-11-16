@@ -46,17 +46,12 @@ public class ToolRegistry internal constructor(tools: List<Tool<*>>) {
             null -> ToolResult.Error(unknownToolMessage(call.function.name))
             else -> dispatch(tool, call, context, timeout)
         }
-        return result.executed(tool?.maxResultChars ?: MAX_RESULT_CHARS, start.elapsedNow())
-    }
-
-    private fun ToolResult.executed(maxChars: Int, duration: Duration): ToolExecution {
-        val unconfirmed = (this as? ToolResult.Provisional)?.takeIf { content.fitsIn(maxChars) }
+        val maxChars = tool?.maxResultChars ?: MAX_RESULT_CHARS
         return ToolExecution(
-            outcome = outcome,
-            content = content.fittedTo(maxChars),
-            truncated = !content.fitsIn(maxChars),
-            duration = duration,
-            otherwise = unconfirmed?.let { { reason -> it.otherwise(reason).executed(maxChars, duration) } },
+            outcome = result.outcome,
+            content = result.content.fittedTo(maxChars),
+            truncated = !result.content.fitsIn(maxChars),
+            duration = start.elapsedNow(),
         )
     }
 
@@ -103,7 +98,7 @@ public class ToolRegistry internal constructor(tools: List<Tool<*>>) {
 
 internal val TOOL_TIMEOUT: Duration = 24.hours
 
-internal class ToolExecution(
+internal data class ToolExecution(
 
     val outcome: Outcome,
 
@@ -112,13 +107,4 @@ internal class ToolExecution(
     val truncated: Boolean,
 
     val duration: Duration,
-
-    private val otherwise: ((reason: String) -> ToolExecution)? = null,
-) {
-
-    val isProvisional: Boolean
-        get() = otherwise != null
-
-    fun afterFailedModelCall(reason: String): ToolExecution =
-        checkNotNull(otherwise) { "only a provisional result changes when the model call carrying it fails." }(reason)
-}
+)

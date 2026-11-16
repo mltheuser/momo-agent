@@ -31,7 +31,6 @@ import codes.momo.agent.subagent.Subagents
 import codes.momo.agent.tool.TOOL_TIMEOUT
 import codes.momo.agent.tool.ToolContext
 import codes.momo.agent.tool.ToolDependencies
-import codes.momo.agent.tool.ToolExecution
 import codes.momo.agent.tool.ToolRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
@@ -230,18 +229,20 @@ public class Agent internal constructor(
     }
 
     private suspend fun runLoop(run: RunState): RunResult.Status {
-        var unconfirmed = emptyList<AnsweredCall>()
         while (true) {
             coroutineContext.ensureActive()
             if (run.remaining <= Duration.ZERO) {
                 return run.decide(RunResult.Status.TIMEOUT)
             }
-            val response = takeTurn(run, unconfirmed)
+            val response = takeTurn(run)
             val outcome = turnOutcome(run, response)
             if (outcome != null) {
                 return run.decide(outcome)
             }
-            unconfirmed = executeCalls(run, response.message.toolCalls)
+            for (call in response.message.toolCalls) {
+                coroutineContext.ensureActive()
+                executeCall(run, call)
+            }
         }
     }
 
@@ -264,10 +265,16 @@ public class Agent internal constructor(
         }
     }
 
-    private suspend fun takeTurn(run: RunState, unconfirmed: List<AnsweredCall>): ChatResponse {
-        val confirmed = if (unconfirmed.isEmpty()) null else confirm(run, unconfirmed)
+    private suspend fun takeTurn(run: RunState): ChatResponse {
         emitter.emit { id, at -> AgentEvent.LlmCallStarted(id, at, turn = run.turnsUsed + 1) }
-        val response = confirmed ?: chat(run, history.toList())
+        val response = retryTransientFailures(
+            backoffs = RETRY_BACKOFFS,
+            onRetry = { cause, attempt, backoff ->
+                emitter.emit { id, at ->
+                    AgentEvent.LlmCallRetried(id, at, cause.message ?: cause.toString(), attempt, backoff)
+                }
+            },
+        ) { client.chat.send(run.chatSettings, history.toList()) }
         run.turnsUsed++
         run.usage += response.usage
         history += response.message
@@ -286,63 +293,25 @@ public class Agent internal constructor(
         return response
     }
 
-    private suspend fun confirm(run: RunState, unconfirmed: List<AnsweredCall>): ChatResponse? {
-        val response = try {
-            chat(run, history + unconfirmed.map { it.message })
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
-            val reason = AgentEvent.RunFinished.Error.from(failure).message
-            unconfirmed.forEach { record(run, AnsweredCall(it.call, it.execution.afterFailedModelCall(reason))) }
-            return null
-        }
-        unconfirmed.forEach { record(run, it) }
-        return response
-    }
-
-    private suspend fun chat(run: RunState, conversation: List<ChatMessage>): ChatResponse = retryTransientFailures(
-        backoffs = RETRY_BACKOFFS,
-        onRetry = { cause, attempt, backoff ->
-            emitter.emit { id, at ->
-                AgentEvent.LlmCallRetried(id, at, cause.message ?: cause.toString(), attempt, backoff)
-            }
-        },
-    ) { client.chat.send(run.chatSettings, conversation) }
-
-    private suspend fun executeCalls(run: RunState, calls: List<ToolCall>): List<AnsweredCall> {
-        val unconfirmed = mutableListOf<AnsweredCall>()
-        for (call in calls) {
-            coroutineContext.ensureActive()
-            val answered = AnsweredCall(call, execute(run, call))
-            if (answered.execution.isProvisional) {
-                unconfirmed += answered
-            } else {
-                record(run, answered)
-            }
-        }
-        return unconfirmed
-    }
-
-    private suspend fun execute(run: RunState, call: ToolCall): ToolExecution {
+    private suspend fun executeCall(run: RunState, call: ToolCall) {
         run.events += emitter.emit { id, at ->
             AgentEvent.ToolCallStarted(id, at, call.id, call.function.name, call.function.arguments)
         }
         val timeout = minOf(TOOL_TIMEOUT, run.remaining.coerceAtLeast(Duration.ZERO))
-        return registry.execute(call, ToolContext(environment, run.settings), timeout)
-    }
-
-    private fun record(run: RunState, answered: AnsweredCall) {
-        history += answered.message
+        val context = ToolContext(environment, run.settings)
+        val execution = registry.execute(call, context, timeout)
+        val media = execution.content.asLoggedMedia
+        history += toolResultMessage(call.id, execution.content.asText, media)
         run.events += emitter.emit { id, at ->
             AgentEvent.ToolCallFinished(
                 sequenceId = id,
                 timestampMillis = at,
-                callId = answered.call.id,
-                resultText = answered.execution.content.asText,
-                outcome = answered.execution.outcome,
-                duration = answered.execution.duration,
-                truncated = answered.execution.truncated,
-                media = answered.execution.content.asLoggedMedia,
+                callId = call.id,
+                resultText = execution.content.asText,
+                outcome = execution.outcome,
+                duration = execution.duration,
+                truncated = execution.truncated,
+                media = media,
             )
         }
     }
@@ -442,12 +411,6 @@ public class Agent internal constructor(
 }
 
 private val logger: Logger = LoggerFactory.getLogger(Agent::class.java)
-
-private class AnsweredCall(val call: ToolCall, val execution: ToolExecution) {
-
-    val message: ChatMessage
-        get() = toolResultMessage(call.id, execution.content.asText, execution.content.asLoggedMedia)
-}
 
 private class RunStoppedException : CancellationException("The run was stopped.")
 
