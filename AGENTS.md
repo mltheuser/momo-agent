@@ -25,6 +25,10 @@ hold the internals.
 
 | Word | Meaning |
 | ---- | ------- |
+| session | One conversation between a user and an agent, stored as one event log and scoped to a workspace folder. |
+| run | One prompt's execution, `run_started` to `run_finished`. |
+| harness | A folder that defines an agent: its tools, its subagent types and its system prompt. |
+| ring | One frame on the change stream, `GET /v1/changes`: something changed, re-read. It carries no data. |
 | abort | Delete, shutdown or a kill cancelling a run. Records no outcome itself. |
 | interrupted | The outcome recorded for an aborted run when its log is next read. |
 | settled | A log whose last run has its `run_finished` and whose last turn has every `tool_call_finished`. The server settles a tree before every read. |
