@@ -16,6 +16,19 @@ internal suspend fun AiRouterClient.spawnModelRejection(modelId: String): String
     return if (usable.any { modelId.addresses(it) }) null else unknownModelMessage(modelId, usable)
 }
 
+internal suspend fun AiRouterClient.contextWindowOf(model: String): Int? = try {
+    usableChatModels().data
+        .filter { model.addresses(it) }
+        .map { it.contextWindow }
+        .distinct()
+        .singleOrNull()
+        ?.takeIf { it > 0 }
+} catch (cancellation: CancellationException) {
+    throw cancellation
+} catch (@Suppress("TooGenericExceptionCaught") _: Exception) {
+    null
+}
+
 private fun String.addresses(entry: ChatModel): Boolean =
     this == entry.model || this == entry.model.substringBeforeLast('@')
 

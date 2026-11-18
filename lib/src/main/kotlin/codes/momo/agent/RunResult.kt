@@ -10,6 +10,8 @@ public data class RunResult(
     val finalMessage: String?,
 
     val error: Exception?,
+
+    val lastCallPromptTokens: Int?,
 ) {
 
     @Serializable

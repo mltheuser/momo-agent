@@ -10,6 +10,7 @@ import codes.momo.agent.tool.ToolResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.math.roundToInt
 
 internal class SpawnedChild(
     val sessionId: String,
@@ -99,7 +100,8 @@ internal class Subagents(
     private suspend fun promptChild(agent: Agent, name: String, message: String): ToolResult {
         val settings = agent.runSettings()
         return try {
-            parent.awaitingChildRun { agent.send(message, settings) }.asToolResult(name)
+            parent.awaitingChildRun { agent.send(message, settings) }
+                .asToolResult(name) { client.contextWindowOf(settings.model) }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: IllegalStateException) {
@@ -114,8 +116,13 @@ internal class Subagents(
         if (declaredTypes.isEmpty()) "(none)" else declaredTypes.joinToString(", ")
 }
 
-private fun RunResult.asToolResult(name: String): ToolResult = when (status) {
-    RunResult.Status.COMPLETED -> ToolResult.Success(finalMessage.orEmpty())
+private suspend fun RunResult.asToolResult(
+    name: String,
+    contextWindow: suspend () -> Int?,
+): ToolResult = when (status) {
+    RunResult.Status.COMPLETED -> ToolResult.Success(
+        contextWindowNote(name, lastCallPromptTokens, contextWindow()) + "\n\n" + finalMessage.orEmpty(),
+    )
 
     RunResult.Status.STOPPED -> ToolResult.Error(
         "subagent '$name' run ended as STOPPED — a user deliberately stopped it. The subagent received this " +
@@ -143,6 +150,15 @@ private fun RunResult.asToolResult(name: String): ToolResult = when (status) {
             "keeps whatever progress it made; prompting it again continues where it left off.",
     )
 }
+
+private fun contextWindowNote(name: String, used: Int?, window: Int?): String =
+    if (used == null || window == null) {
+        "[Failed to get the context window of subagent '$name', report this failure to the user]"
+    } else {
+        "[subagent '$name' context window: $used of $window tokens used (${(used * PERCENT / window).roundToInt()}%)]"
+    }
+
+private const val PERCENT: Double = 100.0
 
 private fun RunResult.failureMessage(): String =
     error?.let { AgentEvent.RunFinished.Error.from(it).message } ?: "its LLM call failed"

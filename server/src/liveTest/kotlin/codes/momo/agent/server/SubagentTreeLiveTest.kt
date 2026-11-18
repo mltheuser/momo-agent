@@ -1,5 +1,7 @@
 package codes.momo.agent.server
 
+import ai.router.sdk.ModelList
+import ai.router.sdk.chat.ChatModel
 import ai.router.sdk.chat.ReasoningEffort
 import codes.momo.agent.AgentEvent
 import codes.momo.agent.ChatSelection
@@ -9,6 +11,7 @@ import codes.momo.agent.server.fixtures.localWorkspace
 import codes.momo.agent.server.fixtures.writeHarness
 import codes.momo.agent.server.rig.awaitLogged
 import codes.momo.agent.server.rig.awaitRunEnd
+import codes.momo.agent.server.rig.chatModelsResponse
 import codes.momo.agent.server.rig.createSession
 import codes.momo.agent.server.rig.events
 import codes.momo.agent.server.rig.liveSettings
@@ -24,6 +27,7 @@ import codes.momo.agent.server.rig.withLiveServer
 import codes.momo.agent.server.session.ParentSession
 import codes.momo.agent.server.session.SessionStatus
 import io.ktor.client.HttpClient
+import io.ktor.client.call.body
 import io.ktor.http.HttpStatusCode
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -41,7 +45,8 @@ class SubagentTreeLiveTest {
 
     @Test
     @DisplayName(
-        "Delegation makes the child a session: listed, typed, renamable, promptable, and deleted by the rewind"
+        "Delegation makes the child a session: listed, typed, renamable, promptable, and deleted by the rewind; " +
+            "its answer reaches the parent under a line saying how full its context window is"
     )
     fun delegationMakesTheChildASession() = withLiveServer { http ->
         val oracle = writeHarness(tempDir.resolve("oracle"), instructions = ORACLE_INSTRUCTIONS)
@@ -76,6 +81,18 @@ class SubagentTreeLiveTest {
         assertEquals(liveSettings, assertIs<AgentEvent.SessionStarted>(childLog.first()).settings, "the spawn copy")
         assertEquals(liveSettings, childLog.filterIsInstance<AgentEvent.RunStarted>().single().settings)
         assertEquals(liveSettings, child.selection.runSettings(), "an unpinned child ran with its parent's settings")
+        val oracleContext = childLog.filterIsInstance<AgentEvent.LlmCallFinished>().last().usage.promptTokens
+        val oracleWindow = http.chatModelsResponse().body<ModelList<ChatModel>>().data
+            .single { it.model == liveSettings.model }.contextWindow
+        val promptCallId = events.filterIsInstance<AgentEvent.ToolCallStarted>()
+            .single { it.toolName == "prompt_subagent" }.callId
+        val promptResult = events.filterIsInstance<AgentEvent.ToolCallFinished>().single { it.callId == promptCallId }
+        assertContains(
+            promptResult.resultText.lineSequence().first(),
+            "[subagent 'oracle' context window: $oracleContext of $oracleWindow tokens used (",
+            message = "the result opens by telling the parent how full the child's context window is",
+        )
+        assertContains(promptResult.resultText, PASS_PHRASE, ignoreCase = true, message = "then the child's answer")
         assertEquals(SessionStatus.IDLE, child.status)
         val spare = http.sessionInfo(spawns.last().sessionId)
         val spareLog = http.events(spare.id)

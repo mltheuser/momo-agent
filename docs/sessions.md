@@ -40,5 +40,6 @@ full session: its own log, readable, renameable and promptable by ID.
 - The parent's log records each spawn as `subagent_spawned`.
 - The child's `session_started` records the parent's session ID and the child's starting settings.
 - The child's settings can be changed independently from the parent.
+- The child's response carries information about its latest context window utilisation.
 - Rewind cascades. A deleted `subagent_spawned` on rewind deletes that child and its subtree. A deleted `prompt_subagent` call cuts the child's log back to before the run it drove.
 - Stop cascades down, not up: stopping the parent stops its children's runs; stopping a child ends only that run, and the parent sees the stop as a tool result error.

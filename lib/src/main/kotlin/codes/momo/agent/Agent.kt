@@ -186,7 +186,7 @@ public class Agent internal constructor(
         } finally {
             currentRun = null
         }
-        val result = RunResult(checkNotNull(status), run.finalMessage, run.failure)
+        val result = RunResult(checkNotNull(status), run.finalMessage, run.failure, run.lastCallPromptTokens)
         if (result.status == RunResult.Status.ERROR) {
             try {
                 logger.error("A run on session $sessionId ended in error.", result.error)
@@ -277,6 +277,7 @@ public class Agent internal constructor(
         ) { client.chat.send(run.chatSettings, history.toList()) }
         run.turnsUsed++
         run.usage += response.usage
+        run.lastCallPromptTokens = response.usage.promptTokens
         history += response.message
         run.events += emitter.emit { id, at ->
             AgentEvent.LlmCallFinished(id, at, response.message, response.usage, response.finishReason)
@@ -381,6 +382,7 @@ public class Agent internal constructor(
 
         var turnsUsed: Int = 0
         var usage: ChatUsage = ChatUsage.ZERO
+        var lastCallPromptTokens: Int? = null
         var finalMessage: String? = null
         var failure: Exception? = null
 
