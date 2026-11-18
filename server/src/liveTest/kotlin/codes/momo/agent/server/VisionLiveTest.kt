@@ -29,8 +29,8 @@ class VisionLiveTest {
 
     @Test
     @DisplayName(
-        "A prompt image link attaches, view_image shows a local file and a hosted image, " +
-            "and every planted text comes back",
+        "An image linked in a prompt reaches the model as an attachment, then view_image shows it a local file " +
+            "and a hosted image, and every planted text comes back",
     )
     fun promptAttachmentAndViewImage() = withLiveServer { http ->
         val workspace = localWorkspace(tempDir)
@@ -45,16 +45,14 @@ class VisionLiveTest {
 
         http.prompt(
             id,
-            "Here is the first image: ![first](a.png) — and a link to nothing: ![missing](missing.png). " +
-                "Now call view_image on the file b.png, then call view_image on $HOSTED_IMAGE. Then reply with " +
-                "one sentence containing the word written in the first image, the word in b.png and the " +
-                "phrase in the hosted image, each spelled exactly as shown.",
+            "Without using any tools, reply with the word written in this image, spelled exactly as shown: " +
+                "![first](a.png) — this link leads to nothing: ![missing](missing.png).",
         )
 
-        val events = http.awaitRunEnd(id)
-        val finished = assertIs<AgentEvent.RunFinished>(events.last())
-        assertEquals(RunResult.Status.COMPLETED, finished.status, "error: ${finished.error}")
-        val started = assertIs<AgentEvent.RunStarted>(events.single { it is AgentEvent.RunStarted })
+        val attaching = http.awaitRunEnd(id)
+        val attached = assertIs<AgentEvent.RunFinished>(attaching.last())
+        assertEquals(RunResult.Status.COMPLETED, attached.status, "error: ${attached.error}")
+        val started = assertIs<AgentEvent.RunStarted>(attaching.single { it is AgentEvent.RunStarted })
         assertEquals(
             listOf("a.png" to "image/png"),
             started.attachments.map { it.link to it.mimeType },
@@ -62,17 +60,31 @@ class VisionLiveTest {
         )
         assertTrue(started.attachments.single().base64Data.isNotBlank(), "the attachment carries the picture")
         assertContains(started.userMessage, "![missing](missing.png)", message = "the dead link stays verbatim")
-        assertEquals(
-            mapOf("b.png" to "image/png", HOSTED_IMAGE to "image/jpeg"),
-            events.viewImageResultsBySource().mapValues { (_, finished) -> assertNotNull(finished.media).mimeType },
-            "each view_image result carries its image, labelled by its bytes",
+        assertEquals(0, attaching.count { it is AgentEvent.ToolCallStarted }, "no tool showed the model the image")
+        assertContains(
+            assertNotNull(attached.finalMessage),
+            PROMPT_WORD,
+            ignoreCase = true,
+            message = "so its word can only have reached the model through the attachment",
         )
-        val finalMessage = assertNotNull(finished.finalMessage)
-        listOf(
-            PROMPT_WORD to "the prompt attachment",
-            FILE_WORD to "the local file",
-            HOSTED_IMAGE_PHRASE to "the hosted image",
-        ).forEach { (text, source) ->
+
+        http.prompt(
+            id,
+            "Now call view_image on the file b.png, then call view_image on $HOSTED_IMAGE. Then reply with one " +
+                "sentence containing the word in b.png and the phrase in the hosted image, each spelled exactly " +
+                "as shown.",
+        )
+
+        val viewing = http.awaitRunEnd(id).drop(attaching.size)
+        val viewed = assertIs<AgentEvent.RunFinished>(viewing.last())
+        assertEquals(RunResult.Status.COMPLETED, viewed.status, "error: ${viewed.error}")
+        val views = viewing.viewImageResultsBySource()
+        listOf("b.png" to "image/png", HOSTED_IMAGE to "image/jpeg").forEach { (source, mimeType) ->
+            val view = assertNotNull(views[source], "view_image was called on $source: ${views.keys}")
+            assertEquals(mimeType, view.media?.mimeType, "the view of $source carries its image, labelled by its bytes")
+        }
+        val finalMessage = assertNotNull(viewed.finalMessage)
+        listOf(FILE_WORD to "the local file", HOSTED_IMAGE_PHRASE to "the hosted image").forEach { (text, source) ->
             assertContains(finalMessage, text, ignoreCase = true, message = "$source reached the model")
         }
     }
