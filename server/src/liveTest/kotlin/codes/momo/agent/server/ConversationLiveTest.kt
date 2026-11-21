@@ -63,6 +63,9 @@ class ConversationLiveTest {
             message = "the planted token can only reach the answer through a tool call in the workspace",
         )
         assertIs<AgentEvent.SessionStarted>(events.first())
+        val failedCalls = events.filterIsInstance<AgentEvent.ToolCallFinished>()
+            .filter { it.outcome != AgentEvent.ToolCallFinished.Outcome.SUCCESS }
+        assertEquals(emptyList(), failedCalls, "the model calls bash validly unprompted, timeout included")
         assertEquals(List(events.size) { it.toLong() }, events.map { it.sequenceId }, "the log has gaps")
         val truncated = events.filterIsInstance<AgentEvent.ToolCallFinished>().filter { it.truncated }
         assertEquals(1, truncated.size, "exactly the flood command's result is cut to the model-facing cap")

@@ -24,8 +24,6 @@ internal class PromptSubagentTool(
     argsSerializer = PromptSubagentArgs.serializer(),
 ) {
 
-    override val timeoutExempt: Boolean = true
-
     override suspend fun execute(args: PromptSubagentArgs, context: ToolContext): ToolResult =
         subagents.prompt(args.name, args.message)
 }
@@ -33,6 +31,6 @@ internal class PromptSubagentTool(
 private val PROMPT_SUBAGENT_DESCRIPTION: String = """
     Sends a message to a subagent created with spawn_subagent, waits while it works, and returns
     the message it ends its turn with. Each prompt is one run bounded by the subagent's own turn
-    and wall-clock budgets. The subagent keeps its conversation across prompts, so prompt the same
-    name again to follow up, answer its questions, or give it work that builds on what it knows.
+    budget. The subagent keeps its conversation across prompts, so prompt the same name again to
+    follow up, answer its questions, or give it work that builds on what it knows.
 """.trimIndent()

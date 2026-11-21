@@ -42,14 +42,15 @@ Adding a test: one class per user flow, one `@TempDir`, a `@DisplayName` stating
 ## Running unit tests
 
 ```sh
-./gradlew :server:test
+./gradlew test
 ```
 
 Needs no router. Part of `./gradlew build`.
 
 ## How unit tests are structured
 
-Source set `server/src/test`, bound to `main` for `internal` access. JUnit 5
+Source set `src/test` of the module whose logic is tested, `lib` or `server`,
+with `internal` access to that module's `main`. JUnit 5
 with `kotlin.test` assertions. A test class builds its inputs in memory with
 small factory functions and asserts on the returned value; no process,
 router, filesystem or model.

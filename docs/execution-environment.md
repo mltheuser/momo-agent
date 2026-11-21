@@ -6,6 +6,7 @@
 on the host, in the workspace folder, with the host's environment variables.
 
 - For isolation, run the whole stack inside a container you own. Give it a reaping pid 1 so background processes a run leaves behind do not stay zombies.
+- Commands run in the server's process group.
 
 ## Host requirements
 

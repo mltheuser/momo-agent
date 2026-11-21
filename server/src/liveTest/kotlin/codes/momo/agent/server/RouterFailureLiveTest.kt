@@ -42,6 +42,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class RouterFailureLiveTest {
@@ -201,6 +202,36 @@ class RouterFailureLiveTest {
     }
 
     @Test
+    @DisplayName(
+        "A bash call naming no timeout is refused with what the tool takes; " +
+            "a command outliving its timeout is killed and answered with its output so far"
+    )
+    fun aCommandOutlivingItsTimeoutIsKilled() = withFaultyServer { http ->
+        val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "hanging")).id
+        router.script(
+            Reply.toolCalls(toolCall("unbounded", "bash", "command" to HANGING_COMMAND)),
+            Reply.toolCalls(toolCall("hanging", "bash", "command" to HANGING_COMMAND, "timeout" to "2s")),
+        )
+
+        http.prompt(id, "Run `$HANGING_COMMAND` once with a timeout of 2s, never again, and tell me what it printed.")
+
+        val events = http.awaitRunEnd(id)
+        val results = events.filterIsInstance<AgentEvent.ToolCallFinished>().associateBy { it.callId }
+        val refused = results.getValue("unbounded")
+        assertEquals(AgentEvent.ToolCallFinished.Outcome.ERROR, refused.outcome)
+        assertContains(refused.resultText, "'timeout' is required", message = "the refusal names the missing argument")
+        assertContains(refused.resultText, "10m", message = "and shows how to write it, from the tool's own schema")
+        val killed = results.getValue("hanging")
+        assertEquals(AgentEvent.ToolCallFinished.Outcome.TIMED_OUT, killed.outcome)
+        assertContains(killed.resultText, "timeout of 2s", message = "the model is told which limit ended the command")
+        assertContains(killed.resultText, PRINTED_BEFORE_HANGING, message = "the output so far is not lost")
+        assertTrue(killed.duration < 10.seconds, "the command was ended at its timeout, not after its sleep")
+        val finished = assertIs<AgentEvent.RunFinished>(events.last())
+        assertEquals(RunResult.Status.COMPLETED, finished.status, "a timed-out command does not end the run")
+        assertContains(assertNotNull(finished.finalMessage), PRINTED_BEFORE_HANGING, message = "the model read it")
+    }
+
+    @Test
     @DisplayName("A body that is not JSON ends the run in error with the failure recorded and no call left dangling")
     fun malformedBodyFailsTheRun() = withFaultyServer { http ->
         val id = http.createSession(harnessPath(tempDir), localWorkspace(tempDir, "malformed")).id
@@ -232,6 +263,10 @@ private const val TOKEN: String = "plugh-7731"
 private const val FIRST_WORD: String = "QUUXLE"
 
 private const val SECOND_WORD: String = "XYZZY"
+
+private const val PRINTED_BEFORE_HANGING: String = "frotz-4417"
+
+private const val HANGING_COMMAND: String = "echo $PRINTED_BEFORE_HANGING; sleep 20"
 
 private fun writeImageWiderThanTheProviderTakes(path: Path) {
     check(ImageIO.write(BufferedImage(9000, 10, BufferedImage.TYPE_INT_RGB), "png", path.toFile()))

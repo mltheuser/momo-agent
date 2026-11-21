@@ -15,7 +15,7 @@ The ai-router Kotlin SDK is consumed as a Gradle composite build.
 | `./gradlew build` | Compile, detekt, the unit tests, the live suite. Needs a running router. |
 | `./gradlew :server:run --args="--port=8420"` | Run the server. Flags in [configuration.md](configuration.md). |
 | `./gradlew :server:installDist` | Install the server distribution to `server/build/install/server/bin/server`. |
-| `./gradlew :server:test` | Unit tests alone. Needs no router. |
+| `./gradlew test` | Unit tests alone. Needs no router. |
 | `./gradlew :server:liveTest` | The live suite alone. |
 | `./gradlew detekt` | Lint all source sets. |
 

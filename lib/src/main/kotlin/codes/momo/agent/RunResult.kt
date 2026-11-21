@@ -26,9 +26,6 @@ public data class RunResult(
         @SerialName("turns_exhausted")
         TURNS_EXHAUSTED,
 
-        @SerialName("timeout")
-        TIMEOUT,
-
         @SerialName("error")
         ERROR,
 

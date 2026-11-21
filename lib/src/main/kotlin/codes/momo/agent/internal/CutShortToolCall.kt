@@ -40,7 +40,6 @@ internal fun CutShortToolCall.cutShortByRunEnd(runStatus: RunResult.Status): Str
         RunResult.Status.STOPPED -> "a user stopped the run"
         RunResult.Status.ERROR -> "the run failed"
         RunResult.Status.TURNS_EXHAUSTED -> "the run's turn budget ran out"
-        RunResult.Status.TIMEOUT -> "the run's wall-clock budget ran out"
         RunResult.Status.COMPLETED -> "the run ended"
         RunResult.Status.INTERRUPTED -> "the server went down"
     }

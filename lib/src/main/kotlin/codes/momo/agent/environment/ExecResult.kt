@@ -28,8 +28,3 @@ internal sealed interface ExecResult {
 
 internal val ExecResult.succeeded: Boolean
     get() = this is ExecResult.Completed && exitCode == 0
-
-internal fun ExecResult.problem(): String = when (this) {
-    is ExecResult.Completed -> stderr.trim().ifEmpty { "exited with code $exitCode" }
-    is ExecResult.TimedOut -> "timed out"
-}

@@ -28,7 +28,6 @@ import codes.momo.agent.internal.toolResultMessage
 import codes.momo.agent.internal.unansweredToolCalls
 import codes.momo.agent.internal.userMessage
 import codes.momo.agent.subagent.Subagents
-import codes.momo.agent.tool.TOOL_TIMEOUT
 import codes.momo.agent.tool.ToolContext
 import codes.momo.agent.tool.ToolDependencies
 import codes.momo.agent.tool.ToolRegistry
@@ -231,9 +230,6 @@ public class Agent internal constructor(
     private suspend fun runLoop(run: RunState): RunResult.Status {
         while (true) {
             coroutineContext.ensureActive()
-            if (run.remaining <= Duration.ZERO) {
-                return run.decide(RunResult.Status.TIMEOUT)
-            }
             val response = takeTurn(run)
             val outcome = turnOutcome(run, response)
             if (outcome != null) {
@@ -298,9 +294,8 @@ public class Agent internal constructor(
         run.events += emitter.emit { id, at ->
             AgentEvent.ToolCallStarted(id, at, call.id, call.function.name, call.function.arguments)
         }
-        val timeout = minOf(TOOL_TIMEOUT, run.remaining.coerceAtLeast(Duration.ZERO))
         val context = ToolContext(environment, run.settings, run.chatSettings, history.toList(), call)
-        val execution = registry.execute(call, context, timeout)
+        val execution = registry.execute(call, context)
         history += toolResultMessage(call.id, execution.content)
         run.events += emitter.emit { id, at ->
             AgentEvent.ToolCallFinished(
@@ -360,16 +355,6 @@ public class Agent internal constructor(
         )
     }
 
-    internal suspend fun <T> awaitingChildRun(block: suspend () -> T): T {
-        val active = checkNotNull(currentRun) { "a child can only be awaited from within a run." }
-        val blockedSince = TimeSource.Monotonic.markNow()
-        try {
-            return block()
-        } finally {
-            active.blocked += blockedSince.elapsedNow()
-        }
-    }
-
     private inner class RunState(val settings: RunSettings, val loop: CompletableJob) {
 
         val chatSettings = ChatSettings(settings.model, settings.reasoningEffort, tools = toolDefinitions)
@@ -388,13 +373,8 @@ public class Agent internal constructor(
 
         val events: MutableList<AgentEvent> = mutableListOf()
 
-        var blocked: Duration = Duration.ZERO
-
         val elapsed: Duration
-            get() = start.elapsedNow() - blocked
-
-        val remaining: Duration
-            get() = RunBudgets.MAX_WALL_CLOCK - elapsed
+            get() = start.elapsedNow()
 
         fun decide(status: RunResult.Status): RunResult.Status = status.also { decided = it }
     }

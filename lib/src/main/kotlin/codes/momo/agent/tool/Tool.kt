@@ -15,8 +15,6 @@ internal abstract class Tool<A : Any>(
     val name: String
         get() = spec.name
 
-    open val timeoutExempt: Boolean = false
-
     open val maxResultChars: Int = ToolRegistry.MAX_RESULT_CHARS
 
     val definition: ToolDefinition = ToolDefinition(

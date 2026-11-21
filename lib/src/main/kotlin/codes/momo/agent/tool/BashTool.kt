@@ -4,11 +4,18 @@ import ai.router.sdk.schema.Description
 import codes.momo.agent.environment.ExecResult
 import codes.momo.agent.environment.Privilege
 import kotlinx.serialization.Serializable
+import kotlin.time.Duration
 
 @Serializable
 internal data class BashArgs(
     @Description("The bash command to run.")
     val command: String,
+    @Serializable(with = CommandTimeout::class)
+    @Description(
+        "Longest the command may run, ${CommandTimeout.FORMAT}. " +
+            "Set it well above what you expect; finishing early costs nothing.",
+    )
+    val timeout: Duration,
 )
 
 internal class BashTool(spec: ToolSpec, workspacePath: String, privilege: Privilege) : Tool<BashArgs>(
@@ -18,20 +25,22 @@ internal class BashTool(spec: ToolSpec, workspacePath: String, privilege: Privil
 ) {
 
     override suspend fun execute(args: BashArgs, context: ToolContext): ToolResult {
-        val result = context.environment.exec(listOf("bash", "-c", args.command), timeout = TOOL_TIMEOUT)
+        val result = context.environment.exec(listOf("bash", "-c", args.command), args.timeout)
         return when (result) {
             is ExecResult.Completed ->
                 ToolResult.Success("exit code: ${result.exitCode}\n" + result.formatStreams())
 
             is ExecResult.TimedOut ->
                 ToolResult.TimedOut(
-                    partialOutput = if (result.hasOutput) result.formatStreams() else null,
+                    "the command was still running after its timeout of ${args.timeout} and was killed, with the " +
+                        "processes it started, except any that detached or were started with sudo. Check what " +
+                        "it changed and why it ran long before repeating it.\n" +
+                        "Output so far (lost: anything a program or a filter such as tail or grep had not yet " +
+                        "written out):\n" +
+                        result.formatStreams(),
                 )
         }
     }
-
-    private val ExecResult.hasOutput: Boolean
-        get() = stdout.isNotEmpty() || stderr.isNotEmpty()
 
     private fun ExecResult.formatStreams(): String =
         section("stderr", stderr, stderrTruncated) + section("stdout", stdout, stdoutTruncated)
@@ -68,12 +77,9 @@ private fun bashDescription(workspacePath: String, privilege: Privilege): String
         call is gone by the next, and the working directory is back at the workspace root. Chain
         dependent steps into a single command with `&&`.
 
-        Commands are killed after $TOOL_TIMEOUT and report a timeout error with any partial output. stdout
-        and stderr come back in one result (stderr first) and share a budget of ${ToolRegistry.MAX_RESULT_CHARS} characters;
-        truncation keeps the beginning and drops the end, so to see the end of long output, filter
-        it (e.g. `tail`, `grep`) instead of dumping it. The call returns when the shell exits;
-        background processes outlive it, but their stdout/stderr are closed — a later write to
-        either fails (SIGPIPE). So background long-running processes (e.g. servers) with BOTH
+        A command still running when its timeout elapses is killed and reported as an error with the
+        output (stdout and stderr) so far. The call returns when the shell exits; background processes outlive it, but their stdout/stderr are closed — a later
+        write to either fails (SIGPIPE). So background long-running processes (e.g. servers) with BOTH
         streams redirected to a file or /dev/null.
     """.trimIndent()
     return listOf(

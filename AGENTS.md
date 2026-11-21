@@ -18,7 +18,7 @@ hold the internals.
 
 ## Verify
 
-- `./gradlew build`: compile, detekt, the unit tests (`:server:test`), the live suite (`:server:liveTest`). Needs a running ai-router and costs API spend ([docs/testing.md](docs/testing.md)).
+- `./gradlew build`: compile, detekt, the unit tests (`test`), the live suite (`:server:liveTest`). Needs a running ai-router and costs API spend ([docs/testing.md](docs/testing.md)).
 - `./lint.sh` / `./fmt.sh`: detekt check / auto-fix.
 
 ## Vocabulary

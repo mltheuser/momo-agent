@@ -4,12 +4,9 @@ import ai.router.sdk.chat.ToolCall
 import ai.router.sdk.chat.ToolDefinition
 import codes.momo.agent.AgentEvent.ToolCallFinished.Outcome
 import codes.momo.agent.content.ModelContent
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.hours
-import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
 public class ToolRegistry internal constructor(tools: List<Tool<*>>) {
@@ -35,16 +32,12 @@ public class ToolRegistry internal constructor(tools: List<Tool<*>>) {
             tool.definition
         }
 
-    internal suspend fun execute(
-        call: ToolCall,
-        context: ToolContext,
-        timeout: Duration = TOOL_TIMEOUT,
-    ): ToolExecution {
+    internal suspend fun execute(call: ToolCall, context: ToolContext): ToolExecution {
         val start = TimeSource.Monotonic.markNow()
         val tool = toolsByName[call.function.name]
         val result = when (tool) {
             null -> ToolResult.Error(unknownToolMessage(call.function.name))
-            else -> dispatch(tool, call, context, timeout)
+            else -> dispatch(tool, call, context)
         }
         val maxChars = tool?.maxResultChars ?: MAX_RESULT_CHARS
         return ToolExecution(
@@ -55,32 +48,28 @@ public class ToolRegistry internal constructor(tools: List<Tool<*>>) {
         )
     }
 
-    private suspend fun dispatch(
-        tool: Tool<*>,
-        call: ToolCall,
-        context: ToolContext,
-        timeout: Duration,
-    ): ToolResult {
+    private suspend fun dispatch(tool: Tool<*>, call: ToolCall, context: ToolContext): ToolResult {
         val invocation = try {
             tool.bind(call, context)
         } catch (@Suppress("TooGenericExceptionCaught") exception: Exception) {
             return invalidArgumentsError(tool, exception)
         }
 
-        val backstop = if (timeout >= TOOL_TIMEOUT) timeout + TIMEOUT_GRACE else timeout
         return try {
-            if (tool.timeoutExempt) invocation() else withTimeout(backstop) { invocation() }
-        } catch (_: TimeoutCancellationException) {
-            ToolResult.TimedOut(timeout = timeout)
-        } catch (exception: CancellationException) {
-            throw exception
+            invocation()
         } catch (@Suppress("TooGenericExceptionCaught") exception: Exception) {
+            // A cancelled run propagates. A cancellation the tool raised itself, like its own timeout, is its failure.
+            coroutineContext.ensureActive()
             ToolResult.Error("tool '${tool.name}' failed unexpectedly: $exception")
         }
     }
 
-    private fun invalidArgumentsError(tool: Tool<*>, exception: Exception): ToolResult.Error =
-        ToolResult.Error("invalid arguments for tool '${tool.name}': ${exception.message ?: exception}")
+    private fun invalidArgumentsError(tool: Tool<*>, exception: Exception): ToolResult.Error {
+        val reason = exception.message?.lineSequence()?.first() ?: exception.toString()
+        return ToolResult.Error(
+            "invalid arguments for tool '${tool.name}': $reason\nThe tool takes: ${tool.definition.parameters}",
+        )
+    }
 
     private fun unknownToolMessage(name: String): String =
         "unknown tool '$name'; available tools: ${formatNames()}."
@@ -91,12 +80,8 @@ public class ToolRegistry internal constructor(tools: List<Tool<*>>) {
     public companion object {
 
         public const val MAX_RESULT_CHARS: Int = 96 * 1024
-
-        private val TIMEOUT_GRACE: Duration = 10.seconds
     }
 }
-
-internal val TOOL_TIMEOUT: Duration = 24.hours
 
 internal data class ToolExecution(
 

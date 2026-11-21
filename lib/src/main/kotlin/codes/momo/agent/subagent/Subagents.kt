@@ -100,8 +100,7 @@ internal class Subagents(
     private suspend fun promptChild(agent: Agent, name: String, message: String): ToolResult {
         val settings = agent.runSettings()
         return try {
-            parent.awaitingChildRun { agent.send(message, settings) }
-                .asToolResult(name) { client.contextWindowOf(settings.model) }
+            agent.send(message, settings).asToolResult(name) { client.contextWindowOf(settings.model) }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: IllegalStateException) {
@@ -132,11 +131,6 @@ private suspend fun RunResult.asToolResult(
 
     RunResult.Status.TURNS_EXHAUSTED -> ToolResult.Error(
         "subagent '$name' run ended as TURNS_EXHAUSTED — it spent its turn budget before answering. " +
-            "Prompting it again continues where it left off with a fresh budget.",
-    )
-
-    RunResult.Status.TIMEOUT -> ToolResult.Error(
-        "subagent '$name' run ended as TIMEOUT — it spent its wall-clock budget before answering. " +
             "Prompting it again continues where it left off with a fresh budget.",
     )
 
