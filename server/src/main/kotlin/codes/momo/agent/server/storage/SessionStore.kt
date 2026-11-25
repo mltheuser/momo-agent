@@ -3,9 +3,11 @@ package codes.momo.agent.server.storage
 import codes.momo.agent.AgentEvent
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
+import kotlin.io.path.getLastModifiedTime
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
@@ -25,23 +27,21 @@ internal class SessionStore(dataDir: Path) {
         }
 
     fun readSessionStarted(id: String): AgentEvent.SessionStarted = readingLog(id) { file ->
-        try {
-            val line = file.useLines { lines -> lines.firstOrNull { it.isNotBlank() } }
-            decodeLogLineAs(line.orEmpty())
-        } catch (failure: SerializationException) {
-            throw CorruptSessionException(id, failure.message, failure)
-        }
+        val line = file.useLines { lines -> lines.firstOrNull { it.isNotBlank() } }
+        decodeLogLineAs(line.orEmpty())
     }
 
     fun readEvents(id: String): List<AgentEvent> = readingLog(id) { file ->
-        val events = file.readLogLines<AgentEvent>(id) { Json.decodeFromString(it) }
+        val events = file.readLogLines<AgentEvent> { Json.decodeFromString(it) }
         if (events.firstOrNull() !is AgentEvent.SessionStarted) {
             throw CorruptSessionException(id, "the log does not begin with a session_started event")
         }
         events
     }
 
-    fun readLines(id: String): List<LogLine> = readingLog(id) { file -> file.readLogLines(id, ::parseLogLine) }
+    fun readLines(id: String): List<LogLine> = readingLog(id) { file -> file.readLogLines(::parseLogLine) }
+
+    fun lastWrittenMillis(id: String): Long = readingLog(id) { file -> file.getLastModifiedTime().toMillis() }
 
     fun rewriteLog(id: String, lines: List<String>) {
         replaceAtomically(logFile(id), lines.joinToString(separator = "\n", postfix = "\n"))
@@ -62,6 +62,10 @@ internal class SessionStore(dataDir: Path) {
         read(logFile(id))
     } catch (_: NoSuchFileException) {
         throw UnknownSessionException(id)
+    } catch (failure: IOException) {
+        throw CorruptSessionException(id, failure.message, failure)
+    } catch (failure: SerializationException) {
+        throw CorruptSessionException(id, failure.message, failure)
     }
 
     private fun logFile(id: String): Path = sessionsDir.resolve(id).resolve(EVENTS_FILE)
@@ -92,19 +96,6 @@ internal fun SessionStore.pathTo(started: AgentEvent.SessionStarted): List<Strin
         parent = readSessionStarted(parent).parent
     }
     return ancestry.asReversed()
-}
-
-internal fun SessionStore.subtreeIds(id: String): List<String> {
-    val childrenByParent = sessionIds().groupBy { sessionId ->
-        ifReadable { readSessionStarted(sessionId) }?.parent
-    }
-    val subtree = mutableListOf(id)
-    var index = 0
-    while (index < subtree.size) {
-        subtree += childrenByParent[subtree[index]].orEmpty()
-        index++
-    }
-    return subtree
 }
 
 private const val EVENTS_FILE = "events.jsonl"

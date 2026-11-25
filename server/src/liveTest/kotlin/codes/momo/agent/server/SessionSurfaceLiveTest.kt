@@ -59,7 +59,7 @@ import kotlin.io.path.createSymbolicLinkPointingTo
 import kotlin.io.path.isDirectory
 import kotlin.io.path.isRegularFile
 import kotlin.io.path.readText
-import kotlin.io.path.writeText
+import kotlin.io.path.writeBytes
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -252,17 +252,19 @@ class SessionSurfaceLiveTest {
         val workspace = localWorkspace(tempDir, "shared")
         val healthy = http.createSession(harnessPath(tempDir), workspace)
 
-        val corrupt = http.createSession(harnessPath(tempDir), workspace)
-        sharedLiveServer.dataDir.resolve("sessions/${corrupt.id}/events.jsonl").writeText("not json")
-        try {
-            assertEquals(listOf(healthy.id), http.sessions(workspace).map { it.id }, "the corrupt one is skipped")
-            val lookup = http.sessionInfoResponse(corrupt.id)
-            assertEquals(HttpStatusCode.InternalServerError, lookup.status)
-            assertEquals("corrupt_session", lookup.body<ApiError>().code)
-        } finally {
-            http.deleteSession(corrupt.id)
+        CORRUPT_LOGS.forEach { (what, log) ->
+            val corrupt = http.createSession(harnessPath(tempDir), workspace)
+            sharedLiveServer.dataDir.resolve("sessions/${corrupt.id}/events.jsonl").writeBytes(log)
+            try {
+                assertEquals(listOf(healthy.id), http.sessions(workspace).map { it.id }, "$what is skipped")
+                val lookup = http.sessionInfoResponse(corrupt.id)
+                assertEquals(HttpStatusCode.InternalServerError, lookup.status, what)
+                assertEquals("corrupt_session", lookup.body<ApiError>().code, what)
+            } finally {
+                http.deleteSession(corrupt.id)
+            }
+            assertEquals(HttpStatusCode.NotFound, http.sessionInfoResponse(corrupt.id).status, what)
         }
-        assertEquals(HttpStatusCode.NotFound, http.sessionInfoResponse(corrupt.id).status)
         assertEquals(healthy.id, http.sessionInfo(healthy.id).id, "the healthy neighbour is untouched")
     }
 
@@ -329,3 +331,6 @@ class SessionSurfaceLiveTest {
 }
 
 private val PICKED = ChatSelection("picked-model", ReasoningEffort.HIGH)
+
+private val CORRUPT_LOGS: Map<String, ByteArray> =
+    mapOf("not JSON" to "not json".toByteArray(), "not UTF-8" to byteArrayOf(0xFF.toByte()))

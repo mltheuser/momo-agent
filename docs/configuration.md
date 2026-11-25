@@ -8,7 +8,7 @@ CLI arguments take the form `--option=value`. Source: `ServerConfig` in the serv
 
 - There is no authentication.
 - A blank environment variable counts as unset.
-- Logging: slf4j-simple at `warn` and above to stderr. Level in `server/src/main/resources/simplelogger.properties`.
+- Logging: slf4j-simple to stderr. Levels in `**/simplelogger.properties`.
 
 Run:
 

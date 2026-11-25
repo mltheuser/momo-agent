@@ -28,13 +28,13 @@ internal fun parseLogLine(line: String): LogLine {
 
 internal fun encodeLogLine(event: AgentEvent): String = Json.encodeToString(event)
 
-internal fun <T : Any> Path.readLogLines(sessionId: String, parse: (String) -> T): List<T> {
+internal fun <T : Any> Path.readLogLines(parse: (String) -> T): List<T> {
     val lines = readLines().filter { it.isNotBlank() }
     return lines.mapIndexedNotNull { index, line ->
         try {
             parse(line)
         } catch (failure: SerializationException) {
-            if (index == lines.lastIndex) null else throw CorruptSessionException(sessionId, failure.message, failure)
+            if (index == lines.lastIndex) null else throw failure
         }
     }
 }

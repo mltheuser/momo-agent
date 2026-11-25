@@ -4,16 +4,13 @@ import ai.router.sdk.AiRouterClient
 import codes.momo.agent.server.change.ChangeSignal
 import codes.momo.agent.server.storage.SessionStore
 import codes.momo.agent.server.storage.UnknownSessionException
-import codes.momo.agent.server.storage.subtreeIds
+import codes.momo.agent.server.storage.forest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
-import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
-internal class SessionRegistry(dataDir: Path, val client: AiRouterClient, val changes: ChangeSignal) {
-
-    val store: SessionStore = SessionStore(dataDir)
+internal class SessionRegistry(val store: SessionStore, val client: AiRouterClient, val changes: ChangeSignal) {
 
     private val entries = ConcurrentHashMap<String, SessionEntry>()
 
@@ -37,7 +34,7 @@ internal class SessionRegistry(dataDir: Path, val client: AiRouterClient, val ch
     }
 
     fun removeSubtree(id: String): List<String> {
-        val members = store.subtreeIds(id)
+        val members = store.forest().subtreeOf(id)
         members.asReversed().forEach { member ->
             entries.remove(member)
             store.delete(member)

@@ -1,10 +1,10 @@
 package codes.momo.agent.server.session
 
 import codes.momo.agent.server.storage.SessionConflictException
+import codes.momo.agent.server.storage.forest
 import codes.momo.agent.server.storage.ifReadable
 import codes.momo.agent.server.storage.pathTo
 import codes.momo.agent.server.storage.repairTornRun
-import codes.momo.agent.server.storage.subtreeIds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -35,7 +35,7 @@ private suspend fun SessionRegistry.settle(tree: SessionTree) {
             return
         }
         withContext(Dispatchers.IO) {
-            store.subtreeIds(tree.path.first()).forEach { member ->
+            store.forest().subtreeOf(tree.path.first()).forEach { member ->
                 val repairs = store.ifReadable { repairTornRun(member, System.currentTimeMillis()) }.orEmpty()
                 if (repairs.isNotEmpty()) {
                     changes.announce()

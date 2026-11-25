@@ -34,5 +34,7 @@ hold the internals.
 | settled | A log whose last run has its `run_finished` and whose last turn has every `tool_call_finished`. The server settles a tree before every read. |
 | stop | The user's run-scoped command. Records a `stopped` outcome. |
 | rewind | Cutting the stored log back to before a user message. |
+| expire | Deleting a session tree that went unused for the retention period. |
+| corrupt | A session whose log cannot be read as a valid event log. |
 | retry | Cutting a failed run back to before its failed LLM call and making that call again under the run's own settings; no trace of the failure remains. |
 | script | A stored Python program the server runs as a child process; it interacts with the agent server via its HTTP API. |

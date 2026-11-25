@@ -9,8 +9,10 @@ import java.io.IOException
 import java.nio.file.Path
 
 internal fun SessionStore.repairTornRun(id: String, timestampMillis: Long): List<AgentEvent> {
-    val openRun = readingLog(id) { file -> file.openRunOf(id) } ?: return emptyList()
-    val repairs = repairInterruptedRun(openRun.map { Json.decodeFromString<AgentEvent>(it.json) }, timestampMillis)
+    val openRun = readingLog(id) { file ->
+        file.openRun()?.map { Json.decodeFromString<AgentEvent>(it.json) }
+    } ?: return emptyList()
+    val repairs = repairInterruptedRun(openRun, timestampMillis)
     try {
         writer(id).use { log -> repairs.forEach(log::onEvent) }
     } catch (failure: IOException) {
@@ -25,16 +27,16 @@ internal fun openRunOf(linesNewestFirst: Sequence<LogLine>): List<LogLine>? {
     return tail.asReversed().takeIf { boundary?.type == RUN_STARTED }
 }
 
-private fun Path.openRunOf(sessionId: String): List<LogLine>? = readingBackwards { lines ->
+private fun Path.openRun(): List<LogLine>? = readingBackwards { lines ->
     val parsed = lines.filter { it.isNotBlank() }
-        .mapIndexedNotNull { indexFromEnd, line -> parseUnlessTorn(sessionId, indexFromEnd, line) }
+        .mapIndexedNotNull { indexFromEnd, line -> parseUnlessTorn(indexFromEnd, line) }
     openRunOf(parsed)
 }
 
-private fun parseUnlessTorn(sessionId: String, indexFromEnd: Int, line: String): LogLine? = try {
+private fun parseUnlessTorn(indexFromEnd: Int, line: String): LogLine? = try {
     parseLogLine(line)
 } catch (failure: SerializationException) {
-    if (indexFromEnd == 0) null else throw CorruptSessionException(sessionId, failure.message, failure)
+    if (indexFromEnd == 0) null else throw failure
 }
 
 private inline fun <reified T : AgentEvent> storedType(): String = serializer<T>().descriptor.serialName

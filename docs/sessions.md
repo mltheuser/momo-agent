@@ -28,6 +28,7 @@ A user opens a project, creates a session over the `coder` harness, and works:
 4. **Rewind** to before "Add a test for the parser" because the approach was wrong. That prompt and every event after it are deleted from the log. The workspace is not rewound. Some session metadata events survive a rewind. A rewind cuts from a user message; naming any other event is rejected.
 5. **Kill** the server mid-run. Nothing gets to finish: the log is left in an incomplete state. The next read of the session repairs and settles it.
 6. **Delete** once the session is no longer needed. The log is removed.
+7. **Expire** once the session's whole tree has gone unused for the retention period (`SESSION_RETENTION` in the server's `storage` package); the next server start deletes the tree. Unused means that none of the tree's log files was modified.
 
 A prompt while a run is in flight, or a rewind or retry while any run in the
 session's tree is in flight, is refused.
