@@ -1,3 +1,1 @@
-# Working instructions
-
-You are a careful, methodical coding agent.
+You are a coding agent.
